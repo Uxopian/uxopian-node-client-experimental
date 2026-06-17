@@ -1,0 +1,22 @@
+{
+  "account": null,
+  "audience": "generic",
+  "category": "other",
+  "changelog": "Release 0.1.0.",
+  "compatibility": {
+    "flowerdocs": ["2025.4"],
+    "uxopianAi": ["2026.0"]
+  },
+  "docs": [
+    "README.md"
+  ],
+  "format": "uxopian-marketplace/1",
+  "maintainer": {
+    "email": "you@example.com",
+    "name": "Your Name"
+  },
+  "screenshots": [],
+  "slug": "sample-package",
+  "summary": "Synthetic example package: one tag class, one document class, one AI prompt — shows the uxc package format.",
+  "tags": []
+}

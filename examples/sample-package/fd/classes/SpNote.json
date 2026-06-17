@@ -1,0 +1,28 @@
+{
+  "active": true,
+  "category": "DOCUMENT",
+  "data": {
+    "ACL": "acl-readonly"
+  },
+  "displayNames": [
+    {
+      "language": "EN",
+      "value": "SpNote"
+    },
+    {
+      "language": "FR",
+      "value": "SpNote"
+    }
+  ],
+  "id": "SpNote",
+  "tagReferences": [
+    {
+      "mandatory": true,
+      "multivalued": false,
+      "order": 0,
+      "readonly": false,
+      "tagName": "SpStatus",
+      "technical": false
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+node_modules/
+*.uxpkg
+.DS_Store
+*.log
+/tmp/
+
+# Credentials live OUTSIDE the repo (~/.uxopian/targets.json, ~/.uxopian/marketplace.json).
+# Never commit a target password or a uxmk_ marketplace key.
+
+# Per-target sync state — machine/instance-specific, never published.
+.uxc/
+
+# The Contract Management worked module is large (data, screenshots) and demo-IP heavy.
+# Kept locally for development; not published. A small synthetic example lives in examples/sample-package/.
+examples/ct-package/
+

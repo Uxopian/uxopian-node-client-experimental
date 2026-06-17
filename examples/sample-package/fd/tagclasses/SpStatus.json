@@ -1,0 +1,56 @@
+{
+  "allowedValues": [
+    {
+      "displayNames": [
+        {
+          "language": "EN",
+          "value": "Open"
+        },
+        {
+          "language": "FR",
+          "value": "Open"
+        }
+      ],
+      "symbolicName": "OPEN"
+    },
+    {
+      "displayNames": [
+        {
+          "language": "EN",
+          "value": "InProgress"
+        },
+        {
+          "language": "FR",
+          "value": "InProgress"
+        }
+      ],
+      "symbolicName": "IN_PROGRESS"
+    },
+    {
+      "displayNames": [
+        {
+          "language": "EN",
+          "value": "Closed"
+        },
+        {
+          "language": "FR",
+          "value": "Closed"
+        }
+      ],
+      "symbolicName": "CLOSED"
+    }
+  ],
+  "displayNames": [
+    {
+      "language": "EN",
+      "value": "SpStatus"
+    },
+    {
+      "language": "FR",
+      "value": "SpStatus"
+    }
+  ],
+  "id": "SpStatus",
+  "searchable": true,
+  "type": "CHOICELIST"
+}

@@ -1,0 +1,33 @@
+{
+  "code": "sp",
+  "dataSets": [],
+  "description": "",
+  "format": "uxopian-package/1",
+  "idPrefixes": {
+    "camel": "sp",
+    "kebab": "sp-",
+    "pascal": "Sp",
+    "upper": "SP_"
+  },
+  "name": "Sample Package",
+  "products": [
+    "flowerdocs",
+    "uxopian-ai"
+  ],
+  "registrationOrderBands": {
+    "fd.guiconfig": [
+      30,
+      49
+    ],
+    "fd.handler": [
+      20,
+      29
+    ],
+    "fd.script": [
+      930,
+      949
+    ]
+  },
+  "requires": {},
+  "version": "0.1.0"
+}

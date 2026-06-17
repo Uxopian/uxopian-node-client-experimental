@@ -1,0 +1,22 @@
+{
+  "resources": [
+    {
+      "id": "spSummary",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/spSummary.json",
+      "policy": "managed"
+    },
+    {
+      "id": "SpNote",
+      "kind": "fd.documentclass",
+      "path": "fd/classes/SpNote.json",
+      "policy": "managed"
+    },
+    {
+      "id": "SpStatus",
+      "kind": "fd.tagclass",
+      "path": "fd/tagclasses/SpStatus.json",
+      "policy": "managed"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "defaultLlmModel": "gpt-4o",
+  "defaultLlmProvider": "openai",
+  "id": "spSummary",
+  "reasoningDisabled": true,
+  "requiresFunctionCallingModel": false,
+  "requiresMultiModalModel": false,
+  "role": "user",
+  "temperature": "0",
+  "timeSaved": 60
+}
