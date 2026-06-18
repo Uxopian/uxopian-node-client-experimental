@@ -62,16 +62,21 @@ No Puppeteer, no cookies. The HTTP layer (`lib/http.mjs`):
 
 ## 4. Targets & credentials (outside the package)
 
-`~/.uxopian/targets.json` (chmod 600), env-overridable (`UXC_TARGET`, `UXC_URL`, `UXC_SCOPE`,
-`UXC_USER`, `UXC_PASSWORD`):
+`~/.uxopian/targets.json` (chmod 600), env-overridable (`UXC_TARGET`, `UXC_CORE_URL`, `UXC_AI_URL`,
+`UXC_GUI_URL`, `UXC_SCOPE`, `UXC_USER`, `UXC_PASSWORD`):
 
 ```json
 { "default": "iris",
-  "targets": { "iris": { "url": "https://iris.demos.uxopian.com", "scope": "IRIS",
-                          "user": "system", "password": "…" } } }
+  "targets": { "iris": { "core": "https://iris.demos.uxopian.com/core",
+                          "ai": "https://iris.demos.uxopian.com/gui/plugins/IRIS/gateway/uxopian-ai",
+                          "scope": "IRIS", "user": "system", "password": "…" } } }
 ```
 
-`core`/`gui`/`gateway` bases derive from `url` + `scope`. JWT cached in memory per run only.
+The **Core REST** base (`core`, up to and including `/core`) and the **Uxopian AI** base (`ai`, up
+to and including `uxopian-ai`) are configured explicitly; `gui` (cache-clear / script content)
+defaults to `<host>/gui`. A **legacy** single `url` host still derives all three from `url` + `scope`
+(`{ "url": "https://host", "scope": … }`); explicit `core`/`ai`/`gui` win over derivation. `scope`
+is always required (it authenticates). JWT cached in memory per run only.
 
 ## 5. Project & naming convention
 

@@ -49,8 +49,8 @@ version, and deploy them.
 ## Requirements
 
 - **Node ≥ 18.17** on your `PATH`. No `npm install` needed — there are no runtime dependencies.
-- Network access to a FlowerDocs instance (Core REST at `<base>/core`, gateway at
-  `<base>/gui/plugins/<scope>/gateway/uxopian-ai`).
+- Network access to a FlowerDocs instance: its **Core REST** base (up to `/core`) and its
+  **Uxopian AI** gateway base (up to `uxopian-ai`) — each configured independently.
 - Credentials for that instance (a Core user/password + the scope id).
 
 ## Install
@@ -68,15 +68,20 @@ node bin/uxc.mjs install-claude
 ```
 
 Credentials never live in the repo — they go in `~/.uxopian/targets.json` (chmod 600), written by
-`uxc target add`. An instance is identified by a **URL + scope**; one such pair serves *both* the
-Core REST and the Uxopian AI gateway surfaces.
+`uxc target add`. A target configures two base URLs — the **Core REST** base (`…/core`) and the
+**Uxopian AI** base (`…/uxopian-ai`) — plus scope/user/password (the scope authenticates). A legacy
+`--url <host>` shorthand derives both from the host + scope; each is also env-overridable
+(`UXC_CORE_URL`, `UXC_AI_URL`, `UXC_GUI_URL`, …).
 
 ## Quick start
 
 ```bash
-# 1. register an instance (the name "iris" is your local alias for this url+scope)
-uxc target add iris --url https://iris.demos.uxopian.com --scope IRIS \
-  --user system --password '••••' --default
+# 1. register an instance (the name "iris" is your local alias for these base URLs)
+uxc target add iris \
+  --core https://iris.demos.uxopian.com/core \
+  --ai   https://iris.demos.uxopian.com/gui/plugins/IRIS/gateway/uxopian-ai \
+  --scope IRIS --user system --password '••••' --default
+#   standard-layout shorthand:  --url https://iris.demos.uxopian.com --scope IRIS …  (derives /core + gateway)
 uxc doctor                      # connectivity gauntlet (add --roundtrip for the full echo test)
 
 # 2. start a project and build
