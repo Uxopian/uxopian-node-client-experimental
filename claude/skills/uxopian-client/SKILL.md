@@ -89,15 +89,16 @@ Full rationale + more rules: `references/policies.md`.
 
 ## Scope lifecycle (multi-tenant scopes)
 
-FlowerDocs is multi-tenant via **scopes**, and a scope can be created/deleted **remotely** — it's a
-SOAP service (`/core/services/scope`), not Core REST. `uxc` covers it natively (reuses the target
-JWT as the SOAP token; no CLM jar needed):
+FlowerDocs is multi-tenant via **scopes**, and a scope can be created/deleted **remotely** over
+**Core REST** (`/core/rest/scope`) — `uxc` covers it with the same `core` client/JWT as every other
+command:
 ```
-uxc scope create <id> [--blank|--from scope.xml] [--description … --display-en … --lang EN,FR --admin system]
-uxc scope get <id>            # exists-check + summary        uxc scope delete <id> --yes
+uxc scope create <id> [--blank|--from scope.json] [--description … --display-en … --lang EN,FR --admin system]
+uxc scope get <id>            # exists-check + summary (--json = full object)   uxc scope delete <id> --yes
 ```
-`--target <name>` picks the instance. Full protocol + what's not yet built (native export/clone):
-`FD-SCOPE-SOAP.md`. This is distinct from `fd.surfacing` (scope *properties* inside a scope).
+`--target <name>` picks the instance; `create` upserts (new id created, existing id updated). Clone:
+`uxc scope get <src> --json > s.json` then `uxc scope create <dst> --from s.json`. Endpoints:
+`FD-SCOPE-REST.md`. Distinct from `fd.surfacing` (scope *properties* inside a scope).
 
 ## Scope rule
 

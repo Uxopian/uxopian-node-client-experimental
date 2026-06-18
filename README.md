@@ -25,7 +25,7 @@ built-in error knowledge base (`uxc explain F00903`). The library is **zero-depe
 [**FlowerDocs**](https://www.uxopian.com/) is Uxopian's content-services platform — a governed home
 for your documents and records with a rich, fully customizable content model (document & folder
 classes, tags, virtual folders), workflows, fine-grained ACLs, and multi-tenant **scopes**, all
-reachable over clean REST and SOAP APIs.
+reachable over clean REST APIs.
 
 **Uxopian AI** layers intelligence directly on top of that content — prompts, goals, function
 calling, and MCP, wired to the documents *and* to the model itself. Put them together and a passive
@@ -146,13 +146,13 @@ artifact is the same credential-free `.uxpkg` that `uxc export` produces.
 
 ### Scopes — multi-tenant lifecycle
 
-FlowerDocs is multi-tenant via **scopes**, and a scope can be created or deleted **remotely** — it's
-a SOAP service (`/core/services/scope`), which `uxc` speaks natively (reusing the instance JWT; no
-external CLI needed). See [`FD-SCOPE-SOAP.md`](./FD-SCOPE-SOAP.md) for the reverse-engineered protocol.
+FlowerDocs is multi-tenant via **scopes**, and a scope can be created or deleted **remotely** over
+Core REST (`/core/rest/scope`) — `uxc` speaks it with the same JWT and client as every other
+command. See [`FD-SCOPE-REST.md`](./FD-SCOPE-REST.md) for the endpoints.
 
 ```bash
-uxc scope create Acme --blank                 # or --from <scope.xml> (an exported scope, id re-targeted)
-uxc scope get Acme                            # exists-check + summary
+uxc scope create Acme --blank                 # or --from <scope.json> (clone an existing scope, id re-targeted)
+uxc scope get Acme                            # exists-check + summary (--json dumps the full object)
 uxc scope delete Acme --yes                   # destructive
 ```
 
@@ -210,7 +210,7 @@ It also exports the marketplace client (`createMarketplaceClient`), the scope cl
   for whoever builds/operates a marketplace server (data model, per-maintainer API keys, publisher +
   browse APIs, signed-URL uploads, the `marketplace.json` + object-catalog schema, UI requirements);
   [`PULSE-MARKETPLACE-CHANGE-01.md`](./PULSE-MARKETPLACE-CHANGE-01.md) is a follow-on change.
-- [`FD-SCOPE-SOAP.md`](./FD-SCOPE-SOAP.md) — the FlowerDocs scope SOAP protocol and the native
+- [`FD-SCOPE-REST.md`](./FD-SCOPE-REST.md) — the FlowerDocs scope Core REST endpoints and the native
   `uxc scope` design.
 - [`claude/`](./claude/) — a Claude Code skill (`uxopian-client`) + `/ux-*` slash commands,
   installed by `uxc install-claude`.
@@ -219,7 +219,7 @@ It also exports the marketplace client (`createMarketplaceClient`), the scope cl
 
 ```bash
 npm test                 # === node --test test/ — offline unit tests (canonicalization, naming,
-                         #     registry, diff, marketplace catalog, SOAP/scope), zero network
+                         #     registry, diff, marketplace catalog, scope), zero network
 uxc doctor --roundtrip   # live gauntlet incl. per-kind push-echo round-trip on Zz* throwaways
 ```
 
