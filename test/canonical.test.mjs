@@ -42,6 +42,39 @@ test('fd.taskclass: server-echoed answers[].type is dropped', () => {
   assert.equal(hashResource('fd.taskclass', server), hashResource('fd.taskclass', local));
 });
 
+test('fd.taskclass: children attachment slots round-trip losslessly (§20)', () => {
+  // a slot the way the server echoes it (LEARNINGS §20 shape) vs the same slot authored locally
+  // with the keys in a different order — must hash identically (no per-slot field dropped/added).
+  const slot = (extra) => ({
+    classId: '*', id: 'OriginalContract', category: 'DOCUMENT',
+    displayNames: [{ language: 'EN', value: 'Contract under review' }],
+    multivalued: false, readonly: false, required: 'NO', technical: false, order: 0, ...extra,
+  });
+  const server = { id: 'CtHandoff', category: 'TASK', children: [slot()] };
+  // locally authored: keys deliberately shuffled — stableStringify sorts them, so the hash agrees
+  const local = {
+    children: [{
+      order: 0, required: 'NO', id: 'OriginalContract', classId: '*',
+      displayNames: [{ value: 'Contract under review', language: 'EN' }],
+      technical: false, readonly: false, multivalued: false, category: 'DOCUMENT',
+    }],
+    category: 'TASK', id: 'CtHandoff',
+  };
+  assert.equal(hashResource('fd.taskclass', server), hashResource('fd.taskclass', local));
+  // canon keeps the slot intact — no field silently lost on update
+  assert.deepEqual(canonicalize('fd.taskclass', server).children, [slot()]);
+  // empty children [] hashes like absent children (cleanData drops empty top-level arrays)
+  assert.equal(
+    hashResource('fd.taskclass', { id: 'X', children: [] }),
+    hashResource('fd.taskclass', { id: 'X' }),
+  );
+  // array ORDER is semantic: reordering slots changes the hash (real drift, not masked)
+  assert.notEqual(
+    hashResource('fd.taskclass', { id: 'X', children: [slot({ id: 'A', order: 0 }), slot({ id: 'B', order: 1 })] }),
+    hashResource('fd.taskclass', { id: 'X', children: [slot({ id: 'B', order: 1 }), slot({ id: 'A', order: 0 })] }),
+  );
+});
+
 test('ai.prompt: temperature 0 vs "0" hash-equal; createdAt stripped', () => {
   const a = { id: 'ctSummary', role: 'SYSTEM', temperature: 0, createdAt: '2026-06-01T00:00:00Z' };
   const b = { id: 'ctSummary', role: 'SYSTEM', temperature: '0' };

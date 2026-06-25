@@ -1,6 +1,7 @@
 // Aggregator: lets `node --test test/` (directory-as-entry resolution) run the whole suite.
 import "./canonical.test.mjs";
 import "./config.test.mjs";
+import "./kinds.test.mjs";
 import "./marketplace.test.mjs";
 import "./naming.test.mjs";
 import "./output.test.mjs";

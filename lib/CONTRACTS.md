@@ -27,7 +27,8 @@ export async function pullResources(ctx, entries, { force = false } = {})
 //   refuses conflict unless force. Returns [{id, action}].
 export async function pushResources(ctx, entries, { force = false, settle = false, recreate = false } = {})
 //   ORDER by PUSH_ORDER; per entry: validate() (abort on errors), TOCTOU re-check serverHash,
-//   policy gates (createOnly: create-if-absent else verify+report; external/retired: skip),
+//   policy gates (createOnly: create-if-absent else verify+report, UNLESS adapter.inPlaceUpdate —
+//     then update in place like managed, e.g. fd.taskclass; external/retired: skip),
 //   create/update -> re-GET echo -> writeLocal(echo) -> setResState IMMEDIATELY (resumable),
 //   pendingCacheClear set BEFORE first cacheAffecting write, cacheClear after handler block and
 //   at end, cleared in state only on success. Returns [{id, action, detail?}]. Throws on first
