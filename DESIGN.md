@@ -172,7 +172,7 @@ template`. All five class types + tagcategory have verified LIST endpoints (full
 | 1 | `fd.tagclass` | JSON | ✅ create `POST /rest/tagclass` ARRAY; update `POST …/{id}` ARRAY; types STRING/TEXT/INT/CHOICELIST/DATE/BOOLEAN/ICON; validate: aggregation pivots must be CHOICELIST |
 | 2 | `fd.tagcategory` | JSON | ✅ same verb pattern; `tags[]` = membership |
 | 3 | `fd.documentclass` | JSON | ✅ create needs top-level `category:"DOCUMENT"` + `active:true`. Update is FULL-REPLACE; **the local file is authoritative for all managed fields** — the server GET contributes only volatile/server-owned fields (version, dates, owner). A locally deleted tagReference MUST be gone after push (acceptance test) |
-| 4 | `fd.taskclass` | JSON | ✅ **policy `createOnly`**: create if absent; else verify + report drift; refuse update/delete (`rm --server --force` is the only gated override — exists for test teardown). Schema change ⇒ new id |
+| 4 | `fd.taskclass` | JSON | ✅ **policy `createOnly` + `inPlaceUpdate`**: create if absent; **UPDATE in place** (same-id `POST /rest/taskclass/{id}` full-replace — binding-safe, e.g. adding `children` attachment slots, §20); but **never delete+recreate** (breaks ANSWER dispatch — §14), so `rm --server` stays gated behind `--force` (test teardown only). Schema change that needs a delete ⇒ new id |
 | 5 | `fd.vfclass` | JSON | ✅ `POST /rest/virtualfolderclass`; DTO uses `type` discriminators (NOT `@class`); aggregation = outer `field` + recursive `nested`; pivots CHOICELIST |
 | 6 | `fd.vfinstance` | JSON | ✅ `POST /rest/virtualFolder/` (capital F); policy `createOnly` |
 | 7 | `fd.workflow` | JSON | ⚠️ PDF-only (p.984) → ships **read-only/external** until a Zz* write round-trip is recorded in LEARNINGS |
@@ -258,7 +258,10 @@ attempt; F00033 explained on push.
     "policy": "managed", "retired": false } ] }
 ```
 
-Policies: `managed` · `createOnly` · `external`. `retired: true` = tombstone: deliberately
+Policies: `managed` · `createOnly` · `external`. A `createOnly` kind may additionally set the adapter
+flag `inPlaceUpdate` (fd.taskclass) — push then UPDATES it in place (same-id POST) while the
+`createOnly` delete gate stays in force; this separates the "may update" axis from the "delete is
+dangerous" axis without a fourth policy. `retired: true` = tombstone: deliberately
 removed from the server; excluded from push defaults; distinguishable from foreign deletion.
 
 `.uxc/state.json` (committed — sorted keys, one resource per line, union-merge documented;
