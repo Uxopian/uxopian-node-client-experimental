@@ -42,15 +42,30 @@ export async function zipDir(dir, outFile, { exclude = [] } = {})  // exclude: p
 export async function unzipTo(file, destDir)
 ```
 
+## lib/version.mjs — client/package compatibility gate
+
+```js
+export const CLIENT_VERSION                       // package.json version (single source of truth)
+export function parseSemver(v)                     // -> {nums:[maj,min,pat], pre:[...], valid}
+export function compareSemver(a, b)                // -1|0|1 (release outranks its prereleases)
+export function satisfiesMinClient(required, client = CLIENT_VERSION)   // client >= required (no req => true)
+export function minClientVersionOf(manifest)       // manifest.minClientVersion ?? requires.uxc ?? null
+export function assertClientSupports(manifest, { client, ignore = false, out, action = 'deploy' })
+//   THROWS (Error + .explanation) when client < minClientVersion or the declared min isn't semver;
+//   ignore:true warns via out and returns {required, ok:false, ignored:true}. Called before any
+//   write by importPackage (import + mp install), mp install (pre-download), and push (pre-connect).
+```
+
 ## lib/packageio.mjs
 
 ```js
 export async function exportPackage(ctx, { output, allowDirty = false })  // zip minus .uxc/; mcp secret scrub
-export async function importPackage(ctx, src, { remap = null, force = false })
-//   unpack (or use dir) -> if remap 'old=new': naming.buildRemapMap + applyRemap over ALL text
-//   files + rename files/dirs + rewrite registry/manifest, lint residuals (abort if any) ->
-//   PRE-FLIGHT every resource vs server (no-base matrix) and print full collision list BEFORE
-//   any write (need --force to overwrite) -> pushResources in PUSH_ORDER -> verify summary.
+export async function importPackage(ctx, src, { remap = null, force = false, ignoreClientVersion = false })
+//   unpack (or use dir) -> assertClientSupports(manifest) (refuse before any dir/write) ->
+//   if remap 'old=new': naming.buildRemapMap + applyRemap over ALL text files + rename files/dirs +
+//   rewrite registry/manifest, lint residuals (abort if any) -> PRE-FLIGHT every resource vs server
+//   (no-base matrix) and print full collision list BEFORE any write (need --force to overwrite) ->
+//   pushResources in PUSH_ORDER -> verify summary.
 ```
 
 ## lib/refs.mjs

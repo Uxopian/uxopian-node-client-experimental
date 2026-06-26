@@ -8,3 +8,4 @@ import "./output.test.mjs";
 import "./registry.test.mjs";
 import "./scope.test.mjs";
 import "./util.test.mjs";
+import "./version.test.mjs";

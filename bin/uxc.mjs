@@ -12,7 +12,7 @@ const COMMANDS = [
   'init', 'target', 'status', 'diff', 'pull', 'push', 'add', 'adopt', 'rm', 'destroy',
   'export', 'import', 'verify', 'data', 'refs', 'disable', 'enable', 'mp', 'scope',
   'ls', 'get', 'schema', 'search', 'doc', 'task', 'watch', 'recent', 'run',
-  'cache-clear', 'explain', 'doctor', 'install-claude', 'help',
+  'cache-clear', 'explain', 'doctor', 'install-claude', 'version', 'help',
 ];
 const TWO_WORD = new Set(['target', 'data', 'doc', 'task', 'mp', 'scope']);
 
@@ -36,6 +36,11 @@ async function main() {
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     const { default: help } = await import('../lib/commands/help.mjs');
     return help.run(makeCtx(parseArgv(rest)));
+  }
+  if (cmd === '--version' || cmd === '-v') {
+    const { CLIENT_VERSION } = await import('../lib/version.mjs');
+    console.log(CLIENT_VERSION);
+    return;
   }
   if (!COMMANDS.includes(cmd)) fail(`unknown command "${cmd}" — run: uxc help`);
 
