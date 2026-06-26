@@ -117,8 +117,10 @@ export * as util from './util.mjs'
   delete unless row tombstone `{"_id":…,"_deleted":true}` or --prune (prints kill list, requires
   flags.yes). pull: search classId (paged, max 200/page) + getDoc each changed row.
 - **ai-prompt**: meta json (all fields except content) + `<id>.content.md` = content verbatim.
-  readServer: user `GET /api/v1/prompts` (cache per ctx), find by id. push: POST
-  /api/v1/admin/prompts (object body), on 409 PUT same path (id in body). validate per DESIGN.
+  readServer: user `GET /api/v1/prompts` (cache per ctx), find by id, then OVERLAY the echo on the
+  local meta — the user endpoint may return a reduced projection (id+content), so server-present keys
+  win (drift detectable) while omitted keys fall back to local (never lose role/provider/model/…).
+  push: POST /api/v1/admin/prompts (object body), on 409 PUT same path (id in body). validate per DESIGN.
 - **ai-goal**: single file ai/goals/goals.json `[{goalName, promptId, filter, index}]`; registry
   entry per row, id `<goalName>+<promptId>+<filterHash8>`. readServer: GET /api/v1/admin/goals
   (list), filter client-side to rows whose promptId is package-owned. push: match by
