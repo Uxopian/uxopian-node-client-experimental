@@ -284,6 +284,28 @@ write → re-GET → canonicalize echo → persist file + base. This is what mak
 fields (taskclass `answers[].type: ReasonedAnswer`, tagReference flag defaults, temperature
 coercion) invisible instead of phantom drift.
 
+**Client compatibility gate (`lib/version.mjs`).** uxc is officially versioned by `package.json`
+`version` (the single source of truth; print with `uxc version` / `uxc --version`). The **policy**:
+bump the **minor** whenever a release adds a deploy capability a package can depend on. A package
+declares the minimum client it needs to deploy *every* resource via a top-level
+`minClientVersion` in `uxopian-project.json` (the alias `requires.uxc` is also read):
+
+```json
+{ "code": "ct", "version": "1.7.1", "minClientVersion": "0.2.0", "...": "…" }
+```
+
+`assertClientSupports(manifest, {client, ignore, out, action})` is the one gate. It throws (CLI
+renders message + `↳ explanation`) when the running client is older than the declared minimum, or
+when the value isn't valid semver. It runs **before any server write** at every deploy entry point:
+`importPackage` (covers `uxc import` *and* `uxc mp install`), `uxc mp install` (an extra
+**pre-download** check off the marketplace-stored manifest), and `uxc push` (before `connect()`, so
+it refuses with no target needed). `mp publish` carries `minClientVersion` verbatim in the version
+payload's `manifest`, validates it's semver, and warns if it exceeds the publishing client.
+The override `--ignore-client-version` (distinct from `--force`) downgrades the refusal to a loud
+warning — test/emergency only. **Bootstrapping caveat:** only clients ≥ the version that introduced
+the gate (0.2.0) enforce it; older clients predate the field and ignore it — acceptable because the
+client is still pre-release.
+
 **The full decision matrix** (per resource, per target):
 
 | base | hash(file) vs base | hash(canon(server)) vs base | State | Action |
