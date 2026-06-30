@@ -60,12 +60,24 @@ git clone https://github.com/Uxopian/uxopian-node-client-experimental.git
 cd uxopian-node-client-experimental
 node bin/uxc.mjs help
 
-# optional: put `uxc` on your PATH
-ln -s "$PWD/bin/uxc.mjs" /usr/local/bin/uxc
+# put `uxc` on your PATH. npm builds the cross-platform launcher (a real `uxc`/`uxc.cmd`
+# shim, no chmod fuss) and turns on tab-completion in the same step:
+npm link                          # or: npm install -g .
+#   …or just symlink it yourself:  ln -s "$PWD/bin/uxc.mjs" /usr/local/bin/uxc
 
 # optional: install the Claude Code skill + /ux-* slash commands
 node bin/uxc.mjs install-claude
 ```
+
+### Shell completion
+
+Installing with `npm link` / `npm install -g .` wires up **`uxc <TAB>`** completion on its own —
+press Tab and it suggests commands, sub-commands (`uxc mp <TAB>`), resource kinds, the resource
+ids of the package you're in (`uxc diff <TAB>`), and flags. On bash it drops an auto-loaded file
+(no shell-profile edit); on zsh it prints a one-line hint; on anything else it does nothing.
+
+Set it up on demand — handy if you symlinked `uxc` by hand — with `uxc completion --install`, or
+just print the script: `uxc completion bash|zsh` (then `source <(uxc completion bash)`).
 
 Credentials never live in the repo — they go in `~/.uxopian/targets.json` (chmod 600), written by
 `uxc target add`. A target configures two base URLs — the **Core REST** base (`…/core`) and the
