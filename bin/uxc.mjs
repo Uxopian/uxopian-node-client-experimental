@@ -7,14 +7,9 @@ import { createClients } from '../lib/http.mjs';
 import { findPackageDir } from '../lib/config.mjs';
 import { openPackage } from '../lib/registry.mjs';
 import { out, fail } from '../lib/output.mjs';
+import { COMMANDS, TWO_WORD as TWO_WORD_LIST } from '../lib/cli-meta.mjs';
 
-const COMMANDS = [
-  'init', 'target', 'status', 'diff', 'pull', 'push', 'add', 'adopt', 'rm', 'destroy',
-  'export', 'import', 'verify', 'data', 'refs', 'disable', 'enable', 'mp', 'scope',
-  'ls', 'get', 'schema', 'search', 'doc', 'task', 'watch', 'recent', 'run',
-  'cache-clear', 'explain', 'doctor', 'install-claude', 'version', 'help',
-];
-const TWO_WORD = new Set(['target', 'data', 'doc', 'task', 'mp', 'scope']);
+const TWO_WORD = new Set(TWO_WORD_LIST);
 
 function parseArgv(argv) {
   const flags = {};
