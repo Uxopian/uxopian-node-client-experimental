@@ -10,9 +10,11 @@ import taskclass from '../lib/kinds/fd-taskclass.mjs';
 import documentclass from '../lib/kinds/fd-documentclass.mjs';
 import folderclass from '../lib/kinds/fd-folderclass.mjs';
 import vfinstance from '../lib/kinds/fd-vfinstance.mjs';
+import workflow from '../lib/kinds/fd-workflow.mjs';
+import acl from '../lib/kinds/fd-acl.mjs';
 import prompt from '../lib/kinds/ai-prompt.mjs';
 import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
-import { canonicalize } from '../lib/canonical.mjs';
+import { canonicalize, hashResource } from '../lib/canonical.mjs';
 
 test('classKindAdapter carries inPlaceUpdate onto the adapter (defaults false)', () => {
   assert.equal(classKindAdapter({ kind: 'x', dir: 'x', restPath: 'x' }).inPlaceUpdate, false);
@@ -84,6 +86,96 @@ test('fd.folderclass canonicalize: strips volatile data + empty arrays, keeps ch
   assert.equal('tagReferences' in c, false);                // empty arrays dropped (hash like absent)
   assert.equal('tagCategories' in c, false);
   assert.deepEqual(c.children, [{ category: 'DOCUMENT', id: '*' }]); // containment preserved
+});
+
+// ---------------------------------------------------------------------------
+// fd.workflow + fd.acl — full write support. get-ALL 500s live (T00303 / T01006), so these read
+// BY ID only (no list/scan), like fd.vfinstance. DTOs carry no data block.
+// ---------------------------------------------------------------------------
+
+/** A ctx whose core client records calls and returns `getReturn` from get/getOne. */
+function recCtx(getReturn = null) {
+  const calls = [];
+  const core = {
+    get: async (p) => { calls.push(['GET', p]); return getReturn; },
+    getOne: async (p) => { calls.push(['GETONE', p]); return getReturn; },
+    post: async (p, b) => { calls.push(['POST', p, b]); return b; },
+    del: async (p) => { calls.push(['DEL', p]); return {}; },
+  };
+  return { ctx: { clients: { core } }, calls };
+}
+
+test('fd.workflow: managed, registered, no working list; pushes after taskclass', () => {
+  assert.equal(workflow.kind, 'fd.workflow');
+  assert.equal(workflow.restPath, 'workflow');
+  assert.equal(workflow.defaultPolicy, 'managed');       // was external/read-only — now writable
+  assert.equal(KINDS['fd.workflow'], workflow);
+  assert.ok(PUSH_ORDER.indexOf('fd.workflow') > PUSH_ORDER.indexOf('fd.taskclass')); // lists taskClasses
+  assert.ok(PUSH_ORDER.indexOf('fd.workflow') < PUSH_ORDER.indexOf('fd.vfclass'));
+});
+
+test('fd.workflow: get-all disabled (list/scan empty — T00303); reads/writes are by-id', async () => {
+  assert.deepEqual(await workflow.list(), []);            // GET /rest/workflow 500s — never called
+  assert.deepEqual(await workflow.scan(), []);
+  const c = recCtx();
+  await workflow.create(c.ctx, { obj: { id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA'] } });
+  await workflow.update(c.ctx, 'CtWf', { obj: { id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA', 'CtB'] } });
+  await workflow.remove(c.ctx, 'CtWf');
+  await workflow.get(c.ctx, 'CtWf');
+  assert.deepEqual(c.calls, [
+    ['POST', '/rest/workflow', [{ id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA'] }]],       // create: array body, no /{id}
+    ['POST', '/rest/workflow/CtWf', [{ id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA', 'CtB'] }]], // update: id in path
+    ['DEL', '/rest/workflow/CtWf'],
+    ['GETONE', '/rest/workflow/CtWf'],
+  ]);
+});
+
+test('fd.workflow template + validate', () => {
+  const t = workflow.template({}, 'CtApproval', { steps: 'CtStep1, CtStep2', start: 'CtStep0' }).obj;
+  assert.equal(t.startTaskClass, 'CtStep0');
+  assert.deepEqual(t.taskClasses, ['CtStep0', 'CtStep1', 'CtStep2']); // start prepended when absent
+  assert.equal(workflow.validate({}, { id: 'CtApproval' }, { obj: t }).length, 0);
+  // missing startTaskClass / empty taskClasses / start not in taskClasses all rejected
+  assert.ok(workflow.validate({}, { id: 'W' }, { obj: { taskClasses: ['A'] } }).length);
+  assert.ok(workflow.validate({}, { id: 'W' }, { obj: { startTaskClass: 'A', taskClasses: [] } }).length);
+  assert.ok(workflow.validate({}, { id: 'W' }, { obj: { startTaskClass: 'A', taskClasses: ['B'] } }).length);
+});
+
+test('fd.acl: managed, registered, pushed before the classes that reference it', () => {
+  assert.equal(acl.kind, 'fd.acl');
+  assert.equal(acl.restPath, 'acl');
+  assert.equal(acl.defaultPolicy, 'managed');
+  assert.equal(KINDS['fd.acl'], acl);
+  assert.ok(PUSH_ORDER.indexOf('fd.acl') < PUSH_ORDER.indexOf('fd.documentclass')); // classes' data.ACL refs it
+});
+
+test('fd.acl: get-all disabled (T01006); by-id CRUD with array bodies, no data block', async () => {
+  assert.deepEqual(await acl.list(), []);
+  const c = recCtx();
+  const body = { id: 'CtAcl', name: 'x', entries: [{ principal: '*', permission: 'READ', grant: 'ALLOW' }] };
+  await acl.create(c.ctx, { obj: body });
+  await acl.update(c.ctx, 'CtAcl', { obj: body });
+  await acl.remove(c.ctx, 'CtAcl');
+  assert.deepEqual(c.calls[0], ['POST', '/rest/acl', [body]]);           // create at collection, array
+  assert.deepEqual(c.calls[1], ['POST', '/rest/acl/CtAcl', [body]]);     // update id-in-path
+  assert.deepEqual(c.calls[2], ['DEL', '/rest/acl/CtAcl']);
+});
+
+test('fd.acl template + validate; canonicalize keeps entries, strips nothing spurious', () => {
+  const def = acl.template({}, 'CtAcl', {}).obj;
+  assert.deepEqual(def.entries, [{ principal: '*', permission: 'READ', grant: 'ALLOW' }]); // default entry
+  const t = acl.template({}, 'CtAcl', { entries: '*:UPDATE_CONTENT:allow, role_x:READ:deny', title: 'Ct ACL' }).obj;
+  assert.equal(t.name, 'Ct ACL');
+  assert.deepEqual(t.entries, [
+    { principal: '*', permission: 'UPDATE_CONTENT', grant: 'ALLOW' }, // grant upper-cased
+    { principal: 'role_x', permission: 'READ', grant: 'DENY' },
+  ]);
+  assert.equal(acl.validate({}, { id: 'CtAcl' }, { obj: t }).length, 0);
+  assert.ok(acl.validate({}, { id: 'CtAcl' }, { obj: { entries: [] } }).length);            // empty rejected
+  assert.ok(acl.validate({}, { id: 'CtAcl' }, { obj: { entries: [{ principal: '*', permission: 'R', grant: 'MAYBE' }] } }).length); // bad grant
+  // local-authored == server echo hashes identically (no data block, key order irrelevant)
+  const server = { name: 'Ct ACL', id: 'CtAcl', entries: [{ grant: 'ALLOW', permission: 'UPDATE_CONTENT', principal: '*' }, { principal: 'role_x', permission: 'READ', grant: 'DENY' }] };
+  assert.equal(hashResource('fd.acl', t), hashResource('fd.acl', server));
 });
 
 // ---------------------------------------------------------------------------
