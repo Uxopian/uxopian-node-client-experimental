@@ -8,8 +8,11 @@ import os from 'node:os';
 import { classKindAdapter } from '../lib/kinds/base.mjs';
 import taskclass from '../lib/kinds/fd-taskclass.mjs';
 import documentclass from '../lib/kinds/fd-documentclass.mjs';
+import folderclass from '../lib/kinds/fd-folderclass.mjs';
 import vfinstance from '../lib/kinds/fd-vfinstance.mjs';
 import prompt from '../lib/kinds/ai-prompt.mjs';
+import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
+import { canonicalize } from '../lib/canonical.mjs';
 
 test('classKindAdapter carries inPlaceUpdate onto the adapter (defaults false)', () => {
   assert.equal(classKindAdapter({ kind: 'x', dir: 'x', restPath: 'x' }).inPlaceUpdate, false);
@@ -30,6 +33,57 @@ test('other createOnly / managed kinds do NOT opt into inPlaceUpdate', () => {
   // update is binding-safe (unlike taskclass §20). Opt in here only once a round-trip is recorded.
   assert.equal(vfinstance.defaultPolicy, 'createOnly');
   assert.notEqual(vfinstance.inPlaceUpdate, true);
+});
+
+// ---------------------------------------------------------------------------
+// fd.folderclass — physical FOLDER-category class (parent-child containment). Adapter mirrors
+// documentclass (managed, full-replace) + a `children[]` {category,id} constraint list.
+// ---------------------------------------------------------------------------
+
+test('fd.folderclass: adapter shape + registration + push order', () => {
+  assert.equal(folderclass.kind, 'fd.folderclass');
+  assert.equal(folderclass.restPath, 'folderclass');       // category is closure-captured (applied in
+  assert.equal(folderclass.dir, 'fd/folderclasses');       // create/update), not an adapter property
+  assert.equal(folderclass.defaultPolicy, 'managed');
+  assert.equal(folderclass.inPlaceUpdate, false);           // managed already updates in place
+  assert.equal(KINDS['fd.folderclass'], folderclass);       // registered in the kind map
+  // pushed after the document/task classes it may reference as children, before VF classes:
+  assert.ok(PUSH_ORDER.indexOf('fd.folderclass') > PUSH_ORDER.indexOf('fd.documentclass'));
+  assert.ok(PUSH_ORDER.indexOf('fd.folderclass') < PUSH_ORDER.indexOf('fd.vfclass'));
+});
+
+test('fd.folderclass template: FOLDER + acl-folder + children; default child = any DOCUMENT', () => {
+  const def = folderclass.template({}, 'PoOrder', {}).obj;
+  assert.equal(def.category, 'FOLDER');
+  assert.equal(def.active, true);
+  assert.equal(def.data.ACL, 'acl-folder');                 // base folder ACL, not acl-readonly
+  assert.deepEqual(def.children, [{ category: 'DOCUMENT', id: '*' }]);
+
+  const t = folderclass.template({}, 'PoOrder', {
+    children: 'DOCUMENT:PoEmail, FOLDER:*, virtual_folder', // mixed case + spaces + bare category
+    tags: 'PoStatus:mandatory, PoCustomerNo',
+  }).obj;
+  assert.deepEqual(t.children, [
+    { category: 'DOCUMENT', id: 'PoEmail' },
+    { category: 'FOLDER', id: '*' },
+    { category: 'VIRTUAL_FOLDER', id: '*' },                // category upper-cased, id defaults to '*'
+  ]);
+  assert.deepEqual(t.tagReferences.map((r) => [r.tagName, r.mandatory]),
+    [['PoStatus', true], ['PoCustomerNo', false]]);
+});
+
+test('fd.folderclass canonicalize: strips volatile data + empty arrays, keeps children', () => {
+  const server = {
+    id: 'PoOrder', category: 'FOLDER', active: true,
+    data: { ACL: 'acl-folder', owner: 'system', creationDate: 'x', lastUpdateDate: 'y', version: 3 },
+    children: [{ category: 'DOCUMENT', id: '*' }],
+    tagReferences: [], tagCategories: [],                   // server echo omits empty arrays
+  };
+  const c = canonicalize('fd.folderclass', server);
+  assert.deepEqual(c.data, { ACL: 'acl-folder' });          // volatile fields stripped
+  assert.equal('tagReferences' in c, false);                // empty arrays dropped (hash like absent)
+  assert.equal('tagCategories' in c, false);
+  assert.deepEqual(c.children, [{ category: 'DOCUMENT', id: '*' }]); // containment preserved
 });
 
 // ---------------------------------------------------------------------------

@@ -109,7 +109,7 @@ browser tooling, not uxc.
 
 ## References (read on demand, not up front)
 
-- `references/kinds.md` — 17-kind cheat sheet: storage, fields, policy, add signature, top gotcha.
+- `references/kinds.md` — 18-kind cheat sheet: storage, fields, policy, add signature, top gotcha.
 - `references/policies.md` — the non-negotiables with the verified WHY behind each.
 - `references/errors.md` — error code/signature KB + gateway stream quirks.
 - `references/recipes.md` — worked end-to-end flows with exact commands.

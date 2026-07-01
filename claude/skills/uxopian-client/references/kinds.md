@@ -1,4 +1,4 @@
-# Kind cheat sheet (17 kinds)
+# Kind cheat sheet (18 kinds)
 
 Registry id form: `kind/id` (bare id works when unique). Policies: `managed` (full sync),
 `createOnly` (create if absent, then verify-only), `external` (never written/deleted).
@@ -23,6 +23,17 @@ Push order is topological and automatic; you never order writes yourself.
 - Add: `uxc add fd.documentclass CtBar --tags "CtFoo:mandatory,SourceContractId:readonly" --category-ids CtConIdentity`
 - Gotcha: update is FULL-REPLACE and the LOCAL file is authoritative — a tagReference you delete
   locally stays deleted after push. Missing `category` at create = F00204.
+
+## fd.folderclass — managed
+- Storage: `fd/folderclasses/<Id>.json` (`POST /rest/folderclass`)
+- Fields: `id, category:"FOLDER", active:true, data.ACL:"acl-folder", children[{category,id}], tagReferences[], tagCategories[], displayNames`
+- Add: `uxc add fd.folderclass PoOrder --children "DOCUMENT:*,FOLDER:PoSub" --tags "PoStatus:mandatory"`
+- Gotcha: PHYSICAL parent-child container (unlike a VF, which is a saved search). `children[]` = allowed
+  child classes, one entry per category, `{category, id}` with `id:"*"` = any (the base `Folder` allows
+  DOCUMENT/FOLDER/VIRTUAL_FOLDER). This is NOT the taskclass attachment-slot `children` shape (§20).
+  Update is FULL-REPLACE like documentclass; uses base `acl-folder` (F00208 without a valid ACL). Needs
+  the scope's base platform (the `FolderClass` system class) — a blank scope needs CLM `default-scope`
+  provisioning first (§23).
 
 ## fd.taskclass — createOnly
 - Storage: `fd/taskclasses/<Id>.json`
