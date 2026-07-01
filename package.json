@@ -9,7 +9,9 @@
   },
   "engines": { "node": ">=18.17" },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "postinstall": "node scripts/postinstall.mjs",
+    "prepare": "node scripts/postinstall.mjs"
   },
   "keywords": ["flowerdocs", "uxopian-ai", "uxopian", "cli", "packaging"],
   "license": "MPL-2.0",
