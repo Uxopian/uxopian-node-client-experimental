@@ -56,11 +56,22 @@ Push order is topological and automatic; you never order writes yourself.
 - Gotcha: no server LIST endpoint — adopt by id. Left-menu visibility comes ONLY from a
   `tab.virtualfolder` scope property (fd.surfacing), never automatically.
 
-## fd.workflow — external (read-only v1)
-- Storage: `fd/workflows/<Id>.json` — reference only; write path unverified, uxc refuses writes.
+## fd.workflow — managed (🧪 write pending live verify)
+- Storage: `fd/workflows/<Id>.json` (`POST /rest/workflow`)
+- Fields: `id, startTaskClass, taskClasses[]` (no category/data/displayNames)
+- Add: `uxc add fd.workflow CtApproval --steps CtStep0,CtStep1,CtStep2 [--start CtStep0]`
+- Gotcha: get-ALL 500s (T00303) → read BY ID only, no `list`/`scan` (adopt by id, like vfinstance).
+  Update is FULL-REPLACE (unset fields cleared). Delete does NO active-instance check. Pushes AFTER
+  taskclasses (workflow lists them); taskclass.workflow is a forward ref. create/update/delete are
+  documented but NOT yet live-verified — confirm with `uxc push` on a workflow scope.
 
-## fd.acl — external (read-only v1)
-- Storage: `fd/acls/<Id>.json` — reference only; uxc refuses writes.
+## fd.acl — managed (🧪 write pending live verify)
+- Storage: `fd/acls/<Id>.json` (`POST /rest/acl`)
+- Fields: `id, name, entries[{principal, permission, grant}]` (`principal:"*"`=all, grant ALLOW|DENY; no category/data)
+- Add: `uxc add fd.acl CtRestricted --entries "*:READ:ALLOW,role_x:UPDATE_CONTENT:DENY"`
+- Gotcha: get-ALL 500s (T01006) → read BY ID only, no `list`/`scan`. Pushes BEFORE the classes that
+  reference it (`data.ACL`). Update FULL-REPLACE. create/update/delete documented (pp.978-982) but
+  NOT yet live-verified — confirm with `uxc doctor --roundtrip`.
 
 ## fd.script — managed, cache-affecting
 - Storage: `fd/scripts/<id>/meta.json + <id>.js` (a Script-class document; kebab ids `ct-foo`)

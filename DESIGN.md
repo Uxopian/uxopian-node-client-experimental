@@ -175,8 +175,8 @@ template`. All five class types + tagcategory have verified LIST endpoints (full
 | 4 | `fd.taskclass` | JSON | ✅ **policy `createOnly` + `inPlaceUpdate`**: create if absent; **UPDATE in place** (same-id `POST /rest/taskclass/{id}` full-replace — binding-safe, e.g. adding `children` attachment slots, §20); but **never delete+recreate** (breaks ANSWER dispatch — §14), so `rm --server` stays gated behind `--force` (test teardown only). Schema change that needs a delete ⇒ new id |
 | 5 | `fd.vfclass` | JSON | ✅ `POST /rest/virtualfolderclass`; DTO uses `type` discriminators (NOT `@class`); aggregation = outer `field` + recursive `nested`; pivots CHOICELIST |
 | 6 | `fd.vfinstance` | JSON | ✅ `POST /rest/virtualFolder/` (capital F); policy `createOnly` |
-| 7 | `fd.workflow` | JSON | ⚠️ PDF-only (p.984) → ships **read-only/external** until a Zz* write round-trip is recorded in LEARNINGS |
-| 8 | `fd.acl` | JSON | ⚠️ PDF-only (p.979) → **read-only/external** in v1 |
+| 7 | `fd.workflow` | JSON | 🧪 **policy `managed`** (full write). DTO `{id, startTaskClass, taskClasses[]}` (no category/data). create `POST /rest/workflow` ARRAY; update `POST …/{id}` FULL-REPLACE (docs p.986: unset fields cleared); delete `DELETE …/{id}` (docs p.987: no active-instance check). **get-ALL 500s live (T00303)** → read BY ID only, no `list`/`scan` (like vfinstance). create/update/delete DOCUMENTED (pp.983-987) but **round-trip not yet live-verified** (no server at impl time) — `uxc doctor`/`push` on a workflow scope to confirm, then → ✅. Note: taskclass↔workflow mutual ref (workflow pushes after taskclass; taskclass.workflow is a forward ref — verify) |
+| 8 | `fd.acl` | JSON | 🧪 **policy `managed`** (full write). DTO `{id, name, entries[{principal, permission, grant}]}` (`principal:"*"`=all, `grant`=ALLOW\|DENY; no category/data). create `POST /rest/acl` ARRAY; update `POST …/{id}` FULL-REPLACE; delete `DELETE …/{id}`. **get-ALL 500s live (T01006)** → read BY ID only, no `list`/`scan`. Pushed BEFORE the classes that reference it (`data.ACL`). create/update/delete DOCUMENTED (pp.978-982), **round-trip pending live verify** (`uxc doctor --roundtrip`) → then ✅ |
 | 9 | `fd.script` | meta+`.js` | ✅ Script-class doc; exists-check FIRST, fresh tmp per attempt (T00707); create or update-in-place (GET → `files:[{id:tmp}]` → `POST /rest/documents/{id}` ARRAY); keep `RegistrationOrder` tag; cache clear |
 | 10 | `fd.guiconfig` | meta+`.xml` | ✅ as script, class GUIConfiguration. `validate()` **in the tool**: XML well-formed; bean-id uniqueness across the package; refusal list for live singleton bean ids (`componentProperties`, `componentActivityConfigurations` — merge-into, never redefine); `--check-collisions` lists bean ids across live GUIConfiguration docs |
 | 11 | `fd.handler` | meta + resolved script/filter | ✅ see §7.11 below |
@@ -187,9 +187,10 @@ template`. All five class types + tagcategory have verified LIST endpoints (full
 | 16 | `ai.mcp` | JSON | CRUD `/api/v1/admin/mcp/mcp-conf` (hot-reload server-side). Doctor verifies whether GETs mask header secrets; masked fields are excluded from the canonical hash (llmconf-style) and **push never overwrites a non-empty server secret with a placeholder** |
 | 17 | `ai.llmconf` | — | inspect-only (`uxc ls ai.llmconf`); packages declare provider needs in `requires` |
 
-**Push order** (topological, always): workflow → tagclass → tagcategory → documentclass →
-taskclass → vfclass → dataset → script → guiconfig → handler → vfinstance → surfacing →
-ai.prompt → ai.goal → ai.mcp. Delete = reverse. (acl is external-only in v1.)
+**Push order** (topological, always): acl → tagclass → tagcategory → documentclass →
+taskclass → folderclass → workflow → vfclass → dataset → script → guiconfig → handler →
+vfinstance → surfacing → ai.prompt → ai.goal → ai.mcp. Delete = reverse. (acl first: classes
+reference it via `data.ACL`. workflow after taskclass: a workflow lists `taskClasses`.)
 
 **Cache clears**: a `pendingCacheClear` flag is persisted in state **before** the first
 cache-affecting write and cleared only after a successful `DELETE /gui/rest/caches` (+
