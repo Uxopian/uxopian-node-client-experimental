@@ -115,3 +115,53 @@ test('canonicalize(null) is null; canonicalText is deterministic', () => {
   assert.equal(t1, t2);
   assert.ok(t1.endsWith('\n'));
 });
+
+// ---------------------------------------------------------------------------
+// FD 2026 echo normalization (CHANGE-REQUEST-fd2026-canon.md): active:true,
+// empty arrays at ANY depth, and FQCN `type` discriminators. Applied to both
+// sides, so ONE package hashes clean on FD 2025 AND FD 2026.
+// ---------------------------------------------------------------------------
+
+test('fd2026: active:true dropped (echo omits it); active:false KEPT', () => {
+  // documentclass/folderclass/taskclass echoes omit active; local writes active:true -> hash equal
+  assert.equal(
+    hashResource('fd.documentclass', { id: 'PoEmail', category: 'DOCUMENT', active: true }),
+    hashResource('fd.documentclass', { id: 'PoEmail', category: 'DOCUMENT' }),
+  );
+  assert.equal(
+    hashResource('fd.folderclass', { id: 'PoOrder', category: 'FOLDER', active: true, children: [{ category: 'DOCUMENT', id: '*' }] }),
+    hashResource('fd.folderclass', { id: 'PoOrder', category: 'FOLDER', children: [{ category: 'DOCUMENT', id: '*' }] }),
+  );
+  // active:false is a genuine state — NOT dropped, and still distinct from active:true
+  assert.equal(canonicalize('fd.documentclass', { id: 'X', active: false }).active, false);
+  assert.notEqual(
+    hashResource('fd.documentclass', { id: 'X', active: false }),
+    hashResource('fd.documentclass', { id: 'X', active: true }),
+  );
+});
+
+test('fd2026: empty arrays stripped at ANY depth (not just top level)', () => {
+  // nested empty descriptions[] on a tagReference (a 2026 echo extra) hashes like absent
+  const echo = { id: 'CtBar', category: 'DOCUMENT', tagReferences: [{ tagName: 'CtFoo', order: 0, descriptions: [] }] };
+  const local = { id: 'CtBar', category: 'DOCUMENT', tagReferences: [{ tagName: 'CtFoo', order: 0 }] };
+  assert.equal(hashResource('fd.documentclass', echo), hashResource('fd.documentclass', local));
+  // vfclass search with nested empty nested[]/context[]
+  const vfEcho = { id: 'CtRev', category: 'VIRTUAL_FOLDER', searches: [{ id: 's', request: { aggregation: { field: 'F', nested: [] }, context: [] } }] };
+  const vfLocal = { id: 'CtRev', category: 'VIRTUAL_FOLDER', searches: [{ id: 's', request: { aggregation: { field: 'F' } } }] };
+  assert.equal(hashResource('fd.vfclass', vfEcho), hashResource('fd.vfclass', vfLocal));
+});
+
+test('fd2026: nested FQCN `type` stripped; tagclass TOP-LEVEL type PRESERVED', () => {
+  // allowedValues[].type = FQCN discriminator -> stripped; the tag's own data type stays
+  const echo = {
+    id: 'CtChoice', type: 'CHOICELIST',
+    allowedValues: [{ symbolicName: 'A', type: 'com.flower.docs.domain.tagclass.AllowedValue' }],
+  };
+  const canon = canonicalize('fd.tagclass', echo);
+  assert.equal(canon.type, 'CHOICELIST');                 // load-bearing top-level type SURVIVES
+  assert.equal(canon.allowedValues[0].type, undefined);   // nested FQCN discriminator dropped
+  const local = { id: 'CtChoice', type: 'CHOICELIST', allowedValues: [{ symbolicName: 'A' }] };
+  assert.equal(hashResource('fd.tagclass', echo), hashResource('fd.tagclass', local));
+  // a NON-FQCN nested `type` value is left alone (only com.flower.docs.* is a discriminator)
+  assert.equal(canonicalize('fd.folderclass', { id: 'X', children: [{ category: 'DOCUMENT', id: '*', type: 'DOCUMENT' }] }).children[0].type, 'DOCUMENT');
+});
