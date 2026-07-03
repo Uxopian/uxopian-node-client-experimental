@@ -140,6 +140,19 @@ test('fd2026: active:true dropped (echo omits it); active:false KEPT', () => {
   );
 });
 
+test('fd2026: top-level technical:false dropped (echo adds it); technical:true kept; nested intact', () => {
+  // class echo ADDS a top-level technical:false; local omits it -> hash equal
+  assert.equal(
+    hashResource('fd.documentclass', { id: 'PoEmail', category: 'DOCUMENT', technical: false }),
+    hashResource('fd.documentclass', { id: 'PoEmail', category: 'DOCUMENT' }),
+  );
+  // technical:true (a genuinely hidden/system class) is preserved
+  assert.equal(canonicalize('fd.documentclass', { id: 'X', technical: true }).technical, true);
+  // a NESTED tagReference technical:false is NOT stripped (present on both sides; §20 slots stay exact)
+  const c = canonicalize('fd.documentclass', { id: 'X', tagReferences: [{ tagName: 'T', order: 0, technical: false }] });
+  assert.equal(c.tagReferences[0].technical, false);
+});
+
 test('fd2026: empty arrays stripped at ANY depth (not just top level)', () => {
   // nested empty descriptions[] on a tagReference (a 2026 echo extra) hashes like absent
   const echo = { id: 'CtBar', category: 'DOCUMENT', tagReferences: [{ tagName: 'CtFoo', order: 0, descriptions: [] }] };
