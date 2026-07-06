@@ -34,6 +34,9 @@ test('conventionalId builds per-kind ids and passes through already-prefixed nam
   assert.equal(conventionalId('fd.script', m, 'My_Widget'), 'ct-my-widget'); // underscores -> dashes, lowered
   assert.equal(conventionalId('fd.script', m, 'ct-widgets'), 'ct-widgets'); // passthrough
   assert.equal(conventionalId('fd.guiconfig', m, 'home'), 'ct-home');
+  // ai.llm ids are VERBATIM (global provider names, never project-prefixed)
+  assert.equal(conventionalId('ai.llm', m, 'openai'), 'openai');
+  assert.equal(conventionalId('ai.llm', m, 'mistral-ai'), 'mistral-ai');
   // manifest idPrefixes win over derivation
   const m2 = { code: 'zz', idPrefixes: { pascal: 'Ct', camel: 'ct', kebab: 'ct-', upper: 'CT_' } };
   assert.equal(conventionalId('fd.tagclass', m2, 'Foo'), 'CtFoo');

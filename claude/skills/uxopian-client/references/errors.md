@@ -17,7 +17,7 @@ explanation. This table mirrors `lib/explain.mjs` — if you learn a new one, ad
 | `F00204` | Class create needs top-level `category` ("DOCUMENT"/"TASK") and `active:true`. |
 | `F00414` | Taskclass attachments are not REST-declarable (the DTO silently drops every attachment field). Carry the linked doc id in a task TAG instead. |
 | `Function calling cannot be required when reasoning is disabled` | Prompt has `requiresFunctionCallingModel:true` but `reasoningDisabled` is absent (Java default = true). Set `reasoningDisabled:false` EXPLICITLY. |
-| `Configuration not found with id: X` | LLM provider X not configured on this instance. `uxc ls ai.llmconf`; pin the prompt to a configured provider (e.g. openai/gpt-4o). |
+| `Configuration not found with id: X` | LLM provider X not configured on this instance. `uxc ls ai.llm` (and `uxc push` the provider conf); pin the prompt to a configured provider (e.g. openai/gpt-4o). |
 | `Merge strategy is not set` | `prompts.yml` tenants[] entries must set `mergeStrategy` (overwrite\|merge\|createIfMissing) or the ai server refuses to start. |
 | `HttpTimeout` / `request timed out` | Gateway streamed an UPSTREAM failure as a 200 body (LLM/tool timeout). Retry once (cold start), then check prompt/provider. |
 | `Error: java…` in an "answer" | Gateway error-as-body: upstream exceptions stream as 200-status TEXT, not HTTP errors. Treat as failure, retry once. uxc run detects + retries automatically. |

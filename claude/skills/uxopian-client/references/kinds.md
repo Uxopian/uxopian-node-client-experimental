@@ -139,6 +139,11 @@ Push order is topological and automatic; you never order writes yourself.
 - Gotcha: masked secrets (`********`) normalize to `__masked__` locally; push resolves them back
   from the live server and NEVER overwrites a real secret with a placeholder. Export scrubs them.
 
-## ai.llmconf — inspect-only
-- No storage. `uxc ls ai.llmconf` to see configured providers; declare needs in manifest
-  `requires.llmProviders`. Secrets are masked on GET — configs cannot round-trip.
+## ai.llm — managed
+- Storage: `ai/llm/<id>.json` (`/api/v1/admin/llm/provider-conf`)
+- Fields: `id/provider, defaultLlmModelConfName, globalConf:{apiSecret,…}, llModelConfs:[…]`
+- Add: `uxc add ai.llm openai --provider openai` (then fill in llModelConfs)
+- Gotcha: same secret masking as ai.mcp — `globalConf.apiSecret` (`********`) normalizes to
+  `__masked__`; push resolves it from the live server and never overwrites a real key. A FRESH
+  install with no live key pushes an EMPTY secret (operator sets it after). `uxc ls ai.llm`;
+  also declare provider needs in manifest `requires.llmProviders`.
