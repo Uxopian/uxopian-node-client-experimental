@@ -143,6 +143,11 @@ export * as util from './util.mjs'
 - **ai-mcp**: GET/POST/PUT/DELETE /api/v1/admin/mcp/mcp-conf[/{id}]. If server masks secret
   headers (detect '********'), exclude those header values from canonical hash and never push a
   placeholder over a non-empty server value.
+- **ai-llm**: GET/POST/PUT/DELETE /api/v1/admin/llm/provider-conf[/{id}] — LLM provider configs
+  `{id/provider, defaultLlmModelConfName, globalConf:{apiSecret,…}, llModelConfs:[…]}`. Same masking
+  as ai-mcp (`********`→`__masked__`, resolve to live on push, secrets never in the package), plus
+  strips audit fields (createdAt/By, updatedAt/By). Divergence: a masked secret with NO live value
+  pushes as EMPTY (fresh keyless install) rather than erroring. list = GET base (array); id⇄provider.
 
 ## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, run(ctx) }
 

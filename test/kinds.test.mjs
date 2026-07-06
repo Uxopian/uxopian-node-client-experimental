@@ -13,6 +13,8 @@ import vfinstance from '../lib/kinds/fd-vfinstance.mjs';
 import workflow from '../lib/kinds/fd-workflow.mjs';
 import acl from '../lib/kinds/fd-acl.mjs';
 import prompt from '../lib/kinds/ai-prompt.mjs';
+import aiLlm, { maskNormalize as llmMask, resolveMasks as llmResolve, canonical as llmCanonical } from '../lib/kinds/ai-llm.mjs';
+import aiMcp, { maskNormalize as mcpMask } from '../lib/kinds/ai-mcp.mjs';
 import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
 import { canonicalize, hashResource } from '../lib/canonical.mjs';
 
@@ -241,4 +243,76 @@ test('ai.prompt readServer: no local file -> raw echo; absent on server -> null'
   assert.deepEqual((await prompt.readServer(noLocal, 'ctY')).obj, { id: 'ctY', content: 'c' });
   const absent = { pkg: { entry: () => null }, clients: { gateway: { get: async () => [] } } };
   assert.equal(await prompt.readServer(absent, 'nope'), null);
+});
+
+// ---------------------------------------------------------------------------
+// ai.llm — LLM provider configs. Secret masking (server '********' -> '__masked__'), audit-field
+// strip, id<->provider; a FRESH keyless install pushes an EMPTY secret (vs ai.mcp which hard-errors).
+// ---------------------------------------------------------------------------
+
+test('ai.llm: registered, managed, and pushed before ai.prompt (prompts reference a provider)', () => {
+  assert.equal(aiLlm.kind, 'ai.llm');
+  assert.equal(aiLlm.defaultPolicy, 'managed');
+  assert.equal(KINDS['ai.llm'], aiLlm);
+  assert.ok(PUSH_ORDER.indexOf('ai.llm') < PUSH_ORDER.indexOf('ai.prompt'));
+});
+
+test('ai.llm maskNormalize: server asterisk runs -> __masked__; other values untouched', () => {
+  const out = llmMask({ globalConf: { apiSecret: '********', timeout: 60000 }, name: 'OpenAI', llModelConfs: [{ model: 'gpt-4o' }] });
+  assert.equal(out.globalConf.apiSecret, '__masked__'); // masked (8+ asterisks)
+  assert.equal(out.globalConf.timeout, 60000);          // non-string untouched
+  assert.equal(out.name, 'OpenAI');                     // non-asterisk string untouched
+  assert.equal(out.llModelConfs[0].model, 'gpt-4o');    // nested untouched
+});
+
+test('ai.llm canonical: id derived from provider, audit fields stripped, secret masked', () => {
+  const c = llmCanonical({
+    provider: 'openai', globalConf: { apiSecret: '********' }, llModelConfs: [],
+    createdAt: 'x', createdBy: 'a', updatedAt: 'y', updatedBy: 'b',
+  });
+  assert.equal(c.id, 'openai');                         // id <- provider
+  assert.equal(c.globalConf.apiSecret, '__masked__');
+  for (const f of ['createdAt', 'createdBy', 'updatedAt', 'updatedBy']) assert.equal(f in c, false);
+});
+
+test('ai.llm resolveMasks: __masked__ -> live value; no live -> EMPTY (keyless fresh install)', () => {
+  const local = { id: 'openai', globalConf: { apiSecret: '__masked__' } };
+  const live = { id: 'openai', globalConf: { apiSecret: 'sk-REAL' } };
+  assert.equal(llmResolve(local, live).globalConf.apiSecret, 'sk-REAL');  // resolved from the live server
+  assert.equal(llmResolve(local, null).globalConf.apiSecret, '');         // fresh: empty, operator sets it
+  assert.equal(llmResolve({ globalConf: { apiSecret: 'sk-typed' } }, null).globalConf.apiSecret, 'sk-typed'); // real value passes through
+});
+
+test('ai.llm validate: id mismatch / missing provider / empty models all rejected', () => {
+  const ok = { id: 'openai', provider: 'openai', llModelConfs: [{ model: 'gpt-4o' }] };
+  assert.equal(aiLlm.validate({}, { id: 'openai' }, { obj: ok }).length, 0);
+  assert.ok(aiLlm.validate({}, { id: 'openai' }, { obj: { ...ok, provider: undefined } }).length);
+  assert.ok(aiLlm.validate({}, { id: 'openai' }, { obj: { ...ok, llModelConfs: [] } }).length);
+  assert.ok(aiLlm.validate({}, { id: 'other' }, { obj: ok }).length); // id "openai" != registry "other"
+});
+
+test('ai.llm template: keyless provider scaffold', () => {
+  const t = aiLlm.template({}, 'openai', { provider: 'openai' }).obj;
+  assert.equal(t.provider, 'openai');
+  assert.equal(t.globalConf.apiSecret, ''); // never a key in the scaffold
+  assert.deepEqual(t.llModelConfs, []);
+});
+
+// ---- ai.mcp backfill: its masking was previously untested ----
+
+test('ai.mcp maskNormalize: asterisk runs -> __masked__ (backfill)', () => {
+  const out = mcpMask({ headers: { Authorization: '********', 'X-Env': 'prod' } });
+  assert.equal(out.headers.Authorization, '__masked__');
+  assert.equal(out.headers['X-Env'], 'prod');
+});
+
+test('ai.mcp: create with a masked secret and NO live conf HARD-ERRORS (the ai.llm divergence)', async () => {
+  const ctx = { clients: { gateway: {
+    tryGet: async () => null, get: async () => [],
+    post: async () => { throw new Error('must not POST a placeholder secret'); },
+  } } };
+  await assert.rejects(
+    aiMcp.create(ctx, { obj: { id: 'ctTools', headers: { Authorization: '__masked__' } } }),
+    /masked secret/i,
+  );
 });

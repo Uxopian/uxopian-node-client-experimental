@@ -19,11 +19,12 @@ test('subcommandsFrom: derives <cmd>-<sub> from filenames, sorted, strips .mjs',
   assert.deepEqual(subs.mp, ['ls']);
 });
 
-test('kindList: includes real adapters plus inspect-only ai.llmconf, sorted & unique', () => {
+test('kindList: real adapters incl. ai.llm (not the retired ai.llmconf), sorted & unique', () => {
   const ks = kindList();
   assert.ok(ks.includes('fd.script'));
   assert.ok(ks.includes('ai.prompt'));
-  assert.ok(ks.includes('ai.llmconf'));
+  assert.ok(ks.includes('ai.llm'));           // now a real adapter
+  assert.ok(!ks.includes('ai.llmconf'));      // inspect-only stub retired
   assert.deepEqual(ks, [...ks].sort());
   assert.equal(ks.length, new Set(ks).size);
 });
