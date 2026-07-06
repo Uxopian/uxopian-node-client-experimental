@@ -316,3 +316,37 @@ test('ai.mcp: create with a masked secret and NO live conf HARD-ERRORS (the ai.l
     /masked secret/i,
   );
 });
+
+// ---------------------------------------------------------------------------
+// fd.vfinstance create: dual-version endpoint — FD 2026 no-slash, fall back to FD 2025 slash on 404.
+// ---------------------------------------------------------------------------
+
+test('fd.vfinstance create: no-slash first; falls back to the slash form on 404 (dual FD 2025/2026)', async () => {
+  const mk = (failNoSlashWith) => {
+    const calls = [];
+    return { calls, ctx: { target: { user: 'u' }, clients: { core: {
+      post: async (p, b) => {
+        calls.push(p);
+        if (failNoSlashWith && p === '/rest/virtualFolder') { const e = new Error('x'); e.status = failNoSlashWith; throw e; }
+        return b;
+      },
+    } } } };
+  };
+  const obj = { id: 'CtRev', data: { classId: 'CtReview' } };
+  // FD 2026: no-slash succeeds -> single call, no fallback
+  const a = mk(null);
+  await vfinstance.create(a.ctx, { obj });
+  assert.deepEqual(a.calls, ['/rest/virtualFolder']);
+  // FD 2025: no-slash 404s -> retry the slash form
+  const b = mk(404);
+  await vfinstance.create(b.ctx, { obj });
+  assert.deepEqual(b.calls, ['/rest/virtualFolder', '/rest/virtualFolder/']);
+  // 405 also falls back
+  const c = mk(405);
+  await vfinstance.create(c.ctx, { obj });
+  assert.deepEqual(c.calls, ['/rest/virtualFolder', '/rest/virtualFolder/']);
+  // a genuine error (not 404/405) propagates, NO retry
+  const d = mk(500);
+  await assert.rejects(vfinstance.create(d.ctx, { obj }));
+  assert.deepEqual(d.calls, ['/rest/virtualFolder']);
+});
