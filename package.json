@@ -1,19 +1,29 @@
 {
   "name": "uxopian-client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "uxc — build, package, and sync FlowerDocs + Uxopian AI customizations (project packages, registry, hash-based bidirectional sync, addon marketplace, scope lifecycle). Experimental.",
   "type": "module",
-  "bin": { "uxc": "./bin/uxc.mjs" },
+  "bin": {
+    "uxc": "./bin/uxc.mjs"
+  },
   "exports": {
     ".": "./lib/index.mjs"
   },
-  "engines": { "node": ">=18.17" },
+  "engines": {
+    "node": ">=18.17"
+  },
   "scripts": {
     "test": "node --test test/",
     "postinstall": "node scripts/postinstall.mjs",
     "prepare": "node scripts/postinstall.mjs"
   },
-  "keywords": ["flowerdocs", "uxopian-ai", "uxopian", "cli", "packaging"],
+  "keywords": [
+    "flowerdocs",
+    "uxopian-ai",
+    "uxopian",
+    "cli",
+    "packaging"
+  ],
   "license": "MPL-2.0",
   "author": "Uxopian",
   "repository": {
