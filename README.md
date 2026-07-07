@@ -221,6 +221,9 @@ It also exports the marketplace client (`createMarketplaceClient`), the scope cl
 
 ## Documentation
 
+- [`docs/FLOWERDOCS-LEARNINGS.md`](./docs/FLOWERDOCS-LEARNINGS.md) — **the knowledge base**: every
+  verified FlowerDocs / Uxopian AI API mechanic, error code and gotcha uxc is built on (numbered
+  §1–§25+, cited from code comments). Read it before touching any server API; append what you prove.
 - [`DESIGN.md`](./DESIGN.md) — the full design: package format, 3-way sync matrix, per-kind
   adapters, naming convention, CLI reference.
 - [`PULSE-MARKETPLACE-SPEC.md`](./PULSE-MARKETPLACE-SPEC.md) — the addon-marketplace HTTP contract
