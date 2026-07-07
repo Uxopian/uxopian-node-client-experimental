@@ -57,7 +57,7 @@ test('bashCompletion: kind- and id-aware argument completion present', () => {
 test('bashCompletion: per-command flags include globals + curated set', () => {
   const s = bashCompletion(ARGS());
   assert.match(s, /__uxc_flags='--target --json --dir --help'/);
-  assert.match(s, /"push"\) __uxc_flags="\$__uxc_flags --changed --all --force --settle --recreate --revive"/);
+  assert.match(s, /"push"\) __uxc_flags="\$__uxc_flags --changed --all --force --settle --recreate --revive --ignore-client-version --ignore-server-version"/);
   assert.match(s, /"target add"\) __uxc_flags=/); // two-word flag key
 });
 
