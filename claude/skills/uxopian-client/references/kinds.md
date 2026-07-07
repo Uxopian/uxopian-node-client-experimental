@@ -101,6 +101,9 @@ Push order is topological and automatic; you never order writes yourself.
   (`--settle` waits). The filter file must be NAMED `request` on the doc (uxc does it). Marker
   tags must be DECLARED tagclasses referenced by the class or writes fail F00032.
   `uxc disable <logical>` = instant kill switch (Enabled flip, no window).
+- Gotcha (search lag): registration discovery cross-checks the state `deployedId` by direct GET —
+  a lagging/rebuilt search index can no longer cause a second live registration (double firing).
+  After ANY index rebuild, run `uxc doctor --dups` before pushing handlers from a FRESH clone.
 
 ## fd.surfacing — managed (the scope-property fragment)
 - Storage: `fd/surfacing.json`, single registry entry `surfacing`:
@@ -116,6 +119,8 @@ Push order is topological and automatic; you never order writes yourself.
 - Sync: `uxc data pull|push <name>`; per-row 3-way (disjoint row edits merge cleanly)
 - Gotcha: push NEVER deletes server docs unless an explicit tombstone row
   `{"_id": "...", "_deleted": true}` or `data push --prune` (prints kill list, needs confirm).
+- Gotcha (search lag): server rows known from sync state / the local JSONL but invisible to search
+  are recovered by direct GET — pull no longer drops rows as "deleted on server" during index lag.
 
 ## ai.prompt — managed
 - Storage: `ai/prompts/<id>.json` (meta) + `<id>.content.md` (content VERBATIM; camel ids `ctFoo`)
