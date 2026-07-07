@@ -5,7 +5,9 @@ Uxopian AI customizations** (packages, registry, hash-based bidirectional sync, 
 
 ## Read this FIRST before touching any FlowerDocs / Uxopian AI API
 
-**`docs/FLOWERDOCS-LEARNINGS.md`** is the operational knowledge base: every verified API
+**`docs/FLOWERDOCS-LEARNINGS.md`** (FlowerDocs Core/GUI) and **`docs/UXOPIAN-AI-LEARNINGS.md`**
+(the AI gateway) are the operational knowledge base — one file per product, `FAST2-LEARNINGS.md`
+will follow when fast2 support lands. They hold every verified API
 mechanic, error code, and hard-won gotcha (array bodies, id-in-path updates, cache-clear
 protocol, handler version rotation, taskclass delete hazards, search eventual-consistency,
 server dialects…). It is numbered (§1–§25+) and the code comments cite those sections.
@@ -13,7 +15,7 @@ server dialects…). It is numbered (§1–§25+) and the code comments cite tho
 Rules of engagement:
 - **Never guess an API shape** — check the learnings; if a mechanic isn't recorded, verify it
   live on a throwaway `Zz*` object (see `uxc doctor --roundtrip` for the pattern), then
-  **append what you proved** to `docs/FLOWERDOCS-LEARNINGS.md` (same numbered style, with the
+  **append what you proved** to the product's learnings file (same numbered style, with the
   date and the instance you verified on).
 - The architecture contract lives in `DESIGN.md` (sections are cited from code) and the
   inter-module API in `lib/CONTRACTS.md`. Update them when behavior changes.

@@ -1,5 +1,9 @@
 # docs/ — the uxc knowledge base
 
+One learnings file per product — read the relevant one BEFORE any API work:
+**FLOWERDOCS-LEARNINGS.md** (Core/GUI) · **UXOPIAN-AI-LEARNINGS.md** (the AI gateway) ·
+`FAST2-LEARNINGS.md` (reserved — created when fast2 support lands).
+
 ## FLOWERDOCS-LEARNINGS.md — verified API mechanics (READ BEFORE ANY API WORK)
 
 The operational knowledge behind uxc: every FlowerDocs / Uxopian AI mechanic the client relies on
