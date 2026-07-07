@@ -511,3 +511,30 @@ Sources in `claude/`, installed by `uxc install-claude` (symlinks into `~/.claud
    `rm --server --force` — the shared instance ends clean.
 5. Policy refusals verified: taskclass update refusal; external refusal; tombstone exclusion;
    documentclass local-deletion-wins test (removed tagReference stays removed after push).
+
+## 18. Server dialects (version-aware behavior)
+
+Uxopian products release fast (uxopian-ai monthly, API changes still allowed pre-GA; FlowerDocs
+yearly; `fast2` support planned). uxc therefore detects the server VERSION it talks to and
+branches on **capability flags**, never on raw version strings in adapters (`lib/dialects.mjs`).
+
+**Detection** (once per product per run, cached on ctx; precedence):
+1. operator pin — targets.json `fdVersion` / `aiVersion` (env `UXC_FD_VERSION` / `UXC_AI_VERSION`);
+2. version endpoint — FlowerDocs Core `GET /core/actuator/info` → `{version:"2026.0.0", build}`
+   (verified live, LEARNINGS §25); uxopian-ai exposes NO version surface as of 2026-07;
+3. capability fingerprint — uxopian-ai: `GET /api/v1/admin/prompts` answers 200-array on 2026-07+
+   builds and 500'd on 2025-era gateways — one cheap probe.
+
+**Registry contract**: `DIALECTS[product].ranges` = ordered `{name, max, caps}` entries (exclusive
+upper bounds, newest open-ended). Supporting a new server release = ONE new range entry plus the
+capability wiring it flips; dropping an old release = deleting its entry and raising
+`oldestSupported` (the guarded code paths go with it). Versions newer than every known range get
+the newest dialect + a warning; older than `oldestSupported` is a hard error. `uxc doctor` prints
+the detected version, dialect and caps per product.
+
+**Capabilities wired today**: `vfInstanceCreatePath` (FD 2025 trailing-slash vs FD 2026 no-slash —
+dialect picks the first attempt, the 404/405 fallback stays as safety net);
+`adminPromptList` (2026-07+ gateway: prompt reads use the ADMIN list with FULL objects — the lossy
+user-list projection stops mattering; audit fields stripped in canonicalization).
+**Reserved**: `promptVersioning` (announced prompt versioning / working copies — will gate the
+prompt write path + the post-create duplicate assertion when that release lands).

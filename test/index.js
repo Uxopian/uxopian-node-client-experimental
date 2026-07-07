@@ -2,6 +2,7 @@
 import "./canonical.test.mjs";
 import "./completion.test.mjs";
 import "./config.test.mjs";
+import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
 import "./kinds.test.mjs";
 import "./marketplace.test.mjs";
