@@ -184,3 +184,48 @@ test('dupBy groups and sorts duplicate keys, ignores null keys', () => {
   const rows = [{ k: 'a' }, { k: 'a' }, { k: 'b' }, { k: 'c' }, { k: 'c' }, { k: 'c' }, { k: null }];
   assert.deepEqual(dupBy(rows, (r) => r.k), [['c', 3], ['a', 2]]);
 });
+
+// ---------------------------------------------------------------------------
+// fd.surfacing value equivalence — 'X()' ≡ 'X' (LEARNINGS §26: paren-form legacy entries)
+// ---------------------------------------------------------------------------
+
+test('surfacing normValue: X() ≡ X, but args stay distinct', async () => {
+  const { normValue } = await import('../lib/kinds/fd-surfacing.mjs');
+  assert.equal(normValue('CtContractSearch()'), 'CtContractSearch');
+  assert.equal(normValue('CtContractSearch'), 'CtContractSearch');
+  assert.notEqual(normValue('CtX(icon=ti-folder)'), normValue('CtX')); // args are config — distinct
+});
+
+test('surfacing push: a live paren-form entry blocks re-adding the bare form (no duplicate link)', async () => {
+  const surfacing = (await import('../lib/kinds/fd-surfacing.mjs')).default;
+  const posts = [];
+  const scope = { people: { profiles: [{ id: 'P1', name: 'Admin', properties: [
+    { name: 'search.template', value: 'CtContractSearch()' },   // ported legacy paren form
+  ] }] } };
+  const ctx = {
+    target: { scope: 'IRIS', name: 't' },
+    pkg: { dir: '/tmp', entry: () => null, resState: () => null },
+    requirePkg() { return this.pkg; },
+    out: { note() {}, warn() {} },
+    clients: { core: {
+      getOne: async () => JSON.parse(JSON.stringify(scope)),
+      post: async (p, b) => { posts.push(p); return b; },
+    } },
+  };
+  // stub the backup write (needs a real dir) — point pkg.dir at the OS tmpdir
+  ctx.pkg.dir = (await import('node:os')).tmpdir();
+  const patch = await surfacing.create(ctx, { obj: [
+    { profiles: '*', name: 'search.template', value: 'CtContractSearch' }, // bare current form
+  ] });
+  assert.equal(posts.length, 0); // NOTHING pushed: the paren form already surfaces it
+  assert.deepEqual(Object.keys(patch.expansion), ['Admin']); // still recorded for unsurface
+});
+
+test('surfacing validate flags X() vs X as a duplicate spec entry', async () => {
+  const surfacing = (await import('../lib/kinds/fd-surfacing.mjs')).default;
+  const errs = surfacing.validate({}, { path: 'fd/surfacing.json' }, { obj: [
+    { profiles: '*', name: 'search.template', value: 'CtContractSearch' },
+    { profiles: '*', name: 'search.template', value: 'CtContractSearch()' },
+  ] });
+  assert.ok(errs.some((e) => /duplicate entry/.test(e)), errs.join('; '));
+});
