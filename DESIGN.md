@@ -538,3 +538,20 @@ dialect picks the first attempt, the 404/405 fallback stays as safety net);
 user-list projection stops mattering; audit fields stripped in canonicalization).
 **Reserved**: `promptVersioning` (announced prompt versioning / working copies — will gate the
 prompt write path + the post-create duplicate assertion when that release lands).
+
+## 19. Installation receipts (`uxc installed`)
+
+A deployed package leaves a RECEIPT on every surface it targets, so anyone — with no package
+checkout — can ask "what is installed here, at which version?" (`lib/receipt.mjs`):
+
+- **FlowerDocs**: a document of the uxc-owned class `UxcPackage` (created on demand with five
+  `Uxc*` STRING tagclasses), id **`UXC_PKG_<CODE>`** — deterministic, so per-package checks are a
+  DIRECT GET (lag-proof, §25/LEARNINGS). Tags: `UxcPackageCode/Version/ClientVersion/InstalledAt/
+  ArtifactSha`.
+- **uxopian-ai**: a SYSTEM prompt **`uxcPkg<Code>`** whose content is the receipt JSON
+  (`uxc-package-receipt/1`). Inert (no goal references it); visible in the admin UI by design.
+
+Written automatically after `uxc import` (with the artifact sha) and after a FULL `uxc push --all`
+(partial pushes don't bump receipts), always best-effort: a receipt failure warns and never fails
+the deploy. `uxc installed [--code c]` lists receipts from both surfaces; `--write` stamps them for
+the current package (backfill/repair).
