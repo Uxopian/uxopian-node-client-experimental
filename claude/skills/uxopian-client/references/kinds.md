@@ -112,6 +112,10 @@ Push order is topological and automatic; you never order writes yourself.
 - Add: edit the file directly, then `uxc push surfacing`
 - Gotcha: push is backup → additive merge → re-GET → auto-restore on foreign change. `"*"`
   expands against LIVE profiles at push time (expansion recorded in state for exact unsurface).
+- Gotcha (duplicate links, §26): surface on ONE umbrella profile (e.g. `["AllUsers"]` — principals
+  `["*"]`), NOT `"*"`: the FD 2026 GUI unions multi-profile properties without dedup, so `*`
+  shows one link PER PROFILE a user holds. Values `X()` and `X` are the same surfacing (uxc
+  compares them equivalent); `X(args)` differs. `uxc doctor --dups` detects duplicate links.
 
 ## fd.dataset — managed, row-level
 - Storage: `data/<name>.jsonl` (one canonical doc per line, sorted by id), declared in
