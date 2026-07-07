@@ -539,6 +539,27 @@ user-list projection stops mattering; audit fields stripped in canonicalization)
 **Reserved**: `promptVersioning` (announced prompt versioning / working copies — will gate the
 prompt write path + the post-create duplicate assertion when that release lands).
 
+**Write strategies**: kinds whose write API may change per release dispatch through a strategy
+table selected by a capability (ai.prompt: `caps.promptWrite` → `WRITE_STRATEGIES['admin-v1']` =
+{shape, create, update}). An API change — a different create flow (working copies) or a body
+reshape (a field turning mandatory, or the contrary) — is a NEW strategy + one dialect range
+flipping the capability; the adapter body never changes. An unknown strategy name fails with
+"upgrade uxc" guidance (a newer server than this client knows).
+
+**Package-side server gate — `supportedVersions`** (mirror of `minClientVersion`): a manifest may
+declare, per product, the server versions it was built for — multivalued patterns, ANY-match:
+
+```json
+{ "supportedVersions": { "flowerdocs": ["2025.*", "2026.*"], "uxopianAi": ["*"] } }
+```
+
+Pattern language: `*` (any) · `2025.*` (prefix) · `>=2026` / `>` / `<=` / `<` · exact. Enforced
+before any write by `uxc push`, `uxc import`, and `uxc mp install` (pre-download, off the
+marketplace-stored manifest): a server outside the patterns REFUSES with guidance; override with
+`--ignore-server-version` (loud warning). Undetectable server versions (uxopian-ai today) make the
+pattern unenforceable — warned, not blocked ( `["*"]` skips detection entirely). `mp publish`
+validates the patterns parse.
+
 ## 19. Installation receipts (`uxc installed`)
 
 A deployed package leaves a RECEIPT on every surface it targets, so anyone — with no package

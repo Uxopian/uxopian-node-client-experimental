@@ -101,3 +101,63 @@ test('registry hygiene: every product has ordered ranges ending open-ended (or e
     assert.equal(p.ranges[p.ranges.length - 1].max, null, `${product}: last range must be open-ended`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// supportedVersions: the pattern language + the server-version gate
+// ---------------------------------------------------------------------------
+
+test('matchesVersionPattern: *, prefix.*, comparisons, exact', async () => {
+  const { matchesVersionPattern: m, versionSupported } = await import('../lib/version.mjs');
+  assert.ok(m('2026.0.0', '*'));
+  assert.ok(m('2025.4.1', '2025.*'));
+  assert.ok(!m('2026.0.0', '2025.*'));
+  assert.ok(m('2026.1', '2026.*'));
+  assert.ok(m('2026.0.0', '>=2026'));
+  assert.ok(!m('2025.9', '>=2026'));
+  assert.ok(m('2025.9', '<2026'));
+  assert.ok(m('2026.0.0', '2026.0.0'));
+  assert.ok(!m('2026.0.1', '2026.0.0'));
+  assert.ok(versionSupported('2026.0.0', ['2025.*', '2026.*'])); // multivalued OR
+  assert.ok(!versionSupported('2027.0', ['2025.*', '2026.*']));
+});
+
+test('assertServerSupported: match passes, mismatch throws, --ignore warns, undetectable unenforced', async () => {
+  const { assertServerSupported } = await import('../lib/dialects.mjs');
+  const manifest = { supportedVersions: { flowerdocs: ['2025.*', '2026.*'], uxopianAi: ['*'] } };
+
+  const okCtx = ctxWith({ actuator: { version: '2026.0.0' }, adminList: [{ id: 'x' }] });
+  const res = await assertServerSupported(okCtx, manifest, {});
+  assert.equal(res.find((r) => r.product === 'flowerdocs').ok, true);
+  // '*'-only patterns match anything — no detection, no warning
+  assert.equal(res.find((r) => r.product === 'uxopian-ai').ok, true);
+  // a NON-'*' pattern on an undetectable product -> unenforced + warned
+  const un = ctxWith({ actuator: { version: '2026.0.0' } });
+  const res2 = await assertServerSupported(un, { supportedVersions: { uxopianAi: ['>=2026.07'] } }, { out: un.out });
+  assert.equal(res2[0].unenforced, true);
+  assert.ok(un.calls.some(([k, msg]) => k === 'warn' && /undetectable/.test(msg)));
+
+  const oldPkg = { supportedVersions: { flowerdocs: ['2025.*'] } };
+  const newSrv = ctxWith({ actuator: { version: '2026.0.0' } });
+  await assert.rejects(assertServerSupported(newSrv, oldPkg, {}), /not in this package's supportedVersions/);
+
+  const ignored = ctxWith({ actuator: { version: '2026.0.0' } });
+  const r2 = await assertServerSupported(ignored, oldPkg, { ignore: true, out: ignored.out });
+  assert.equal(r2[0].ignored, true);
+  assert.ok(ignored.calls.some(([k, msg]) => k === 'warn' && /OVERRIDDEN/.test(msg)));
+
+  // no declaration -> no gate at all
+  assert.deepEqual(await assertServerSupported(ctxWith({}), {}, {}), []);
+});
+
+test('ai.prompt write strategy: unknown promptWrite capability fails with upgrade guidance', async () => {
+  const prompt = (await import('../lib/kinds/ai-prompt.mjs')).default;
+  const ctx = {
+    flags: {},
+    _dialects: { 'uxopian-ai': { product: 'uxopian-ai', dialect: 'ai-2099', caps: { promptWrite: 'quantum-v9' } } },
+    clients: { gateway: { get: async () => [] } },
+  };
+  await assert.rejects(
+    prompt.create(ctx, { obj: { id: 'ctX', role: 'user', content: 'c' } }),
+    /no write strategy "quantum-v9".*upgrade uxc/s,
+  );
+});
