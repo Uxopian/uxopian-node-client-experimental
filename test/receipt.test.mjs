@@ -117,3 +117,59 @@ test('receiptFromFdDoc / receiptFromAiPrompt parse their carriers (and reject no
   assert.equal(receiptFromAiPrompt({ id: 'ctSummary', content: 'not json' }), null);
   assert.equal(receiptFromAiPrompt({ id: 'uxcPkgX', content: '{"kind":"other"}' }), null);
 });
+
+// ---------------------------------------------------------------------------
+// assertReceiptFlow — receipts as flow input: downgrade gate, upgrade/reinstall reporting
+// ---------------------------------------------------------------------------
+
+function flowCtx(installedVersion) {
+  const calls = [];
+  const doc = installedVersion == null ? null : {
+    id: 'UXC_PKG_CT',
+    tags: [
+      { name: 'UxcPackageCode', value: ['ct'] },
+      { name: 'UxcPackageVersion', value: [installedVersion] },
+      { name: 'UxcClientVersion', value: ['0.5.0'] },
+      { name: 'UxcInstalledAt', value: ['2026-07-08T00:00:00Z'] },
+    ],
+  };
+  return {
+    calls,
+    target: { name: 'fddemo' },
+    out: {
+      warn: (m) => calls.push(['warn', m]),
+      note: (m) => calls.push(['note', m]),
+      line: (m) => calls.push(['line', m]),
+    },
+    clients: {
+      core: { getDoc: async () => doc, search: async () => ({ found: 0, results: [] }) },
+      gateway: { get: async () => [] },
+    },
+  };
+}
+
+test('assertReceiptFlow: fresh / upgrade / reinstall classifications', async () => {
+  const { assertReceiptFlow } = await import('../lib/receipt.mjs');
+  assert.equal((await assertReceiptFlow(flowCtx(null), { code: 'ct', version: '1.7.1' }, {})).kind, 'fresh');
+
+  const up = flowCtx('1.6.0');
+  const r = await assertReceiptFlow(up, { code: 'ct', version: '1.7.1' }, { out: up.out });
+  assert.equal(r.kind, 'upgrade');
+  assert.ok(up.calls.some(([k, m]) => k === 'line' && /1\.6\.0 -> 1\.7\.1/.test(m)));
+
+  const re = flowCtx('1.7.1');
+  assert.equal((await assertReceiptFlow(re, { code: 'ct', version: '1.7.1' }, { out: re.out })).kind, 'reinstall');
+});
+
+test('assertReceiptFlow: downgrade REFUSES without force, warns loudly with it', async () => {
+  const { assertReceiptFlow } = await import('../lib/receipt.mjs');
+  const ctx = flowCtx('2.0.0');
+  await assert.rejects(
+    assertReceiptFlow(ctx, { code: 'ct', version: '1.7.1' }, { out: ctx.out }),
+    /downgrade: ct@2\.0\.0 is installed.*refusing/s,
+  );
+  const forced = flowCtx('2.0.0');
+  const r = await assertReceiptFlow(forced, { code: 'ct', version: '1.7.1' }, { force: true, out: forced.out });
+  assert.equal(r.kind, 'downgrade');
+  assert.ok(forced.calls.some(([k, m]) => k === 'warn' && /DOWNGRADING/.test(m)));
+});
