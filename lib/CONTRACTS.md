@@ -56,6 +56,17 @@ export function assertClientSupports(manifest, { client, ignore = false, out, ac
 //   write by importPackage (import + mp install), mp install (pre-download), and push (pre-connect).
 ```
 
+## lib/dialects.mjs — server dialects (version-aware capabilities)
+
+```js
+export const DIALECTS                      // per-product ordered {name, max, caps} ranges
+export function rangeForVersion(product, version)  // exclusive max; throws below oldestSupported
+export async function capabilities(ctx, product)
+//   -> { product, version|null, build?, source: 'override'|'actuator'|'probe'|'unknown',
+//        dialect, caps }  — cached per ctx; detection: target pin > version endpoint > fingerprint.
+//   Adapters read caps (e.g. caps.adminPromptList, caps.vfInstanceCreatePath), never versions.
+```
+
 ## lib/packageio.mjs
 
 ```js

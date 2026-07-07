@@ -324,7 +324,7 @@ test('ai.mcp: create with a masked secret and NO live conf HARD-ERRORS (the ai.l
 test('fd.vfinstance create: no-slash first; falls back to the slash form on 404 (dual FD 2025/2026)', async () => {
   const mk = (failNoSlashWith) => {
     const calls = [];
-    return { calls, ctx: { target: { user: 'u' }, clients: { core: {
+    return { calls, ctx: { target: { user: 'u', fdVersion: '2026.0' }, out: { warn() {} }, clients: { core: {
       post: async (p, b) => {
         calls.push(p);
         if (failNoSlashWith && p === '/rest/virtualFolder') { const e = new Error('x'); e.status = failNoSlashWith; throw e; }
