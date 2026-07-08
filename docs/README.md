@@ -1,5 +1,8 @@
 # docs/ — the uxc knowledge base
 
+**DIAGNOSTICS.md** — the pre-install readiness runbook: `uxc doctor --ready` / `--sandbox` /
+`--ai-smoke`, layer gates, symptom→command table. Run it before installing on any new scope.
+
 One learnings file per product — read the relevant one BEFORE any API work:
 **FLOWERDOCS-LEARNINGS.md** (Core/GUI) · **UXOPIAN-AI-LEARNINGS.md** (the AI gateway) ·
 `FAST2-LEARNINGS.md` (reserved — created when fast2 support lands).

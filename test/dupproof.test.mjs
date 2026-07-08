@@ -229,3 +229,67 @@ test('surfacing validate flags X() vs X as a duplicate spec entry', async () => 
   ] });
   assert.ok(errs.some((e) => /duplicate entry/.test(e)), errs.join('; '));
 });
+
+// ---------------------------------------------------------------------------
+// preflight: readiness checks + sandbox probe verdicts (docs/DIAGNOSTICS.md)
+// ---------------------------------------------------------------------------
+
+test('readinessChecks: blank scope fails every base-platform gate with the §23 fix', async () => {
+  const { readinessChecks } = await import('../lib/preflight.mjs');
+  const ctx = {
+    target: { user: 'u' },
+    _dialects: { flowerdocs: { version: '2026.0.0', dialect: 'fd-2026', source: 'override', caps: {} } },
+    clients: {
+      core: { getOne: async () => null },
+      gateway: { get: async () => { throw new Error('404'); }, tryGet: async () => null },
+    },
+  };
+  const rows = await readinessChecks(ctx, {});
+  const platform = rows.filter((r) => r.layer === 'L0.platform' && r.ok === false);
+  assert.ok(platform.length >= 5);
+  assert.ok(platform.some((r) => /BLANK scope/.test(r.detail)));
+  assert.ok(platform.every((r) => !r.fix || /§23|flower-docs-clm|default-scope/.test(r.fix)));
+  assert.ok(rows.some((r) => r.layer === 'L0.ai' && r.ok === false)); // gateway down flagged
+});
+
+test('readinessChecks: healthy scope, zero providers -> the HANG warning with the fix', async () => {
+  const { readinessChecks } = await import('../lib/preflight.mjs');
+  const ctx = {
+    target: { user: 'u' },
+    _dialects: {
+      flowerdocs: { version: '2026.0.0', dialect: 'fd-2026', source: 'actuator', caps: {} },
+      'uxopian-ai': { version: null, dialect: 'ai-2026-07', source: 'probe', caps: {} },
+    },
+    clients: {
+      core: { getOne: async (p) => ({ id: p.split('/').pop() }), getDoc: async () => null, search: async () => ({ found: 0, results: [] }) },
+      gateway: { get: async (p) => (p.includes('provider-conf') ? [] : [{ id: 'x', content: '' }]) },
+    },
+  };
+  const rows = await readinessChecks(ctx, {});
+  assert.ok(rows.filter((r) => r.layer === 'L0.platform').every((r) => r.ok === true));
+  const llm = rows.find((r) => r.layer === 'L0.llm');
+  assert.equal(llm.ok, false);
+  assert.match(llm.detail, /HANGS/);
+  assert.match(llm.fix, /uxopian-ai-default-providers-set/);
+});
+
+test('probeScript: first write needs no Java.type; guarded on the probe class', async () => {
+  const { probeScript, PROBE } = await import('../lib/preflight.mjs');
+  const s = probeScript();
+  const beforeFirstProbe = s.slice(0, s.indexOf('Java.type'));
+  assert.ok(beforeFirstProbe.includes("['engine-ok']"));           // engine marker set BEFORE any Java.type
+  assert.ok(s.includes(`=== '${PROBE.cls}'`));                     // hard class guard
+  assert.ok(s.includes('util.update(component)'));                 // in-JVM write (no HTTP — HTTP may be blocked)
+  for (const c of PROBE.classes) assert.ok(s.includes(c));
+});
+
+test('probeVerdict: OK / blocked-list / not-firing / broken', async () => {
+  const { probeVerdict, PROBE } = await import('../lib/preflight.mjs');
+  assert.equal(probeVerdict('engine-ok|' + PROBE.classes.map((c) => 'ok:' + c).join('|')).verdict, 'SANDBOX_OK');
+  const b = probeVerdict('engine-ok|ok:java.net.URI|blocked:java.net.http.HttpClient|blocked:javax.net.ssl.SSLContext');
+  assert.equal(b.verdict, 'NETWORK_BLOCKED');
+  assert.deepEqual(b.blocked, ['java.net.http.HttpClient', 'javax.net.ssl.SSLContext']);
+  assert.match(b.detail, /Redeploying handlers CANNOT fix/);
+  assert.equal(probeVerdict('pending', { timedOut: true }).verdict, 'NOT_FIRING');
+  assert.equal(probeVerdict('garbage').verdict, 'ENGINE_BROKEN');
+});

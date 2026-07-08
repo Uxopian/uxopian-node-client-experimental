@@ -12,6 +12,10 @@ mechanic, error code, and hard-won gotcha (array bodies, id-in-path updates, cac
 protocol, handler version rotation, taskclass delete hazards, search eventual-consistency,
 server dialects…). It is numbered (§1–§25+) and the code comments cite those sections.
 
+**Before installing anything on a new/unknown server or scope**: run the 3-command gate —
+`uxc doctor --ready` → `--sandbox` → `--ai-smoke` — and work `docs/DIAGNOSTICS.md` (the layered
+runbook: symptom → check → fix, incl. what only the server team can fix).
+
 Rules of engagement:
 - **Never guess an API shape** — check the learnings; if a mechanic isn't recorded, verify it
   live on a throwaway `Zz*` object (see `uxc doctor --roundtrip` for the pattern), then
