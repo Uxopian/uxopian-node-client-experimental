@@ -109,6 +109,7 @@ browser tooling, not uxc.
 
 ## References (read on demand, not up front)
 
+- `../../../docs/DIAGNOSTICS.md` — BEFORE installing on a new/unknown scope: uxc doctor --ready / --sandbox / --ai-smoke, layer gates, symptom table.
 - `references/kinds.md` — 18-kind cheat sheet: storage, fields, policy, add signature, top gotcha.
 - `references/policies.md` — the non-negotiables with the verified WHY behind each.
 - `references/errors.md` — error code/signature KB + gateway stream quirks.

@@ -576,3 +576,15 @@ Written automatically after `uxc import` (with the artifact sha) and after a FUL
 (partial pushes don't bump receipts), always best-effort: a receipt failure warns and never fails
 the deploy. `uxc installed [--code c]` lists receipts from both surfaces; `--write` stamps them for
 the current package (backfill/repair).
+
+## 20. Pre-install diagnostics (`uxc doctor --ready` / `--sandbox` / `--ai-smoke`)
+
+Before installing on a new/unknown scope, `docs/DIAGNOSTICS.md` is the runbook and doctor is the
+tool (`lib/preflight.mjs`): **--ready** = read-only layer checklist (base platform §23, dialects,
+AI provisioning, LLM providers, receipts) — seconds; **--sandbox** = self-cleaning Zz* handler
+probe answering "can handlers ACTUALLY execute here, and what does the GraalVM sandbox allow?" —
+verdicts `SANDBOX_OK` / `NETWORK_BLOCKED` (exact denied classes; only the server team can fix) /
+`NOT_FIRING`; fires FRESH events past the ~45s propagation window (§12/§27 — pre-window events are
+lost) and uses a LOW RegistrationOrder (§27: high orders never execute); **--ai-smoke** = one real
+LLM call through a throwaway prompt — the only way to prove a provider API key (masked on every
+read surface). Browser-level E2E stays out of uxc (package tests design, #27).
