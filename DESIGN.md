@@ -588,3 +588,44 @@ verdicts `SANDBOX_OK` / `NETWORK_BLOCKED` (exact denied classes; only the server
 lost) and uses a LOW RegistrationOrder (§27: high orders never execute); **--ai-smoke** = one real
 LLM call through a throwaway prompt — the only way to prove a provider API key (masked on every
 read surface). Browser-level E2E stays out of uxc (package tests design, #27).
+
+## 21. Package variables (templating)
+
+**Prior art studied (2026-07-09)** — four philosophies, one clear fit:
+
+| System | Model | What uxc takes / rejects |
+|---|---|---|
+| **OpenShift Templates** | declared `parameters` (name/description/value/required/generate) + `${NAME}` substitution, rendered ONCE by `oc process`; `--parameters` lists them | **The chosen model** — `uxc import` IS `oc process \| oc create`. Rejected its `${}` syntax: `${…}` appears VERBATIM in our shipped content (fd.script JS template literals, prompt helpers `[[${…}]]`) |
+| **Terraform variables** | typed declarations, `validation` (condition/error), `sensitive`, values via CLI/-var-file/`TF_VAR_*` env with strict precedence | Takes: `pattern` validation, `sensitive`, `UXC_VAR_*` env source, the precedence ladder |
+| **Helm values** | values.yaml + `--set`/`-f`, templates re-rendered EVERY install/upgrade; "document every value" | Takes: `--var-file`, document-every-value. **Rejects the persistent-render model** — it would put templates inside the hash-sync loop (permanent phantom drift) |
+| **Kustomize** | NO string templating — declarative overlays only | The guard-rail: templating stays OUT of the sync loop. A synced checkout is always CONCRETE |
+
+**The mechanism**: manifest `variables` block + `{{uxc:name}}` placeholders (zero collisions,
+verified against every existing package), rendered **exactly once at import/unpack** — before
+remap, pre-flight, or any server write. Placeholders exist only in the artifact; the installed
+checkout is concrete, so the 3-way hash sync never sees a template.
+
+```json
+"variables": {
+  "gatewayUrl": { "description": "Uxopian AI gateway URL as seen FROM the FlowerDocs server",
+                   "example": "http://gateway-service:8085", "required": true, "pattern": "^https?://" }
+}
+```
+
+- **Values** (precedence): `--var name=value` (repeatable) > `--var-file values.json` >
+  `UXC_VAR_<NAME>` env > declaration `default`. Missing required ⇒ refusal printing the full
+  variable table (uxc is operator/Claude-driven: the "interactive prompt" is the caller asking,
+  then retrying). `pattern` violations and unknown `--var` names refuse.
+- **Rules**: placeholders NEVER in `uxopian-project.json`/`registry.json` (ids/sync keys stay
+  concrete — publish and import both refuse); `sensitive: true` values are never persisted or
+  echoed (`__sensitive__`) — but real secrets belong in the keychain, not variables.
+- **Surfaces**: `uxc vars <pkg|slug>` lists variables + checks resolution (pre-download, from the
+  marketplace manifest); `mp install`/`import` take `--var`/`--var-file` and fail BEFORE
+  downloading when required values are missing; `mp publish` lints (undeclared placeholder =
+  error, unused declaration = warning); `push` refuses a TEMPLATE checkout (unrendered
+  placeholders in resource files — assets/README/CLAUDE.md excepted).
+- **Records**: applied values land in `.uxc/variables.json` and ride in the installation receipt
+  (`variables` field, sensitives masked) — `uxc installed`/the receipt prompt answer "how was this
+  instance parameterized?".
+- Future (deliberately not v1): OpenShift-style `generate: expression` values; a
+  `uxc vars render --write` author-side materializer.

@@ -12,4 +12,5 @@ import "./receipt.test.mjs";
 import "./registry.test.mjs";
 import "./scope.test.mjs";
 import "./util.test.mjs";
+import "./variables.test.mjs";
 import "./version.test.mjs";
