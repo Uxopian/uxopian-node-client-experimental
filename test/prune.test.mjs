@@ -105,3 +105,25 @@ test('no candidates -> completely silent no-op', async () => {
   assert.deepEqual(r, { deleted: [], skipped: [], reportOnly: [] });
   assert.equal(ctx.calls.length, 0);
 });
+
+test('shouldHoldReceipt: hold on unconfirmed skips; advance on confirm/keep/none (§23 strand fix)', async () => {
+  const { shouldHoldReceipt } = await import('../lib/prune.mjs');
+  assert.equal(shouldHoldReceipt({ deleted: [], skipped: ['fd.script/x'], reportOnly: [] }), true);   // skipped -> HOLD
+  assert.equal(shouldHoldReceipt({ deleted: [], skipped: ['fd.script/x'], reportOnly: [] }, { keep: true }), false); // explicit keep -> advance
+  assert.equal(shouldHoldReceipt({ deleted: ['fd.script/x'], skipped: [], reportOnly: [] }), false);   // deleted -> advance
+  assert.equal(shouldHoldReceipt({ deleted: [], skipped: [], reportOnly: [{ key: 'fd.taskclass/t', why: 'x' }] }), false); // report-only -> advance
+  assert.equal(shouldHoldReceipt(null), false);                                                        // no prune ran
+});
+
+test('receipt resources round-trip through both carriers', async () => {
+  const { buildReceipt, receiptFromFdDoc, receiptFromAiPrompt } = await import('../lib/receipt.mjs');
+  const r = buildReceipt({ code: 'uxoai', version: '1.3.0' }, { resources: ['fd.script/b', 'fd.script/a'] });
+  assert.deepEqual(r.resources, ['fd.script/a', 'fd.script/b']); // sorted
+  const ai = receiptFromAiPrompt({ id: 'uxcPkgUxoai', content: JSON.stringify(r) });
+  assert.deepEqual(ai.resources, ['fd.script/a', 'fd.script/b']);
+  const fd = receiptFromFdDoc({ id: 'UXC_PKG_UXOAI', tags: [
+    { name: 'UxcPackageCode', value: ['uxoai'] }, { name: 'UxcPackageVersion', value: ['1.3.0'] },
+    { name: 'UxcResources', value: ['fd.script/a,fd.script/b'] },
+  ] });
+  assert.deepEqual(fd.resources, ['fd.script/a', 'fd.script/b']);
+});

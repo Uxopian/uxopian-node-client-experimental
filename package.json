@@ -1,6 +1,6 @@
 {
   "name": "uxopian-client",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "uxc \u2014 build, package, and sync FlowerDocs + Uxopian AI customizations (project packages, registry, hash-based bidirectional sync, addon marketplace, scope lifecycle). Experimental.",
   "type": "module",
   "bin": {
