@@ -62,3 +62,20 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
 - uxc records deployed packages as an inert SYSTEM prompt `uxcPkg<Code>` whose content is the
   receipt JSON (`uxc-package-receipt/1`) — admin-visible by design; goals must never reference it
   (DESIGN §19).
+
+## §A8 — Quick Prompt panel display semantics (displaySettings)
+- The FlowerDocs-embedded Quick Prompt panel (web component served by the gateway at
+  `/api/web-components/quick-prompt/script`; wired by the uxoai-flowerdocs scripts) lists prompts
+  from `GET /prompts/display` and filters CLIENT-SIDE:
+  `displaySettings?.enabled !== false && eval(displaySettings?.displayConditions)`, sorted by
+  `displaySettings?.priority` (verified 2026-07-10 by reading the bundle on fd.demo).
+- **A prompt with NO `displaySettings` is therefore SHOWN, unconditionally** — pipeline/internal
+  prompts leak into the assistant view unless every prompt that is not meant for the panel
+  carries an explicit `displaySettings: { "enabled": false }`.
+- `displaySettings` fields: `enabled`, `label`, `description` (markdown), `displayConditions`
+  (JS expression over `{documents, tasks, folders, user, …}` context), `priority` (asc sort),
+  `categoryId` (panel grouping), `aiReferenceInfo` (info tooltip). Hiding a prompt does NOT
+  affect invocation by id (goals, scripts, `uxc run` still work).
+- uxc consequences (2026-07-10): `uxc add ai.prompt` scaffolds `{enabled:false}` by default,
+  `--quick-prompt` scaffolds a panel-visible one; `writeAiReceipt` ships receipts hidden (§A7).
+  Existing packages must add the block to each prompt JSON themselves (ct + po done 2026-07-10).

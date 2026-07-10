@@ -23,8 +23,8 @@ function fdCtx({ existing = {} } = {}) {
       },
       gateway: {
         get: async (p) => { calls.push(['gw.get', p]); return existing[`gw:${p}`] ?? []; },
-        post: async (p, b) => { calls.push(['gw.post', p, b?.id]); },
-        put: async (p, b) => { calls.push(['gw.put', p, b?.id]); },
+        post: async (p, b) => { calls.push(['gw.post', p, b?.id, b]); },
+        put: async (p, b) => { calls.push(['gw.put', p, b?.id, b]); },
       },
     },
   };
@@ -87,6 +87,8 @@ test('writeAiReceipt: POSTs when absent, PUTs when the receipt prompt exists', a
   const fresh = fdCtx();
   await writeAiReceipt(fresh, MANIFEST);
   assert.ok(fresh.calls.some(([k]) => k === 'gw.post'));
+  // receipts must never surface in the Quick Prompt panel (absent displaySettings = SHOWN — §A8)
+  assert.deepEqual(fresh.calls.find(([k]) => k === 'gw.post')[3].displaySettings, { enabled: false });
 
   const upd = fdCtx({ existing: { 'gw:/api/v1/prompts': [{ id: 'uxcPkgCt', content: '{}' }] } });
   await writeAiReceipt(upd, MANIFEST);

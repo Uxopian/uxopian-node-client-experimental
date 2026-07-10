@@ -245,6 +245,15 @@ test('ai.prompt readServer: no local file -> raw echo; absent on server -> null'
   assert.equal(await prompt.readServer(absent, 'nope'), null);
 });
 
+test('ai.prompt template: hidden from the Quick Prompt panel by default; --quick-prompt opts in', () => {
+  // absent displaySettings = SHOWN in the panel (AI learnings §A8) — the scaffold must be explicit
+  const def = prompt.template({}, 'ctNew', {}).obj;
+  assert.deepEqual(def.displaySettings, { enabled: false });
+  const quick = prompt.template({}, 'qpNew', { 'quick-prompt': true }).obj;
+  assert.equal(quick.displaySettings.enabled, true);
+  assert.equal(quick.displaySettings.label, 'qpNew');
+});
+
 // ---------------------------------------------------------------------------
 // ai.llm — LLM provider configs. Secret masking (server '********' -> '__masked__'), audit-field
 // strip, id<->provider; a FRESH keyless install pushes an EMPTY secret (vs ai.mcp which hard-errors).

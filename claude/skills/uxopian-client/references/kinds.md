@@ -129,11 +129,17 @@ Push order is topological and automatic; you never order writes yourself.
 ## ai.prompt — managed
 - Storage: `ai/prompts/<id>.json` (meta) + `<id>.content.md` (content VERBATIM; camel ids `ctFoo`)
 - Meta: `id, role(USER|SYSTEM), defaultLlmProvider, defaultLlmModel, temperature(string),
-  reasoningDisabled, requiresFunctionCallingModel, requiresMultiModalModel, timeSaved`
-- Add: `uxc add ai.prompt ctFoo [--fcm]` (`--fcm` = tool-using: sets fcm:true + reasoningDisabled:false)
+  reasoningDisabled, requiresFunctionCallingModel, requiresMultiModalModel, timeSaved,
+  displaySettings` (Quick Prompt panel config — AI learnings §A8)
+- Add: `uxc add ai.prompt ctFoo [--fcm] [--quick-prompt]` (`--fcm` = tool-using: sets fcm:true +
+  reasoningDisabled:false; `--quick-prompt` = MEANT for the panel: enabled:true + label)
 - Gotcha: `requiresFunctionCallingModel:true` REQUIRES explicit `reasoningDisabled:false`
   (absent = Java default true = runtime failure; validate refuses). Listing uses the user
   endpoint (`GET /api/v1/prompts`) — the admin GET 500s, that's normal.
+- Gotcha: a prompt with NO `displaySettings` SHOWS in the FlowerDocs Quick Prompt panel
+  (filter is `enabled !== false` — AI learnings §A8). The scaffold defaults to
+  `displaySettings:{enabled:false}`; pipeline prompts must keep it, only deliberate quick
+  prompts flip it on (usually with `displayConditions` + `label`).
 
 ## ai.goal — managed (runtime prompt routing)
 - Storage: ONE file `ai/goals/goals.json`: `[{goalName, promptId, filter, index}]`;
