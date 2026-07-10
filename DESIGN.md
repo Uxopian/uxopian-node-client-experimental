@@ -629,3 +629,26 @@ checkout is concrete, so the 3-way hash sync never sees a template.
   instance parameterized?".
 - Future (deliberately not v1): OpenShift-style `generate: expression` values; a
   `uxc vars render --write` author-side materializer.
+
+## 22. Package dependencies (v1: check-and-guide)
+
+A package declares what must ALREADY be installed on the target (`lib/dependencies.mjs`, #46):
+
+```json
+"dependencies": {
+  "uxoai": { "versions": ">=1.1", "slug": "uxoai-flowerdocs" },
+  "llm":   "*"
+}
+```
+
+Keys are **package codes** (the receipts §19 are the installed-ledger — works offline); `versions`
+reuses the §18 pattern language; `slug` only feeds the fix-it hint. Checked by `uxc import`,
+`uxc mp install` (**pre-download**, off the marketplace manifest), full `uxc push --all`, and
+`uxc doctor --ready` (L3 rows). An unmet dependency REFUSES with the exact ordered recipe
+(`uxc mp install <slug> --target t   (variables? uxc vars <slug>)`); `--ignore-dependencies`
+overrides loudly. Surfaces disagreeing on a dependency's version (partial deploy) are flagged.
+
+Deliberately simple: **no transitive resolution, no lockfiles, no solver** — each install checks
+its OWN dependencies, so a chain (contract-management → uxoai-flowerdocs → providers-set)
+resolves naturally, one guided install at a time. v2 candidate (own session): `--with-deps`
+auto-install, which must aggregate per-dependency VARIABLE tables (§21) into one refusal.
