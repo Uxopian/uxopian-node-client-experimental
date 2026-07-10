@@ -667,8 +667,14 @@ crap — so resources REMOVED by a new package version are removed from the serv
   warn + continue); `createOnly` (taskclass §14!) and `external` are NEVER auto-deleted;
   `fd.dataset` (user data) and `fd.surfacing` (needs the old spec) are report-only.
 
-Removal sources: `push --all` = sync-state keys − registry keys (the state remembers everything
-this checkout ever synced — and `rm --local` now KEEPS the state entry as the prune marker);
-`mp install` upgrades = the INSTALLED version's marketplace catalog (via the receipt) − the new
-registry; plain `import` upgrades have no reliable old list (noted in output — upgrade via
-mp install for pruning). Cache-affecting removals clear caches once at the end.
+Removal sources (precedence): the installed RECEIPT's **`resources` list** — every install
+(uxc ≥ 0.11) records the exact kind/id list it deployed, making prune detection exact,
+marketplace-independent, and available to PLAIN `import` upgrades too — then `push --all`'s
+sync-state − registry diff (`rm --local` KEEPS its state entry as the prune marker), then
+`mp install`'s old-version marketplace catalog (receipts written by older uxc). Cache-affecting
+removals clear caches once at the end.
+
+**Receipt ordering (field-reported 2026-07-10):** the receipt advances ONLY when the upgrade is
+COMPLETE — removals confirmed, explicitly kept (`--keep-removed`), or none. A skipped/unconfirmed
+prune HOLDS the receipt ("receipt NOT advanced…"), so the next run re-detects the upgrade and
+re-offers the removals — an orphan can never strand behind an advanced receipt.

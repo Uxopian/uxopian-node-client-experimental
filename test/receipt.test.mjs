@@ -45,18 +45,29 @@ test('buildReceipt carries code/version/products/uxcVersion + optional artifact 
   assert.equal(buildReceipt(MANIFEST).artifactSha, undefined); // omitted when unknown
 });
 
-test('ensureFdInfra: creates the 5 tagclasses + class when absent; skips when present', async () => {
+test('ensureFdInfra: creates the tagclasses + class when absent; idempotent when current; upgrades old classes', async () => {
   const ctx = fdCtx();
   await ensureFdInfra(ctx);
   const created = ctx.calls.filter(([k]) => k === 'post').map(([, , id]) => id);
   assert.deepEqual(created, [...FD_TAGS, FD_CLASS]); // tags first, class (referencing them) last
 
+  const fullRefs = FD_TAGS.map((tagName, order) => ({ tagName, order }));
   const present = fdCtx({ existing: Object.fromEntries([
     ...FD_TAGS.map((t) => [`/rest/tagclass/${t}`, { id: t }]),
-    [`/rest/documentclass/${FD_CLASS}`, { id: FD_CLASS }],
+    [`/rest/documentclass/${FD_CLASS}`, { id: FD_CLASS, tagReferences: fullRefs }],
   ]) });
   await ensureFdInfra(present);
-  assert.equal(present.calls.filter(([k]) => k === 'post').length, 0); // idempotent
+  assert.equal(present.calls.filter(([k]) => k === 'post').length, 0); // idempotent when current
+
+  // a class created by an OLDER uxc (no UxcResources ref) gets the missing tagReference in place
+  const oldRefs = FD_TAGS.filter((t) => t !== 'UxcResources').map((tagName, order) => ({ tagName, order }));
+  const stale = fdCtx({ existing: Object.fromEntries([
+    ...FD_TAGS.map((t) => [`/rest/tagclass/${t}`, { id: t }]),
+    [`/rest/documentclass/${FD_CLASS}`, { id: FD_CLASS, tagReferences: oldRefs }],
+  ]) });
+  await ensureFdInfra(stale);
+  const updates = stale.calls.filter(([k, path]) => k === 'post' && String(path).endsWith(`/${FD_CLASS}`));
+  assert.equal(updates.length, 1); // schema upgraded in place
 });
 
 test('writeFdReceipt: upserts the deterministic doc with the receipt tags', async () => {
