@@ -339,7 +339,7 @@ one spurious conflict at a time.
 | Command | File | registry.json | state | Server |
 |---|---|---|---|---|
 | `uxc rm <id>` (bare) | error: choose a flag | | | |
-| `uxc rm <id> --local` | deleted | entry removed | entry removed | untouched (resource becomes foreign) |
+| `uxc rm <id> --local` | deleted | removed | **KEPT — §23 prune marker** | untouched now; listed + (confirmed) deleted at the next `push --all` |
 | `uxc rm <id> --server` | kept | `retired: true` | base cleared | deleted (policy-gated; `createOnly`/`external` need `--force`) |
 | `uxc rm <id> --both` | deleted | entry removed | entry removed | deleted (same gating) |
 | `uxc destroy [--dry-run]` | — | — | — | full reverse-order teardown of every non-external resource (unsurface → disable handlers → delete in reverse topo order → cache clear), `--dry-run` prints the list first; requires typing the project code to confirm |
@@ -652,3 +652,23 @@ Deliberately simple: **no transitive resolution, no lockfiles, no solver** — e
 its OWN dependencies, so a chain (contract-management → uxoai-flowerdocs → providers-set)
 resolves naturally, one guided install at a time. v2 candidate (own session): `--with-deps`
 auto-install, which must aggregate per-dependency VARIABLE tables (§21) into one refusal.
+
+## 23. Upgrade pruning (removals are part of the version — DEFAULT)
+
+Operator decision (2026-07-10): if cleanup is optional, nobody runs it and servers accumulate
+crap — so resources REMOVED by a new package version are removed from the server BY DEFAULT
+(`lib/prune.mjs`). Safety is the **confirmation**, not an opt-in flag:
+
+- the removal list is ALWAYS computed and printed (`DELETE …` / `KEEP … (why)`);
+- a TTY gets a y/N prompt; non-interactive callers must pass `--yes-removals` — **never silent
+  deletion, never silent skipping**: declining still completes the upgrade and lists the skipped
+  removals loudly with the exact `uxc rm` commands. `--keep-removed` is the explicit opt-out.
+- policy-aware: `managed` kinds delete (handler removal sweeps every `_vN`; failed server deletes
+  warn + continue); `createOnly` (taskclass §14!) and `external` are NEVER auto-deleted;
+  `fd.dataset` (user data) and `fd.surfacing` (needs the old spec) are report-only.
+
+Removal sources: `push --all` = sync-state keys − registry keys (the state remembers everything
+this checkout ever synced — and `rm --local` now KEEPS the state entry as the prune marker);
+`mp install` upgrades = the INSTALLED version's marketplace catalog (via the receipt) − the new
+registry; plain `import` upgrades have no reliable old list (noted in output — upgrade via
+mp install for pruning). Cache-affecting removals clear caches once at the end.
