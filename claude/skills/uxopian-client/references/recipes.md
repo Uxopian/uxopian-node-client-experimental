@@ -100,3 +100,27 @@ uxc push CtBar_onCreate --settle  # rotation deploys the fix
 uxc enable CtBar_onCreate         # only if you disabled without pushing a fix
 ```
 `status` shows `disabled` as its own state, not drift.
+
+## 8. Package-embedded functional tests (`uxc test`, uxc ≥ 0.13)
+
+Ship the package's own "does it actually work HERE?" checks in `tests/*.test.mjs`; run them
+against any target where the package is installed.
+
+```bash
+uxc test --list                       # what does this package test?
+uxc test --target dev --yes           # all tests, serial, filename order (--yes = one-off consent)
+uxc test ingest --keep                # filter by name; keep ZZTEST_* fixtures for inspection
+```
+
+- Standing opt-in per target: `uxc target add … --allow-tests` (or `allowTests: true` in
+  targets.json / `UXC_ALLOW_TESTS=1`). Without it, `--yes` each run — tests create real objects.
+- A test file default-exports `{ name, description?, requires?, timeoutMs?, run(t) }`.
+  `requires` unmet ⇒ SKIP with reason (not a failure): `resources` (deployed kind/id),
+  `docs` (instance config, e.g. CT_CONFIG), `llmProvider: true`, `caps: {product:{cap:true}}`.
+- Harness: `t.doc.create({classId, tags, file})` mints `ZZTEST_*` + auto-tracks;
+  `t.waitFor(fn, {timeoutMs, label})` for handler pipelines + search lag (poll DIRECT GETs on
+  deterministic ids); `t.runPrompt(id, payload, {expect: /re/})`; `t.answerTask(taskId, answerId)`
+  (ANSWER dispatches on the FIRST answer only); `t.track('task', id)` for handler-spawned tasks.
+- Green run ⇒ receipt stamped: `uxc installed` shows `tests: N/N pass @ date`.
+- Reference suite: `examples/ct-package/tests/` (baseline, worklists, prompt smoke, ingest e2e,
+  walk-away approval e2e).

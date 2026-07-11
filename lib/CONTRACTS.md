@@ -160,11 +160,31 @@ export * as util from './util.mjs'
   strips audit fields (createdAt/By, updatedAt/By). Divergence: a masked secret with NO live value
   pushes as EMPTY (fresh keyless install) rather than erroring. list = GET base (array); id⇄provider.
 
+## lib/testkit.mjs — package-embedded functional tests (DESIGN §24)
+
+```js
+export const makeRunId = () => '8-hex'            // one per `uxc test` invocation
+export function mintId(code, hint, runId)          // ZZTEST_<CODE>_<HINT>_<run8>
+export class TestFail extends Error                 // assertion failures vs infra errors
+export function createHarness(ctx, { runId, testsDir, log }) // -> { t, teardown({keep}) }
+//   t: core/gateway/gui, pkg (manifest+registry view), id(hint), doc.create({classId,…,file}),
+//      track('doc'|'task', id), cleanup(fn), waitFor(fn,{timeoutMs,everyMs,label}), sleep,
+//      answerTask(taskId, answerId), runPrompt(id, payload, opts), expect(cond,msg), fail(msg), log
+//   teardown: LIFO, per-item try/catch, absent-already counts deleted; -> {deleted,failed,kept}
+export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:false, reason}
+//   requires: { resources:['kind/id'], docs:['ID'], products:['uxopian-ai'], llmProvider:true,
+//               caps:{product:{cap:bool}} } — unmet => the runner SKIPS with the reason.
+```
+
+`lib/receipt.mjs` adds `stampTestReceipt(ctx, code, {passed, skipped, total, when})` — targeted
+merge of UxcTestsPassedAt/UxcTestsResult (FD tags / AI receipt JSON); never creates receipts,
+never rewrites installedAt. `resolveTarget` exposes `allowTests` (targets.json / UXC_ALLOW_TESTS).
+
 ## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, run(ctx) }
 
 Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
-search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, cache-clear, explain,
+search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
 doctor, install-claude, help.
 
 Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bare id); honor

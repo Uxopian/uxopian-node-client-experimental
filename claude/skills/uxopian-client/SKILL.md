@@ -113,5 +113,5 @@ browser tooling, not uxc.
 - `references/kinds.md` — 18-kind cheat sheet: storage, fields, policy, add signature, top gotcha.
 - `references/policies.md` — the non-negotiables with the verified WHY behind each.
 - `references/errors.md` — error code/signature KB + gateway stream quirks.
-- `references/recipes.md` — worked end-to-end flows with exact commands.
+- `references/recipes.md` — worked end-to-end flows with exact commands (incl. `uxc test` — package-embedded functional tests, recipe 8).
 - `references/marketplace.md` — `uxc mp` publish/browse, marketplace.json schema, audience + tested-on compatibility.
