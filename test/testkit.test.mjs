@@ -14,7 +14,7 @@ function mockCtx({ docs = {}, providers = [], promptsOk = true } = {}) {
       const id = decodeURIComponent(path.split('/').pop());
       return docs[id] ?? null;
     },
-    upsertDoc: async (doc, files = []) => { calls.push(['upsert', doc.id, files.length]); return { action: 'created', id: doc.id }; },
+    upsertDoc: async (doc, files = []) => { calls.push(['upsert', doc.id, files.length]); ctx.lastFiles = files; return { action: 'created', id: doc.id }; },
     del: async (path) => { calls.push(['del', path]); return {}; },
     put: async (path, body) => { calls.push(['put', path, body]); return {}; },
     search: async () => ({ found: 0, results: [] }),
@@ -26,12 +26,14 @@ function mockCtx({ docs = {}, providers = [], promptsOk = true } = {}) {
       return [];
     },
   };
-  return {
+  const ctx = {
     calls,
+    lastFiles: [],
     target: { name: 'mock', scope: 'S' },
     clients: { core, gateway, gui: {} },
     pkg: { manifest: { code: 'tp' }, registry: { resources: [{ kind: 'fd.tagclass', id: 'TpX', path: 'x.json' }] } },
   };
+  return ctx;
 }
 
 test('mintId: namespaced, sanitized, run-scoped', () => {
@@ -48,12 +50,16 @@ test('doc.create: mints + tracks; REFUSES ids outside the namespace; file bytes 
   const echo = await t.doc.create({ classId: 'CtContract', tags: { CtTypeCode: 'NDA' }, file: { bytes: Buffer.from('hello'), filename: 'a.txt' } });
   assert.match(echo.id, new RegExp(`^${TEST_ID_PREFIX}_TP_Contract_aabbccdd$`));
   assert.deepEqual(ctx.calls[0], ['upsert', echo.id, 1]);
+  assert.equal(ctx.lastFiles[0].mime, 'text/plain');       // inferred from .txt (a wrong mime stalls server extractors)
+  const echo2 = await t.doc.create({ classId: 'CtContract', file: { bytes: Buffer.from('x'), filename: 'b.bin' }, mime: 'text/plain' });
+  assert.equal(ctx.lastFiles[0].mime, 'text/plain');       // explicit option wins over the .bin fallback
+  assert.equal(echo2.id, `${TEST_ID_PREFIX}_TP_Contract2_aabbccdd`); // same hint twice -> distinct ids (never collide)
   assert.equal(echo.tags[0].name, 'CtTypeCode');
   await assert.rejects(() => t.doc.create({ classId: 'X', id: 'REAL_DOC' }), /outside the ZZTEST_ namespace/);
   await assert.rejects(() => t.doc.create({}), /classId is required/);
   // teardown deletes the tracked doc (REAL_DOC was refused BEFORE tracking)
   const td = await teardown({});
-  assert.deepEqual(td.deleted, [`doc/${echo.id}`]);
+  assert.deepEqual(td.deleted, [`doc/${echo2.id}`, `doc/${echo.id}`]); // LIFO
   assert.ok(!ctx.calls.some(([op, p]) => op === 'del' && String(p).includes('REAL_DOC')));
 });
 

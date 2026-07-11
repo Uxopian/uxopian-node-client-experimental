@@ -53,25 +53,30 @@ function cmdCtx(dir, { args = [], flags = {}, docs = {} } = {}) {
 const PASS = `export default { name: 'alpha works', run: async (t) => {
   const d = await t.doc.create({ classId: 'X' });
   t.expect(d.id.startsWith('ZZTEST_TP_'), 'namespaced');
+  globalThis.__ids = (globalThis.__ids ?? []); globalThis.__ids.push(d.id);
 } };\n`;
 const SKIPPED = `export default { name: 'needs config doc', requires: { docs: ['NOPE_CFG'] }, run: async () => {} };\n`;
 const FAILS = `export default { name: 'beta breaks', run: async (t) => { t.doc.create; t.fail('deliberate'); } };\n`;
 const HANGS = `export default { name: 'gamma hangs', timeoutMs: 150, run: () => new Promise(() => {}) };\n`;
+const MIDRUN_SKIP = `export default { name: 'epsilon skips midrun', run: async (t) => { t.skip('jurist not configured'); } };\n`;
 const TRACKS_THEN_FAILS = `export default { name: 'delta tracked', run: async (t) => {
   await t.doc.create({ classId: 'X', name: 'fixture' });
   t.fail('after create');
 } };\n`;
 
 test('runner: filename order, skip with reason, green stamp attempt, json result', async () => {
-  const dir = scaffold({ tests: { '20-skip.test.mjs': SKIPPED, '10-pass.test.mjs': PASS } });
+  const dir = scaffold({ tests: { '20-skip.test.mjs': SKIPPED, '10-pass.test.mjs': PASS, '30-midskip.test.mjs': MIDRUN_SKIP } });
   const { ctx, rec } = cmdCtx(dir, { flags: { json: true, yes: true } });
   try {
     await cmd.run(ctx);
     const res = rec.results[0];
-    assert.deepEqual(res.tests.map((t) => t.file), ['10-pass.test.mjs', '20-skip.test.mjs']); // filename order
+    assert.deepEqual(res.tests.map((t) => t.file), ['10-pass.test.mjs', '20-skip.test.mjs', '30-midskip.test.mjs']); // filename order
+    assert.match(globalThis.__ids.at(-1), /_[0-9a-f]{8}t01$/); // per-test run suffix (cross-test fixture ids never collide)
     assert.equal(res.tests[0].status, 'pass');
     assert.equal(res.tests[1].status, 'skip');
     assert.match(res.tests[1].detail, /NOPE_CFG/);
+    assert.equal(res.tests[2].status, 'skip');           // t.skip mid-run = skip, not failure
+    assert.match(res.tests[2].detail, /jurist not configured/);
     assert.equal(res.passed, 1);
     assert.equal(res.failed, 0);
     // green run -> stamp attempted; no receipts on the mock -> both surfaces report ok:false
@@ -130,6 +135,7 @@ test('safety gate: refuses without allowTests/--yes (subprocess: exit 2, message
     execFileSync(process.execPath, [uxc, 'test', '--dir', dir], {
       env: {
         ...process.env,
+        HOME: dir, // hermetic: never read the developer's real ~/.uxopian/targets.json
         UXC_URL: 'http://127.0.0.1:1', UXC_SCOPE: 'S', UXC_USER: 'u', UXC_PASSWORD: 'p',
         UXC_ALLOW_TESTS: '', UXC_TARGET: '',
       },
