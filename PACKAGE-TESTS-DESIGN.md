@@ -1,6 +1,9 @@
-# Package-embedded functional tests — design (NOT implemented)
+# Package-embedded functional tests — design (IMPLEMENTED)
 
-Status: **design for review** (2026-07-08). Companion ticket tracks the go/no-go.
+Status: **implemented in v0.13.0** (2026-07-11) as designed — normative doc: DESIGN.md §24;
+code: `lib/testkit.mjs` + `lib/commands/test.mjs`; reference tests: `examples/ct-package/tests/`.
+Deltas from this draft: `requires.docs` added (instance-config docs like CT_CONFIG);
+`t.answerTask` added (task workflows); `t.id` mints (tracking happens at `t.doc.create`/`t.track`).
 Goal: a package ships its own functional tests — scripts that exercise the **deployed**
 customization on a live target (upload → handler fires → clauses/tasks appear → prompt answers)
 — runnable by anyone who installed the package: `uxc test`.

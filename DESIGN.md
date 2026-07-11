@@ -678,3 +678,32 @@ removals clear caches once at the end.
 COMPLETE — removals confirmed, explicitly kept (`--keep-removed`), or none. A skipped/unconfirmed
 prune HOLDS the receipt ("receipt NOT advanced…"), so the next run re-detects the upgrade and
 re-offers the removals — an orphan can never strand behind an advanced receipt.
+
+## 24. Package-embedded functional tests (`uxc test`)
+
+Receipts (§19) say what is installed; **package tests say whether it WORKS** on this target.
+A package ships `tests/*.test.mjs` (plain ES modules, never registry resources — they ride in
+the `.uxpkg` and are inert to older clients). `uxc test` runs them SERIALLY in filename order
+(`lib/commands/test.mjs`), each with a fresh `t` harness (`lib/testkit.mjs`):
+
+- fixtures are minted `ZZTEST_<CODE>_<HINT>_<run8>` — namespaced, visible, doctor-scannable;
+  `t.doc.create` REFUSES ids outside the namespace, and teardown (ALWAYS runs, LIFO) deletes
+  ONLY what the harness tracked (`t.track('doc'|'task', id)` / `t.cleanup(fn)`); `--keep`
+  keeps fixtures and prints them; raw `t.core` writes are possible but never cleaned — you own them.
+- `t.waitFor(fn, {timeoutMs, everyMs, label})` is THE primitive for handler pipelines + search
+  lag (§25 learnings: poll by DIRECT GET when the id is deterministic); `t.runPrompt` wraps
+  lib/run.mjs (SSE quirks, cold-start retry); `t.answerTask` (ANSWER dispatches on the FIRST
+  answer only, learnings §13); `t.expect/t.fail` throw TestFail (fail-fast per test).
+- per-test `requires` pre-flight ⇒ **SKIP with the reason, never a failure** (a package must be
+  testable on FD-only targets): `resources` (registry entry deployed — serverOf), `docs`
+  (instance config like CT_CONFIG), `products`, `llmProvider`, `caps` (dialect capabilities §18).
+- **safety gate**: tests create/delete real objects — the target opts in (`allowTests: true` in
+  targets.json, `uxc target add --allow-tests`, env `UXC_ALLOW_TESTS=1`) or the caller passes
+  `--yes`. Never surprise a production scope.
+- a fully green run (0 fail, ≥1 pass) **re-stamps the installation receipt** with
+  `UxcTestsPassedAt`/`UxcTestsResult` (FD tags + AI receipt JSON — `stampTestReceipt`, a targeted
+  merge that never rewrites installedAt/version): `uxc installed` then answers both "what is
+  deployed" and "when did it last prove itself". Exit 1 on any failure; `--json` for CI.
+
+Out of scope v1 (PACKAGE-TESTS-DESIGN.md): declarative JSON tests, parallel execution,
+browser/GUI assertions, CI orchestration beyond `--json`.

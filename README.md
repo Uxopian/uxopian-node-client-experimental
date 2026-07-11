@@ -161,6 +161,27 @@ uxc mp install <slug> --target iris           # download -> verify sha256 vs pub
 app) — the full contract is in [`PULSE-MARKETPLACE-SPEC.md`](./PULSE-MARKETPLACE-SPEC.md). The
 artifact is the same credential-free `.uxpkg` that `uxc export` produces.
 
+### Prove — package-embedded functional tests
+
+A package can ship its own functional tests (`tests/*.test.mjs`) — the author's knowledge of
+*what must work* travels with the package, and anyone who installed it can ask "does the whole
+pipeline actually work HERE?":
+
+```bash
+uxc test --list                               # what does this package test?
+uxc test --target dev --yes                   # run all (serial, filename order); --yes = one-off consent
+uxc test ingest --keep                        # filter by name/file; keep the ZZTEST_* fixtures for inspection
+```
+
+Each test gets a harness `t`: authenticated `t.core/t.gateway/t.gui`, `t.doc.create` (fixtures
+minted as `ZZTEST_<CODE>_…` and auto-deleted at teardown — only tracked fixtures are ever
+deleted), `t.waitFor` (handler pipelines + search lag), `t.runPrompt`, `t.answerTask`,
+`t.expect`. Per-test `requires` (deployed resources, instance docs, an LLM provider, dialect
+capabilities) turn unmet preconditions into **SKIP with a reason**, so the same package tests
+run on FD-only targets. Tests create real objects — targets opt in via `allowTests: true`
+(`uxc target add … --allow-tests`) or per-run `--yes`. A fully green run stamps the
+installation receipt (`uxc installed` shows `tests: 5/5 pass @ 2026-07-11`). Design: DESIGN.md §24.
+
 ### Scopes — multi-tenant lifecycle
 
 FlowerDocs is multi-tenant via **scopes**, and a scope can be created or deleted **remotely** over

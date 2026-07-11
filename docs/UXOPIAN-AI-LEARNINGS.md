@@ -79,3 +79,21 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
 - uxc consequences (2026-07-10): `uxc add ai.prompt` scaffolds `{enabled:false}` by default,
   `--quick-prompt` scaffolds a panel-visible one; `writeAiReceipt` ships receipts hidden (§A7).
   Existing packages must add the block to each prompt JSON themselves (ct + po done 2026-07-10).
+
+## §A9 — Stream stalls are PROMPT-SHAPED: `extractTextualContent` is the slow leg (verified fd.demo/IRIS, 2026-07-11)
+
+- `/api/v1/requests/stream` responses for **payload-only prompts** (all variables carried in the
+  request payload) return in seconds — verified with ctGenSampleClauses (~5 s), ctIngestOutline,
+  ctVerdict.
+- Prompts whose template calls **`[[${flowerDocsService.extractTextualContent(documentId)}]]`**
+  can stall the SAME endpoint for **minutes** (> 300 s observed, plain-text 2-page doc, mime
+  text/plain — mime is NOT the cause): the chat-side extraction service is the slow leg. This is
+  the root of the earlier "uxc run may hang" note in FLOWERDOCS-LEARNINGS §34 — it is not random,
+  it keys on the prompt's use of document extraction.
+- uxc buffers the whole stream (fetch): a stalled stream surfaces as
+  `The operation was aborted due to timeout` (AbortSignal), NOT as a gateway error body.
+- Consequences: (a) smoke tests should exercise payload-only prompts — the extraction leg is
+  better proven by handler-side (in-JVM) pipelines or the assistant UI; (b) when a user reports
+  "the prompt hangs", first ask whether its template extracts document content; (c) server-side
+  `callPrompt` from handlers is unaffected (handlers extract text themselves in-JVM precisely to
+  bypass this — see ct-ingest.js "approach B").
