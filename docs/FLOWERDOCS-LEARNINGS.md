@@ -462,3 +462,16 @@ With the boot-once guard, there is only one listener, so this companion fix is o
   `~/projects/iris-script-archive/2026-07-10-assistant-cleanup/`), 1 fixed in place
   (`49bdc430…` contextual "discuss selected documents" → `UXO_AI_ENDPOINT`). Script changes
   need the managed cache clear + a hard page reload to take.
+
+## §36 — The handler-rotation window can DOUBLE-fire, not just lose events (verified fd.demo/IRIS, 2026-07-11)
+
+§12 records that events during the ~45 s registration-propagation window are LOST for the NEW
+registration. The mirror image is also real: shortly after a rotation (`_vN` deploy + delete of
+`_vN-1`), a single CREATE was observed dispatching **two full executions** of the ingest pipeline
+(two `START_MS` generations ⇒ duplicate clause sets are prevented by deterministic ids, but
+duplicate REVIEW/APPROVAL tasks and duplicate render commands/annotated copies are not).
+Uploads ~70 s and ~25 min after a rotation double-fired; a run ~40 min after was exactly-once.
+Operational rules: (a) leave real traffic — and `uxc test` e2e runs — a settling period after a
+handler push; (b) when duplicate tasks/annotations appear, check whether a rotation just
+happened before suspecting the handler logic; (c) handlers should make their derived-object ids
+deterministic per SOURCE (not per execution) wherever duplicates would hurt.
