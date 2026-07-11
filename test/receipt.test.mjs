@@ -186,3 +186,52 @@ test('assertReceiptFlow: downgrade REFUSES without force, warns loudly with it',
   assert.equal(r.kind, 'downgrade');
   assert.ok(forced.calls.some(([k, m]) => k === 'warn' && /DOWNGRADING/.test(m)));
 });
+
+test('stampTestReceipt: targeted merge; AI PUT body is the CANONICAL prompt shape (echo fields 400)', async () => {
+  const { stampTestReceipt } = await import('../lib/receipt.mjs');
+  const puts = [];
+  const posts = [];
+  const fdDoc = {
+    id: 'UXC_PKG_TP', tags: [
+      { name: 'UxcPackageCode', value: ['tp'] }, { name: 'UxcPackageVersion', value: ['1.0.0'] },
+      { name: 'UxcTestsPassedAt', value: ['2020-01-01T00:00:00Z'] }, // stale stamp -> replaced
+    ],
+  };
+  const aiPrompt = {
+    id: 'uxcPkgTp', role: 'system', createdAt: 'server-field', updatedBy: 'server-field',
+    content: JSON.stringify({ kind: 'uxc-package-receipt/1', code: 'tp', version: '1.0.0', installedAt: 'X' }),
+  };
+  const ctx = {
+    target: { user: 'u' },
+    clients: {
+      core: {
+        getDoc: async (id) => (id === 'UXC_PKG_TP' ? fdDoc : null),
+        getOne: async () => ({ id: 'x', tagReferences: [] }), // ensureFdInfra sees infra present
+        post: async (path, body) => { posts.push([path, body]); return body; },
+        upsertDoc: async () => ({}),
+      },
+      gateway: {
+        get: async () => [aiPrompt],
+        put: async (path, body) => { puts.push([path, body]); return body; },
+      },
+    },
+  };
+  const res = await stampTestReceipt(ctx, 'tp', { passed: 5, skipped: 1, total: 6, when: '2026-07-11T00:00:00Z' });
+  assert.deepEqual(res.map((r) => [r.surface, r.ok]), [['flowerdocs', true], ['uxopian-ai', true]]);
+  // FD: tags merged — old stamp replaced, version/code untouched, doc posted in place
+  const [fdPath, fdBody] = posts.at(-1);
+  assert.match(fdPath, /UXC_PKG_TP/);
+  const tags = Object.fromEntries(fdBody[0].tags.map((t) => [t.name, t.value[0]]));
+  assert.equal(tags.UxcTestsPassedAt, '2026-07-11T00:00:00Z');
+  assert.equal(tags.UxcTestsResult, '5/6 pass (1 skip)');
+  assert.equal(tags.UxcPackageVersion, '1.0.0'); // never rewritten by a stamp
+  // AI: canonical body ONLY (echoing server fields like createdAt is a live-verified 400)
+  const [, aiBody] = puts.at(-1);
+  assert.deepEqual(Object.keys(aiBody).sort(), ['content', 'displaySettings', 'id', 'role', 'timeSaved']);
+  const merged = JSON.parse(aiBody.content);
+  assert.equal(merged.testsResult, '5/6 pass (1 skip)');
+  assert.equal(merged.installedAt, 'X'); // untouched
+  // no receipt anywhere -> ok:false both, nothing written
+  const empty = await stampTestReceipt({ target: {}, clients: { core: { getDoc: async () => null }, gateway: { get: async () => [] } } }, 'tp', { passed: 1, total: 1 });
+  assert.deepEqual(empty.map((r) => r.ok), [false, false]);
+});
