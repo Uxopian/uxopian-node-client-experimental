@@ -192,6 +192,23 @@ mints a new id), handler redeploys rotate `_vN` registration ids with an orphan 
 surfacing writes are additive + diff-verified with auto-restore, shared/`external` resources are
 never written, and deletes are explicit (`rm --local|--server|--both`, tombstones, `destroy --dry-run`).
 
+### Sharing code between scripts and handlers
+
+Two composition mechanisms, both build-time — the server always receives self-contained scripts:
+
+- **Shared source**: a handler's `meta.script` may point outside its directory
+  (`"script": "../_shared/my-pipeline.js"`) so two registrations deploy the same body
+  (e.g. one ingest script registered on both CREATE and UPDATE). Pulls never churn the
+  shared file when bytes are unchanged.
+- **`@include` directives**: a line of the form `// @include ../_shared/prelude.js` in any
+  `fd.script` / `fd.handler` source is expanded at read time (status, diff, push, export all
+  see the composed script). Paths resolve relative to the including file and must stay inside
+  the package; recursion is allowed with cycle detection; a missing include is a hard error.
+  Expanded blocks are wrapped in `// >>> uxc:include …` / `// <<< uxc:include …` markers, and
+  pulls skip overwriting a directive-bearing source whose expansion already matches the server.
+  This is how a package keeps ONE canonical copy of its handler infrastructure (auth, http,
+  config) instead of N drifting copies.
+
 ## Example
 
 [`examples/sample-package/`](./examples/sample-package/) is a tiny synthetic package — one tag
