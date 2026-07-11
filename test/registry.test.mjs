@@ -92,9 +92,16 @@ test('untracked: stray file reported; registered paths, sibling content files, h
   // file inside a directory-style resource path -> NOT reported
   mkdirSync(join(dir, 'fd', 'handlers', 'CtIngest_onCreate'), { recursive: true });
   writeFileSync(join(dir, 'fd', 'handlers', 'CtIngest_onCreate', 'meta.json'), '{}\n');
-  // shared handler sources -> NOT reported (referenced from metas by convention)
+  // shared sources -> NOT reported (referenced from metas / @include by convention):
+  // shared + _shared, under handlers/ AND scripts/
   mkdirSync(join(dir, 'fd', 'handlers', 'shared'), { recursive: true });
   writeFileSync(join(dir, 'fd', 'handlers', 'shared', 'x.js'), '// shared\n');
+  mkdirSync(join(dir, 'fd', 'handlers', '_shared'), { recursive: true });
+  writeFileSync(join(dir, 'fd', 'handlers', '_shared', 'lib.js'), '// include lib\n');
+  mkdirSync(join(dir, 'fd', 'scripts', '_shared'), { recursive: true });
+  writeFileSync(join(dir, 'fd', 'scripts', '_shared', 'util.js'), '// include lib\n');
+  mkdirSync(join(dir, 'fd', 'scripts', 'shared'), { recursive: true });
+  writeFileSync(join(dir, 'fd', 'scripts', 'shared', 'common.js'), '// include lib\n');
 
   assert.deepEqual(pkg.untracked(), ['fd/tagclasses/Stray.json']);
 });

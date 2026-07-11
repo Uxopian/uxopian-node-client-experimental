@@ -207,7 +207,10 @@ Two composition mechanisms, both build-time — the server always receives self-
   Expanded blocks are wrapped in `// >>> uxc:include …` / `// <<< uxc:include …` markers, and
   pulls skip overwriting a directive-bearing source whose expansion already matches the server.
   This is how a package keeps ONE canonical copy of its handler infrastructure (auth, http,
-  config) instead of N drifting copies.
+  config) instead of N drifting copies. Packages using `@include` MUST declare
+  `"minClientVersion": "0.12.0"` — older clients push the directive line verbatim (a silently
+  broken script); `uxc mp publish` enforces this. Shared sources conventionally live in a
+  `shared/` or `_shared/` dir under `fd/handlers/` or `fd/scripts/` (not flagged as untracked).
 
 ## Example
 
