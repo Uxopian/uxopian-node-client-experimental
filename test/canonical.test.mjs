@@ -178,3 +178,28 @@ test('fd2026: nested FQCN `type` stripped; tagclass TOP-LEVEL type PRESERVED', (
   // a NON-FQCN nested `type` value is left alone (only com.flower.docs.* is a discriminator)
   assert.equal(canonicalize('fd.folderclass', { id: 'X', children: [{ category: 'DOCUMENT', id: '*', type: 'DOCUMENT' }] }).children[0].type, 'DOCUMENT');
 });
+
+test('ai.prompt displaySettings: verbose 2026-07 admin echo ≡ terse authored form (§A10)', async () => {
+  const { hashResource, canonicalize } = await import('../lib/canonical.mjs');
+  const authored = { id: 'p', role: 'user', content: 'x', displaySettings: { enabled: false } };
+  const echo2607 = {
+    id: 'p', role: 'user', content: 'x', createdAt: 'ts', updatedBy: 'u',
+    displaySettings: { aiReferenceInfo: false, categoryId: null, description: null, displayConditions: null, enabled: false, label: null, priority: 0 },
+  };
+  assert.equal(hashResource('ai.prompt', authored), hashResource('ai.prompt', echo2607));
+  // NON-default values survive the strip
+  const real = canonicalize('ai.prompt', { id: 'p', displaySettings: { aiReferenceInfo: true, priority: 5, label: 'Quick', enabled: true } });
+  assert.deepEqual(real.displaySettings, { aiReferenceInfo: true, priority: 5, label: 'Quick', enabled: true });
+  // all-defaults collapses to no displaySettings at all
+  const allDefault = canonicalize('ai.prompt', { id: 'p', displaySettings: { categoryId: null, priority: 0, aiReferenceInfo: false } });
+  assert.equal(allDefault.displaySettings, undefined);
+});
+
+test('fd.acl: the ACLProxy echo canonicalizes to id/name (type FQCN + empty rules stripped, §37)', async () => {
+  const { canonicalize } = await import('../lib/canonical.mjs');
+  const proxy = { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: 'A', name: 'A' };
+  assert.deepEqual(canonicalize('fd.acl', proxy), { id: 'A', name: 'A' });
+  // entries (when present, e.g. after the readServer overlay) survive canonicalization
+  const overlaid = { ...proxy, entries: [{ principal: '*', permission: 'READ', grant: 'ALLOW' }] };
+  assert.deepEqual(canonicalize('fd.acl', overlaid).entries, [{ principal: '*', permission: 'READ', grant: 'ALLOW' }]);
+});

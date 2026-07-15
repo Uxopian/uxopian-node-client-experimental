@@ -475,3 +475,19 @@ Operational rules: (a) leave real traffic — and `uxc test` e2e runs — a sett
 handler push; (b) when duplicate tasks/annotations appear, check whether a rotation just
 happened before suspecting the handler logic; (c) handlers should make their derived-object ids
 deterministic per SOURCE (not per execution) wherever duplicates would hurt.
+
+## §37 — fd.acl over Core REST: T01002 = absent, the echo is a lazy ACLProxy, ENTRIES ARE WRITE-ONLY (verified fd.demo/IRIS, 2026-07-15/16)
+
+- `GET /rest/acl/{id}` for a **missing** ACL returns **500 `T01002`** ("ACL cannot be got for
+  [id]") — the fourth member of the absent-code family (F00206 classes, F00012 components,
+  T00103 tasks). uxc ≥ 0.13.1 treats it as not-found so a brand-new ACL classifies as CREATE.
+- `POST /rest/acl` (ARRAY, DTO `{id, name, entries:[{principal, permission, grant}]}` — docs
+  pp.978-982; `permission` may be an ARRAY of permission names) creates fine; DELETE works.
+- **The GET echo is `{type:"com.flower.docs.domain.acl.ACLProxy", rules:[], id, name}` — the
+  entries are NEVER echoed** (write-only over Core REST; `rules` is the business-rule aspect,
+  p.981-ish, and echoes empty for plain ACLs). Consequences:
+  - never judge an ACL's content by its GET (only existence + id/name are readable);
+  - server-side ENTRY drift is undetectable from the client — uxc syncs ACLs at
+    existence/id/name level and preserves the package's entries via a readServer overlay
+    (uxc ≥ 0.13.1); adopting a foreign ACL yields an entry-less stub to author;
+  - `uxc doctor --roundtrip` compares fd.acl on the echoed keys only (write-only: entries).
