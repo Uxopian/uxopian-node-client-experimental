@@ -359,3 +359,28 @@ test('fd.vfinstance create: no-slash first; falls back to the slash form on 404 
   await assert.rejects(vfinstance.create(d.ctx, { obj }));
   assert.deepEqual(d.calls, ['/rest/virtualFolder']);
 });
+
+test('fd.acl readServer: overlays local entries onto the ACLProxy echo (entries are write-only, §37)', async () => {
+  const { KINDS } = await import('../lib/kinds/index.mjs');
+  const acl = KINDS['fd.acl'];
+  const proxy = { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: 'CtXAcl', name: 'CtXAcl' };
+  const entries = [{ principal: '*', permission: ['READ', 'UPDATE'], grant: 'ALLOW' }];
+  const mkCtx = (withLocal) => ({
+    clients: { core: { getOne: async () => proxy } },
+    pkg: withLocal ? {
+      entry: (kind, id) => (kind === 'fd.acl' && id === 'CtXAcl' ? { kind, id, path: 'fd/acls/CtXAcl.json' } : null),
+    } : null,
+  });
+  // with a local file: entries backfilled -> the echo-leg can never strip them
+  const withLocal = mkCtx(true);
+  const origReadLocal = acl.readLocal;
+  acl.readLocal = () => ({ obj: { id: 'CtXAcl', name: 'CtXAcl', entries } });
+  try {
+    const r = await acl.readServer(withLocal, 'CtXAcl');
+    assert.deepEqual(r.obj.entries, entries);
+    assert.equal(r.obj.id, 'CtXAcl');
+    // without a package (doctor / adopt): the proxy passes through untouched
+    const bare = await acl.readServer(mkCtx(false), 'CtXAcl');
+    assert.equal(bare.obj.entries, undefined);
+  } finally { acl.readLocal = origReadLocal; }
+});

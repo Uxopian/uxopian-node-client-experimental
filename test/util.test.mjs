@@ -77,3 +77,13 @@ test('sha256 / toArray basics', () => {
   assert.deepEqual(toArray('a'), ['a']);
   assert.deepEqual(toArray(['a', 'b']), ['a', 'b']);
 });
+
+test('http ABSENT_CODES: the four verified not-found signals, incl. T01002 (ACL) — matched in code field or body text', async () => {
+  const { ABSENT_CODES } = await import('../lib/http.mjs');
+  for (const code of ['F00206', 'F00012', 'T00103', 'T01002']) {
+    assert.ok(ABSENT_CODES.test(code), `${code} must classify as absent`);
+    assert.ok(ABSENT_CODES.test(`{"code":"${code}","message":"ACL cannot be got for [ZzX]"}`), `${code} must match inside a body`);
+  }
+  assert.ok(!ABSENT_CODES.test('T01006'), 'T01006 (get-ALL ACLs failed) is a real error, never absent');
+  assert.ok(!ABSENT_CODES.test('T00108'), 'T00108 (already exists) is the exists signal, not absence');
+});

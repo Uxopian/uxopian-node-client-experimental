@@ -97,3 +97,16 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
   "the prompt hangs", first ask whether its template extracts document content; (c) server-side
   `callPrompt` from handlers is unaffected (handlers extract text themselves in-JVM precisely to
   bypass this — see ct-ingest.js "approach B").
+
+## §A10 — Admin prompt echoes project displaySettings VERBOSELY (incl. `aiReferenceInfo`, 2026-07 build) (verified fd.demo/IRIS, 2026-07-16)
+
+- `GET /api/v1/admin/prompts` echoes `displaySettings` fully projected: unset keys as `null`
+  (categoryId, description, displayConditions, label), `priority: 0`, and — new in the 2026-07
+  gateway — **`aiReferenceInfo: false`**. A terse hand-authored `{"enabled": false}` is the SAME
+  configuration.
+- uxc ≥ 0.13.1 canonicalization strips those DEFAULTS symmetrically (null keys, priority 0,
+  aiReferenceInfo false; a displaySettings that empties out is dropped) so hand-authored
+  packages don't show phantom drift against 2026-07+ gateways. Real values (enabled flags,
+  labels, non-zero priority, aiReferenceInfo:true) survive and still diff.
+- The USER list `GET /api/v1/prompts` can be a reduced projection (id+content only — §A2/§A6
+  family): the ai-prompt adapter overlays it on local meta; the ADMIN list is the full read.
