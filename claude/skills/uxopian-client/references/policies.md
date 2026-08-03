@@ -94,3 +94,4 @@ this; keep it when editing.
 or `--both`. Tombstoned (`retired: true`) resources never push by default (`push --revive`
 un-tombstones). Datasets never delete server docs without tombstone rows or `--prune` + confirm.
 `uxc destroy` (full teardown) requires typing the project code; use `--dry-run` first.
+`createOnly` entries are KEPT by destroy unless `--force` — the same delete gate `rm`/prune honor (§14).

@@ -1,7 +1,9 @@
 // Aggregator: lets `node --test test/` (directory-as-entry resolution) run the whole suite.
 import "./canonical.test.mjs";
+import "./cli.test.mjs";
 import "./completion.test.mjs";
 import "./config.test.mjs";
+import "./destroy.test.mjs";
 import "./dependencies.test.mjs";
 import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
@@ -13,6 +15,7 @@ import "./output.test.mjs";
 import "./prune.test.mjs";
 import "./receipt.test.mjs";
 import "./registry.test.mjs";
+import "./run.test.mjs";
 import "./scope.test.mjs";
 import "./test-command.test.mjs";
 import "./testkit.test.mjs";
