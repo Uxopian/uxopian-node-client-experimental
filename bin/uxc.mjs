@@ -43,7 +43,8 @@ async function main() {
   let argv = rest;
   if (TWO_WORD.has(cmd)) {
     const sub = rest[0];
-    if (!sub) fail(`usage: uxc ${cmd} <subcommand> — run: uxc help`);
+    if (sub === '--help' || sub === '-h') return console.log(`usage: uxc ${cmd} <subcommand> — run: uxc help`);
+    if (!sub || sub.startsWith('-')) fail(`usage: uxc ${cmd} <subcommand> — run: uxc help`);
     modName = `${cmd}-${sub}`;
     argv = rest.slice(1);
   }
@@ -54,6 +55,10 @@ async function main() {
   } catch (e) {
     if (e.code === 'ERR_MODULE_NOT_FOUND') fail(`unknown command "uxc ${cmd} ${argv[0] ?? ''}".`);
     throw e;
+  }
+  // per-command help NEVER runs the command — it must work outside a package/target
+  if (parsed.flags.help !== undefined || parsed.args.includes('-h')) {
+    return console.log(`${mod.summary}\nusage: ${mod.help}`);
   }
   const ctx = makeCtx(parsed);
   await mod.run(ctx);
@@ -68,7 +73,9 @@ function makeCtx({ args, flags }) {
     requirePkg() {
       if (ctx.pkg) return ctx.pkg;
       const dir = flags.dir ?? findPackageDir();
-      if (!dir) fail('no uxopian package here (uxopian-project.json not found) — run uxc init, or pass --dir');
+      // THROW (not fail/exit): callers that can work without a package (doctor --ready/--dups)
+      // catch this; for everyone else main().catch prints the same message and exits 2.
+      if (!dir) throw new Error('no uxopian package here (uxopian-project.json not found) — run uxc init, or pass --dir');
       ctx.pkg = openPackage(dir);
       return ctx.pkg;
     },

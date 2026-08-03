@@ -342,7 +342,7 @@ one spurious conflict at a time.
 | `uxc rm <id> --local` | deleted | removed | **KEPT — §23 prune marker** | untouched now; listed + (confirmed) deleted at the next `push --all` |
 | `uxc rm <id> --server` | kept | `retired: true` | base cleared | deleted (policy-gated; `createOnly`/`external` need `--force`) |
 | `uxc rm <id> --both` | deleted | entry removed | entry removed | deleted (same gating) |
-| `uxc destroy [--dry-run]` | — | — | — | full reverse-order teardown of every non-external resource (unsurface → disable handlers → delete in reverse topo order → cache clear), `--dry-run` prints the list first; requires typing the project code to confirm |
+| `uxc destroy [--dry-run] [--force]` | — | — | — | full reverse-order teardown of every non-external resource (unsurface → disable handlers → delete in reverse topo order → cache clear), `--dry-run` prints the list first; requires typing the project code to confirm; `createOnly` entries are KEPT unless `--force` (the same delete gate `rm`/prune honor — §14 taskclass hazard) |
 
 Tombstoned (`retired`) resources never push by default; `push <id> --revive` un-tombstones.
 
@@ -383,12 +383,12 @@ uxc target add|ls|use …
 uxc status [--remote] [kind|id…]               # drift + untracked + orphans + pendingCacheClear
 uxc diff <id> [--base] [--full]
 uxc pull [id…|--all]
-uxc push [id…|--changed|--all] [--force] [--settle] [--recreate] [--revive]
+uxc push [id|kind/id …|--changed|--all] [--force] [--settle] [--recreate] [--revive]
 uxc add <kind> <Name> [--title …] [per-kind args] [--from-file p]
 uxc adopt --scan [--kind k…] [--yes]           # prefix-driven bulk discovery → checklist → registry+pull
 uxc adopt <kind> <server-id> [--external]      # single
 uxc rm <id> --local|--server|--both [--force]
-uxc destroy [--dry-run]
+uxc destroy [--dry-run] [--force]
 uxc export [-o f.uxpkg] [--allow-dirty]
 uxc import <pkg|dir> [--code-remap a=b] [--force]
 uxc verify [id…]
@@ -408,7 +408,7 @@ uxc task answer <taskId> <answerId>
 uxc watch <docId> [--fields a,b] [--until 'Tag=V'] [--timeout 300] [--interval 10]
 uxc recent <classId|--category TASK> [--since 15m]
 uxc run <promptId> [--payload k=v]… [--payload-json f] [--goal] [--provider …] [--model …]
-        [--expect regex] [--max-chars n] [--fixture name] [--save-fixture name]
+        [--expect regex] [--max-chars n] [--timeout s] [--fixture name] [--save-fixture name]
 uxc cache-clear
 uxc explain <CODE|text>
 uxc doctor [--roundtrip]

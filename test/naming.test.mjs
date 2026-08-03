@@ -37,6 +37,14 @@ test('conventionalId builds per-kind ids and passes through already-prefixed nam
   // ai.llm ids are VERBATIM (global provider names, never project-prefixed)
   assert.equal(conventionalId('ai.llm', m, 'openai'), 'openai');
   assert.equal(conventionalId('ai.llm', m, 'mistral-ai'), 'mistral-ai');
+  // CROSS-FORM guard: a name carrying ANOTHER form's prefix is re-formed, never double-prefixed
+  assert.equal(conventionalId('ai.prompt', m, 'CtSummary'), 'ctSummary');   // pascal -> camel (was ctCtSummary)
+  assert.equal(conventionalId('fd.script', m, 'ctWidgets'), 'ct-widgets');  // camel -> kebab (was ct-ctwidgets)
+  assert.equal(conventionalId('fd.tagclass', m, 'ct-type-code'), 'CtType-code'); // kebab -> pascal
+  assert.equal(conventionalId('fd.tagclass', m, 'CT_FOO'), 'CtFOO');        // upper -> pascal (was CtCT_FOO)
+  // NOT confidently prefixed (prefix letters + lowercase) is left alone and prefixed as before
+  assert.equal(conventionalId('fd.tagclass', m, 'ctenant'), 'CtCtenant');
+  assert.equal(conventionalId('ai.prompt', m, 'contract'), 'ctContract');
   // manifest idPrefixes win over derivation
   const m2 = { code: 'zz', idPrefixes: { pascal: 'Ct', camel: 'ct', kebab: 'ct-', upper: 'CT_' } };
   assert.equal(conventionalId('fd.tagclass', m2, 'Foo'), 'CtFoo');
