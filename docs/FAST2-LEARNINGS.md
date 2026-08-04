@@ -68,6 +68,8 @@ Two representations, and the difference matters:
   `f2_global_shared_object`) — a map depending on them is not self-contained.
 
 ## §F5 — The full lifecycle is PURE JSON (no multipart needed)
+> Superseded in part by **§F16**: `PUT` is in-place only for cosmetic edits, and it needs the
+> identity block back in the body. Read §F16 before implementing an update path.
 Verified on throwaway `ZzUxc*` maps, then cleaned up:
 - **read**: `GET /api/maps/{mapId}` → JSON.
 - **create**: `POST /api/maps` with the full JSON body **minus** `id`, `mapVersion`,
@@ -175,3 +177,76 @@ Verified on throwaway `ZzUxc*` maps, then cleaned up:
   `com.fast2.uxopianai.UxopianAIFlowerDocsConnectionProvider`, plus core tasks
   `com.fast2.filesystem.LocalSource`, `com.fast2.script.JSTransform`,
   `com.fast2.alter.AlterDocumentProperties`, `com.fast2.model.context.Pattern`.
+
+---
+
+**§F13–§F17 verified 2026-08-04** on the same broker, while implementing `f2.map` (issue #63) and
+pushing a real map from a uxc package to fast2 with FlowerDocs `fd.demo.uxopian.com` (scope IRIS)
+as the injection target.
+
+## §F13 — `mapDescription` is character-validated
+- `POST /api/maps` with an em dash (or other non-latin punctuation) in `mapDescription.content`
+  → **400 "Map description contains invalid characters. Allowed characters are letters, numbers
+  and standard punctuation."** Keep descriptions ASCII. The map NAME is not affected.
+
+## §F14 — A broker restart rotates the JWT signing key, and a stale token 200s
+- After a broker restart, an old access token does not 401/403 — the call returns **HTTP 200 with a
+  body `{"status":"INVALID","message":"JWT signature does not match locally computed signature…"}`**.
+  Any client that only branches on the status code will parse that envelope as data. uxc logs in
+  fresh per run, so it is not exposed, but a long-lived script must check the envelope.
+
+## §F15 — The task CATALOG is authoritative for field names — and still incomplete
+- `GET /api/catalog` returns only the **~161 top-level TASK classes**. Credential/helper beans
+  (e.g. `FlowerDocsConnectionProvider`) are absent from it. **`?allTask=true` returns all 1505**
+  classes and is what a "is the connector jar installed?" check must use.
+- The FQCN is the **`name`** field; `classBaseName` is the simple name. `?classNames=<fqcn>`
+  returned 0 hits — do not rely on it, filter client-side.
+- Per-class field metadata is `accessibleFields: {<field>: {className, mandatory}}`. **The product
+  docs' field labels are NOT the bean field names** — verified mismatches on `FlowerInjector`:
+  docs say "FlowerDocs connection provider" / "Load document file content", the real fields are
+  **`connection`** (mandatory) and **`loadContent`**. Always read the catalog, never the doc table.
+- **`accessibleFields` is itself incomplete**: the shipped `TEMPLATE-Flower-archiving` map
+  configures `FlowerInjector.category = DOCUMENT`, a field the catalog does not list. Treat the
+  shipped `TEMPLATE-*` maps as a second reference when a field seems to be missing.
+- Field value encodings in the JSON form: `primitiveConfiguration {value}`, `objectConfiguration
+  {className, fields[]}`, `listConfiguration []`, `referenceConfiguration`, and **`mapConfiguration`**
+  whose entries are `{key: <config>, value: <config>}` — the key is itself a wrapped config, and
+  values are usually `com.fast2.model.context.Pattern` beans (so `${…}` expressions work).
+
+## §F16 — `PUT /api/maps`: identity block required, and a structural edit MINTS A NEW VERSION
+Refines §F5, which was measured on a description-only edit:
+- The body must carry **`id` AND `mapVersion` AND `mapVersionsSerieId`**. Sending only `id` (the
+  canonical content plus the id) fails with **400 "Map id: …, name: … is corrupted"**. Since uxc
+  strips those three as server-owned, the update path must re-attach them from a live GET.
+- A **cosmetic** edit (e.g. `mapDescription.content`) updates in place: same `mapId`, same version.
+- A **structural** edit (adding/removing a step) creates a **NEW VERSION**: a NEW `mapId`, a NEW
+  `mapVersionsSerieId`, `versionNumber+1`, and the previous version flipped to `isReadOnly: true`.
+- Therefore **a cached mapId goes stale on every structural update** — and the stale one still
+  resolves (to the frozen read-only version), so a "does it still GET?" check does NOT detect it.
+  Resolve by NAME: `summary/search-by-pattern` returns only the CURRENT version (the read-only
+  ancestors stay inside the version series and never collide by name).
+
+## §F17 — FlowerInjector: two silent failure modes (ProcessedOK proves NOTHING)
+Both observed with the campaign reporting `Finished` and `ProcessedOK` for every step, while
+**zero documents were created** in FlowerDocs. `ProcessedOK` is not evidence of injection — verify
+on the FlowerDocs side (`uxc search <class> --order creationDate:desc`), and read the WORKER log.
+1. **The password must be fast2's OBFUSCATED form (`xr1c/…`), never plaintext.** A plaintext value
+   fails at bean-instantiation time with
+   `ERROR ReflectionInstantiatorReflect: While setting password on class
+   com.fast2.flowerdocs.FlowerDocsConnectionProvider, caught Unexpected encoded string !`
+   — logged by the WORKER, invisible in the campaign stats, and the punnet still counts OK.
+   No REST endpoint obfuscates a password (`/api/maps/{id}/encryption-key` 500s; there is no
+   encode service in the 108-path API). The obfuscated string is produced by the fast2 UI. So a
+   uxc package variable for a fast2 connector password must carry the **obfuscated token**, copied
+   from the UI — uxc treats it as opaque. (This is also why the value is a secret: the scheme is
+   reversible, §F11.)
+2. **`Flower category is missing for punnet <id>`** — a WARN, again with ProcessedOK. Setting
+   `category` as a step field on `FlowerInjector`, and setting a `category` DOCUMENT property via
+   `AlterDocumentProperties.propertyMap`, both leave the warning in place; the injector resolves
+   the category from somewhere else (punnet-level data is the likely candidate). **Unresolved** —
+   configure a working FlowerInjector in the fast2 UI and diff its map JSON before trusting a
+   hand-authored one.
+
+**Consequence for uxc**: `uxc f2 run` reports what the broker reports; it cannot certify that a
+FlowerDocs injection happened. Package functional tests (`uxc test`) should assert on the
+FlowerDocs side (search the target class) rather than on campaign stats.

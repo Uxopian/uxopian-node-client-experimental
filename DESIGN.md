@@ -389,6 +389,8 @@ uxc adopt --scan [--kind k…] [--yes]           # prefix-driven bulk discovery 
 uxc adopt <kind> <server-id> [--external]      # single
 uxc rm <id> --local|--server|--both [--force]
 uxc destroy [--dry-run] [--force]
+uxc f2 ls [--campaigns]                         # fast2 broker: maps + campaign states
+uxc f2 run <MapName> [--campaign n] [--wait s] [--expect-ok n]
 uxc export [-o f.uxpkg] [--allow-dirty]
 uxc import <pkg|dir> [--code-remap a=b] [--force]
 uxc verify [id…]
