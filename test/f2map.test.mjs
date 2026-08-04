@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import adapter, {
-  escapeRe, findLeakedSecrets, danglingLinks, resolveMasked, mapSecrets, MASKED,
+  escapeRe, findLeakedSecrets, danglingLinks, resolveMasked, mapSecrets, MASKED, topologyWarnings,
 } from '../lib/kinds/f2-map.mjs';
 import { canonicalize, hashResource } from '../lib/canonical.mjs';
 import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
@@ -50,11 +50,28 @@ test('canonicalize strips ONLY the four server-minted fields; content survives (
   const c = canonicalize('f2.map', server);
   for (const k of ['id', 'mapVersion', 'mapVersionsSerieId', 'isReadOnly']) assert.ok(!(k in c), `${k} stripped`);
   assert.equal(c.name, 'ZfDemo');
-  assert.equal(c.steps.length, 3);
+  // LocalSource -> SetPunnetCategory -> SetDocumentClass -> FlowerInjector (§F18)
+  assert.deepEqual(c.steps.map((s) => s.name), ['LocalSource', 'SetPunnetCategory', 'SetDocumentClass', 'FlowerInjector']);
   // step ids and canvas positions are CONTENT (campaign stats are keyed by step id, §F9)
   assert.ok(c.steps.every((s) => s.id));
   assert.equal(c.steps[0].graphic.x, 200);
   assert.deepEqual(c.steps[0].links, [{ target: c.steps[1].id }]);
+});
+
+test('template passes the topology lint: a FlowerInjector always has a punnet category (§F17/§F18)', () => {
+  assert.deepEqual(topologyWarnings(tpl()), []);
+  // drop the AlterPunnetProperties step and the silent-failure shape is caught
+  const broken = tpl();
+  broken.steps = broken.steps.filter((s) => s.objectConfiguration.className !== 'com.fast2.alter.AlterPunnetProperties');
+  assert.match(topologyWarnings(broken).join(' '), /Flower category is missing|category/);
+});
+
+test('topologyWarnings flags a REST /core endpoint (the connector needs /core/services, §F18)', () => {
+  const o = tpl();
+  fieldOf(o, 'FlowerInjector', 'connection.endPoint').primitiveConfiguration.value = 'https://host/core';
+  assert.match(topologyWarnings(o).join(' '), /core\/services/);
+  fieldOf(o, 'FlowerInjector', 'connection.endPoint').primitiveConfiguration.value = 'https://host/core/services';
+  assert.deepEqual(topologyWarnings(o).filter((w) => /core\/services/.test(w)), []);
 });
 
 test('secrets: masked on BOTH sides, so a real password never lands on disk and never drifts (§F11)', () => {

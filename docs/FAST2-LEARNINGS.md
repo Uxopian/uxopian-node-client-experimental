@@ -250,3 +250,86 @@ on the FlowerDocs side (`uxc search <class> --order creationDate:desc`), and rea
 **Consequence for uxc**: `uxc f2 run` reports what the broker reports; it cannot certify that a
 FlowerDocs injection happened. Package functional tests (`uxc test`) should assert on the
 FlowerDocs side (search the target class) rather than on campaign stats.
+
+## §F18 — The REAL FlowerDocs+AI ingestion pattern (from a working 15-version map)
+Read from the live `CaptureAndExtraction` map (`4750aac1-…`, v15) on 2026-08-04 — the reference for
+what §F17's silent failures were missing. **Read a working map before authoring one**: the shipped
+`TEMPLATE-*` maps and any customer map in `f2_maps` are better documentation than the product docs.
+
+Pipeline (7 steps, two-pass injection):
+```
+LocalSource(*.jpg)
+  -> AlterPunnetProperties   propertyMap[category] = DOCUMENT        <- §F17's missing piece
+  -> AlterDocumentProperties propertyMap[classid]  = Document
+  -> FlowerInjector "Upload"  loadContent=true, modeUpdate=false,
+                              documentIdDataName=flowerDocsDocumentId
+  -> UxopianAIRequest         query=<prompt/goal>, responseMetadataKey=aiResponse,
+                              metadataToInject=[flowerDocsDocumentId]
+  -> JSTransform              parse aiResponse JSON -> document data
+  -> FlowerInjector "Update"  modeUpdate=true, loadContent=false,
+                              documentIdPattern=${flowerDocsDocumentId}
+```
+The four things that make it work, each of which my hand-authored map got wrong:
+1. **`category` is a PUNNET property, set by `com.fast2.alter.AlterPunnetProperties`** — not a
+   `FlowerInjector` step field and not a document property. That is the fix for the §F17 WARN
+   `Flower category is missing for punnet <id>`. `classid` stays a DOCUMENT property
+   (`AlterDocumentProperties`). Both use `propertyMap` with Pattern-bean values (§F15).
+2. **The FlowerDocs endpoint ends in `/core/services`**, not `/core` — this is the SOAP/webservices
+   base, not the REST base uxc itself talks to. A uxc target's `core` is NOT reusable verbatim here.
+3. **Injection is TWO passes when AI enrichment is involved**: create the document first, capture
+   its new FlowerDocs id into punnet metadata via `documentIdDataName`, then re-inject with
+   `modeUpdate=true` + `documentIdPattern=${<thatKey>}` to write the enriched properties back onto
+   the SAME document. A single-pass map cannot carry AI output into FlowerDocs.
+4. **Passwords are the obfuscated `xr1c/…` token everywhere** (§F17) — in both the FlowerDocs
+   connection and the AI connection.
+
+`UxopianAIRequest` (`com.fast2.uxopianai.UxopianAIRequest`): `query` names the prompt/goal,
+`responseMetadataKey` is where the raw answer lands as punnet metadata, `metadataToInject[]` lists
+punnet metadata passed to the AI, `connectionSettings` ->
+`com.fast2.uxopianai.UxopianAIFlowerDocsConnectionProvider` with only `user`/`password`/`scope` —
+**no endpoint**, because the broker resolves the gateway from its own config (`GET /api/config`
+`uxopian-ai` block, §F2).
+
+The AI answer is a JSON STRING in punnet metadata; a `JSTransform` step turns it into document
+data. The working script, verbatim:
+```js
+var doc = punnet.getDocuments().getFirst();
+var rawJson = doc.getDataSet().getDataValue("aiResponse");
+var result = JSON.parse(rawJson).result;      // the answer lives under .result
+for (pty in result) doc.getDataSet().addData(pty, "String", result[pty]);
+```
+
+## §F19 — Link CONDITIONS: how a map branches
+A link is `{name, target, condition}` where `condition` wraps an objectConfiguration:
+```json
+{"name":"no PII -> ingest","target":"<stepId>","condition":{"objectConfiguration":{
+  "className":"com.fast2.taskflow.conditions.PatternCondition","singleton":false,
+  "fullyConfigured":true,
+  "fields":[{"name":"condition","primitiveConfiguration":{"value":"hasPii.equals(\"false\")"}}]}}}
+```
+- An **unconditional** link still carries the wrapper, with `className: ""` (empty string) and no
+  fields. Omitting `condition` entirely also works on create, but the echo adds the empty form — so
+  author the empty form to keep local and echo hashing equal.
+- The 13 condition classes in the catalog (all `com.fast2.taskflow.conditions.*`): `PatternCondition`,
+  `Otherwise`, `AlwaysTrue`, `AlwaysFalse`, `PunnetInException`, `PunnetHasData`, `DocumentHasData`,
+  `ContentMimeTypeMatches`, `NumberOfDocuments`, `And`, `Or`, `Not`, `BinaryCondition`.
+- **`PatternCondition.condition` is a Java-ish boolean expression over DATA NAMES as bare
+  identifiers** — verified examples from the shipped templates:
+  `acl.equals("ACL_archivists")` · `SOFT_DELETION.equals("TODO") && HARD_DELETION.equals("NOT_YET")`.
+  So a `JSTransform` that does `punnet.getDataSet().addData("hasPii","String",v)` makes `hasPii`
+  directly routable. String comparison via `.equals(...)`, not `==`.
+- **`Otherwise` is the else branch** and is how the shipped maps terminate a decision fan-out. Order
+  the links with the specific `PatternCondition`s first and `Otherwise` last.
+- One step can carry many outbound links (`TEMPLATE-Documentum-multi-target` fans out to 6).
+
+## §F20 — Moving/deleting the SOURCE file (filesystem side-effects)
+- **`com.fast2.alter.MoveContent`** — "Move or copy the content of a document". Only `toFolder` is
+  mandatory; the useful rest: `fromFolder`, `copyFile` (false = move), `deleteFromFolder`,
+  `useOriginalFileName`, `overwriteExistingFile`, `processAllContent`, `newOutputFileName`,
+  `fileExtension`, `supportedSourceMimeTypes`, `filesToExclude`, plus `waitTargetFile*` for
+  slow/network targets. This is the task for "move the rejected file to another folder".
+- `com.fast2.alter.MovePunnet` moves the punnet itself (`pathPattern` mandatory) — a different thing:
+  it relocates the punnet within fast2's own working folders, not the source document's content.
+- `com.fast2.filesystem.DeleteFileFromSystem` (`pathOfFileToDelete`) deletes the source outright.
+- Remember `security.allowed.directories` in `config/application.properties`: when set, the worker
+  may only touch listed directories — a move to an unlisted folder fails at run time.
