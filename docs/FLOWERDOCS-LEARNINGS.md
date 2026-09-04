@@ -502,3 +502,12 @@ deterministic per SOURCE (not per execution) wherever duplicates would hurt.
 `exportPackage` in `lib/packageio.mjs` passed an undeclared `out` to `scrubF2MapSecrets`. Fixed by
 declaring `const out = ctx.out ?? makeOut(ctx.flags ?? {});` at the top of the function. Symptom: any
 `uxc export` / `uxc mp publish --dry-run` died before zipping. Verified on the gerflor package (506 entries).
+
+## 2026-09-04 · Client-side document creation: §211 needs correction (fd.demo, FlowerDocs 2026.0.0)
+Probed in a live GUI session (scope default): `POST ./upload` relative to `/gui/` (i.e.
+`/gui/upload`, multipart field `file`) returns `200` with `tmp_<uuid>|<name>|<mime>`; `/gui/rest/files/tmp`
+was the wrong URL. The client `Document` object DOES have `addTag(name, value, readonly)` (documented
+p. 651-653, same as `Task.addTag`), plus `addFile(tmpId)`, `setFiles`, `setClassId`, `setName`.
+Documented create path: `JSAPI.get().document().create([doc], ok, err)`. End-to-end persistence not yet
+re-proven from a script (automation guard blocked the write); to be confirmed by a human click. Core
+REST from the browser stays 403 (GUI cookie is not core auth).
