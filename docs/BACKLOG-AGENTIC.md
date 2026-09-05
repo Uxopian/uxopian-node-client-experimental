@@ -74,3 +74,12 @@ Everything below was hit for real; the "why" line says how it bit us. Ordered by
 - `tagclass`: FREELIST accepted; `UXC_HTTP_LOG` request journal (81a9575).
 - `surfacing`: optional `order` key pins `tab.virtualfolder` order; `UXC_DEBUG_SCOPE` (ac51818).
 - Uncommitted on this branch: `doctor --sandbox --classes a,b` (lib/preflight.mjs, lib/commands/doctor.mjs).
+
+## Added 2026-09-06
+
+17. **Composed script size guard.** Why: the composed `fd.script` (14 parts plus the two include
+    marker lines per part) hit nginx's 1 MB body limit; `push` answered `413 Request Entity Too
+    Large` with no hint. `push` should print the composed size, warn above a configurable
+    threshold (default 900 KB), and offer `--strip-comments` (comment lines only, never inline) so
+    an agent can see the budget before it overflows. A `uxc size fd.script/<id>` would let agents
+    check without pushing.
