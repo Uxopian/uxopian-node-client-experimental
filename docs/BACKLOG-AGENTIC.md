@@ -33,8 +33,11 @@ Everything below was hit for real; the "why" line says how it bit us. Ordered by
    deployed handlers did not send it, the gateway hung until timeout, four e2e tests broke, the
    agent had to revert on the server. Static check in `verify`: for each `ai.prompt`, extract
    `${vars}` from the content and grep every handler's `callPrompt` payloads (and `uxc run`
-   fixtures) for the keys; warn "variable X of prompt P is provided by no caller". Also order the
-   push plan: handler providing a variable before the prompt consuming it, or block.
+   fixtures) for the keys; warn "variable X of prompt P is provided by no caller". **A warning,
+   never a blocker**: a prompt can be called from outside the package's handlers (another
+   client, a script, Uxopian AI without FlowerDocs at all), so absence of a caller proves
+   nothing. Where a caller *is* found, order the push plan: handler providing the variable
+   before the prompt consuming it, and say why.
 8. **Dataset scaffold writes the manifest.** Why: `uxc add` of a dataset leaves the
    `dataSets` entry of `uxopian-project.json` to be added by hand; the first push fails with an
    explicit but avoidable error.
