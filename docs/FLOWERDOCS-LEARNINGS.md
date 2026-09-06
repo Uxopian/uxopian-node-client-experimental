@@ -511,3 +511,27 @@ p. 651-653, same as `Task.addTag`), plus `addFile(tmpId)`, `setFiles`, `setClass
 Documented create path: `JSAPI.get().document().create([doc], ok, err)`. End-to-end persistence not yet
 re-proven from a script (automation guard blocked the write); to be confirmed by a human click. Core
 REST from the browser stays 403 (GUI cookie is not core auth).
+
+## FREELIST tags and the GUI (verified live on fd.demo scope `default`, 2026-09-05, DEF-4-40)
+
+- **The GUI does NOT resolve `displayNames` of a `FREELIST` tag class.** Virtual-folder aggregation buckets on a FREELIST field are rendered with the **raw symbolic name** (`SC_FR_GP`), in every locale, even when the value and its FR/EN `displayNames` are declared in the tag class (the same tag class rendered labels while it was a `CHOICELIST`). The native results-table column and the search-criteria field of that tag show the raw code too. Only `CHOICELIST` (and presumably `ICON`) values get labelled natively. A stale per-language GUI cache can make one locale still show labels for a while after a CHOICELIST→FREELIST switch: that is a cache artefact, not a working locale.
+- **Workaround that works: the JSAPI bucket API** (doc pp. 692-695). `JSAPI.get().getHelperFactory().getBucketAPI().register(searchId, function (buckets, callback) { ...; callback.onProcessed(buckets); })`, then `bucket.setName(label)`. The bucket value is read from `bucket.getRequest().getFilters()[0].getCriteria()[0]` (`getName()` = tag id, `getValues()[0]` = symbolic name). `getName()` on a FREELIST bucket returns the raw code. Renaming keeps click, count and the URL selection key (`Orders__SC_FR_GP`) intact; the callback is chained per aggregation level, so filter on the criterion name. Registration survives SPA navigation: guard it with a window flag (learnings §33 pattern). `searchId` is the `searches[].id` of the vfclass (`poOrdersSearch`), not the vfclass id.
+- **GUI config REST needs the browser session, not the Core JWT**: `GET /gui/rest/config/labels`, `/gui/rest/config/classes/tag` answer **500** with the `token:` header (only `/gui/rest/caches` accepts the JWT). What the GUI actually loads at start: `config/objects`, `config/labels?locale=xx`, `config/user`, `config/classes/{document,folder,virtualFolder,tag,task/creatable}`, `config/tagCategories`, `config/securityObjects`, `config/scope`, `config/features`, `config/extensions`, then `scripts/<id>?v=<ts>` per registered Script, `config/tabs/virtualFolders?ids=...`, `check-update`, `prefs/stamps`; all carry a `policy=` hash plus `scope`/`user` query params.
+- **Script cache in the browser**: after a `uxc push` of a Script + cache-clear, an open GUI tab keeps the OLD script until a real reload; a hash-only navigation does not reload it. The GUI shows the toast "Une nouvelle version est disponible / A new version is available" (from `rest/check-update`): click Refresh, or Cmd+R. Adding a query parameter to the GUI URL to bust the cache can log the session out (L4-COCKPIT-2, 2026-09-05): use the toast or a plain reload instead.
+
+## 2026-09-06 · `GET /core/rest/documents/{id}` on a missing document id also 500s, not 404s (fd.demo, scope default)
+Confirmed live (Gerflor POC, lot MEMORY-CLIENT, `tests/40-uc1-e2e`): `PoMem.loadCustomerDoc` calls
+`coreGet(ctx, '/rest/documents/PoCustomerMemory_C-10021')` for a customer that has never had a
+document created for it yet (a fresh `PoCustomerMemory` class, zero documents at all). The server
+answers **500** (surfaced in the package's own diagnostic as `coreErreur500(rest-documents-...)`),
+not 404. This is the SAME family already documented at §"F00206" for `GET /rest/<classtype>/{id}`
+(missing class → 500), now confirmed to extend to `GET /rest/documents/{id}` (missing DOCUMENT → 500
+too, no distinct error code surfaced through this path). The Gerflor package's `coreGet` helper
+already treats any status ≥500 the same as a 4xx-not-found (returns `null`, only the diagnostic label
+differs: `coreErreur<status>` vs `absent<status>`) — so this is not a functional defect, just a
+noisier-than-expected diagnostic line; any caller doing an existence-check-by-GET on
+`/rest/documents/{id}` should treat 500 as "does not exist yet", exactly like the classtype case.
+
+## §30 — Handler script size ceiling (verified 2026-09-07, fd.demo default)
+- **`POST /core/rest/files/tmp` returns nginx `413 Request Entity Too Large` around 1 MB.** A handler whose expanded script (handler + `@include`d shared libs) reaches ~1.02 MB deployed fine; ~1.03 MB failed. `uxc push` stops at the first failing resource and says "re-run --changed to resume" — the OTHER resources in the same command are NOT pushed; check `uxc status` afterwards.
+- Mitigations seen: drop includes a handler does not need (typeof guards keep the code safe), move shared helpers to a lib every handler already includes, split a very large handler by command family. Stripping full-line comments at push would save ~35 % but must keep the `// >>> uxc:include` markers and a consistent content hash for diff/verify.
