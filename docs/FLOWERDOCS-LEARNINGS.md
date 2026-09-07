@@ -535,3 +535,12 @@ noisier-than-expected diagnostic line; any caller doing an existence-check-by-GE
 ## §30 — Handler script size ceiling (verified 2026-09-07, fd.demo default)
 - **`POST /core/rest/files/tmp` returns nginx `413 Request Entity Too Large` around 1 MB.** A handler whose expanded script (handler + `@include`d shared libs) reaches ~1.02 MB deployed fine; ~1.03 MB failed. `uxc push` stops at the first failing resource and says "re-run --changed to resume" — the OTHER resources in the same command are NOT pushed; check `uxc status` afterwards.
 - Mitigations seen: drop includes a handler does not need (typeof guards keep the code safe), move shared helpers to a lib every handler already includes, split a very large handler by command family. Stripping full-line comments at push would save ~35 % but must keep the `// >>> uxc:include` markers and a consistent content hash for diff/verify.
+
+## 31. Answering a task over REST = PUT, not POST (verified 2026-09-07, fd.demo FD2026)
+
+`PUT /core/rest/tasks/{taskId}/answer` with body `{ "id": "<answerId>" }` answers the task and
+fires the task answer handler (obligations, work items, reconciler all ran). `POST` on the same
+path returns `405 Method 'POST' is not supported`. `lib/testkit.mjs` already uses PUT; a package
+helper that tries POST first and falls back to "mark PoTaskState" silently skips the answer
+handler on this server, so use PUT when the handler MUST run (`gerflor-poc-work/bin/task-answer.mjs`).
+
