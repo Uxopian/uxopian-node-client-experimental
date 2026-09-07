@@ -544,3 +544,12 @@ path returns `405 Method 'POST' is not supported`. `lib/testkit.mjs` already use
 helper that tries POST first and falls back to "mark PoTaskState" silently skips the answer
 handler on this server, so use PUT when the handler MUST run (`gerflor-poc-work/bin/task-answer.mjs`).
 
+## 32. In FlowerDocs handler scripts the global `String` is java.lang.String (verified 2026-09-07)
+
+Inside a server handler (Graal JS), `String` resolves to the Java class, not the JS constructor:
+`String(x)` and `String.fromCharCode(n)` fail with `invokeMember (fromCharCode) on
+java.lang.String failed due to: Unknown identifier: fromCharCode`. Use `('' + x)` for conversion
+and build characters through Java: `'' + new (Java.type('java.lang.String'))(Java.type('java.lang.Character').toChars(n))`,
+with a `typeof Java === 'undefined'` fallback to `String.fromCharCode` for Node unit tests. Node
+tests never catch this class of bug: any "pure JS fallback" path must be exercised on the server.
+
