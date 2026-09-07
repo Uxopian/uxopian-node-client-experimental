@@ -553,3 +553,8 @@ and build characters through Java: `'' + new (Java.type('java.lang.String'))(Jav
 with a `typeof Java === 'undefined'` fallback to `String.fromCharCode` for Node unit tests. Node
 tests never catch this class of bug: any "pure JS fallback" path must be exercised on the server.
 
+## §33 — `// @include <file> strip` : les bibliothèques partagées sans leurs commentaires (2026-09-08, gfdefault)
+- Symptôme : `POST /core/rest/files/tmp -> 413` sur `PoAdminCommand_onCreate` dès que son script EXPANSÉ dépasse ~1 030 000 octets (10 includes partagés, 297 Ko de lignes de commentaires dans ces bibliothèques).
+- Remède dans uxc 0.15 : le suffixe `strip` sur une directive `@include` retire du corps expansé les lignes qui ne sont QU'un commentaire `//` et tasse les lignes vides ; les marqueurs `uxc:include` restent, les commentaires en fin de ligne aussi (un `//` dans une chaîne rendrait le retrait dangereux). Les sources gardent tout ; seul le corps envoyé au serveur est allégé. Résultat sur le package `po` : 1 050 922 -> 766 944 octets pour l'admin, tous les handlers sous 720 Ko.
+- Le contrôle de dérive (`status`, `pull`) passe par la même expansion : un include `strip` reste « en phase » avec le serveur.
+
