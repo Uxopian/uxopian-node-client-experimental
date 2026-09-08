@@ -558,3 +558,9 @@ tests never catch this class of bug: any "pure JS fallback" path must be exercis
 - Remède dans uxc 0.15 : le suffixe `strip` sur une directive `@include` retire du corps expansé les lignes qui ne sont QU'un commentaire `//` et tasse les lignes vides ; les marqueurs `uxc:include` restent, les commentaires en fin de ligne aussi (un `//` dans une chaîne rendrait le retrait dangereux). Les sources gardent tout ; seul le corps envoyé au serveur est allégé. Résultat sur le package `po` : 1 050 922 -> 766 944 octets pour l'admin, tous les handlers sous 720 Ko.
 - Le contrôle de dérive (`status`, `pull`) passe par la même expansion : un include `strip` reste « en phase » avec le serveur.
 
+## §34 — Uxopian AI : `[[` et `]]` DANS une valeur de payload font tomber la passerelle (2026-09-08, gfdefault)
+- Symptôme : `POST /api/v1/requests` → `500 {"code":"INTERNAL_ERROR"}` en ~500 ms, sans appel au modèle, dès que la valeur d'une variable de prompt contient `[[` ou `]]` (ici un JSON avec des tableaux imbriqués : `"paths":[[{...}]]`). La même charge sans ces séquences passe ; une charge de 40 Ko sans elles passe aussi (ce n'est pas la taille).
+- Cause probable : la substitution des variables `[[${x}]]` du prompt relit le texte substitué.
+- Remède : espacer les séquences dans les valeurs (`[[` → `[ [`, `]]` → `] ]`) avant l'envoi ; un JSON reste lisible par le modèle. `${` seul n'a pas posé de problème dans nos essais (non présent dans nos données).
+- Au passage : `gpt-5.5` (openai) n'accepte que `temperature` = 1 (« Unsupported value: 'temperature' does not support 0.3 ») ; la passerelle renvoie alors `400 LLM_BAD_REQUEST` avec le message d'OpenAI. Latence plancher observée sur ce périmètre : ~22 s (gpt-5.4) à ~30 s (gpt-5.5) même pour une réponse de 200 jetons.
+
