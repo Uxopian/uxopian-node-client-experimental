@@ -569,3 +569,11 @@ tests never catch this class of bug: any "pure JS fallback" path must be exercis
 - Diagnostic en dix secondes : `grep -c @include fd/scripts/<script>/<script>.js` (doit être > 0) et `wc -c` (doit être petit) ; ou expander localement avec `lib/include.mjs` et chercher un marqueur récent.
 - Remède : `git checkout <bon commit> -- fd/scripts/<script>/<script>.js`, puis `uxc push`. Garde-fou dans le package `po` : `tests/00-includes-intacts.test.mjs` échoue dès qu'un script d'assemblage perd ses directives ou qu'une partie n'est plus incluse.
 
+
+## GET d'un composant absent : 500 « F00012 », pas 404 (vérifié le 9 septembre 2026)
+
+`GET /rest/documents/{id}` et `GET /rest/virtualFolder/{id}` sur un identifiant inconnu répondent
+**500** avec le corps `{"code":"F00012","message":"F00012: The component [Id{value=...}] does not exist"}`,
+et non 404. Un lecteur qui traite tout 5xx comme une panne du Core prend une absence pour une panne et
+refuse d'écrire (vu sur la compaction des archives de journal du package `po`). Tester le corps :
+`F00012` = absence.
