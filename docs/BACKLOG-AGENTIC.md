@@ -83,3 +83,47 @@ Everything below was hit for real; the "why" line says how it bit us. Ordered by
     threshold (default 900 KB), and offer `--strip-comments` (comment lines only, never inline) so
     an agent can see the budget before it overflows. A `uxc size fd.script/<id>` would let agents
     check without pushing.
+
+## Added 2026-09-10
+
+From one afternoon session on the Gerflor POC (customer profile, D63): a new `_shared` library, a
+new admin command, two datasets, a new GUI part, a prompt, a test book, deployed to `gfdefault`.
+One agent this time, no concurrency: everything below is plain single-agent friction.
+
+18. **`search` cannot find a virtual folder.** *(P1)* Why: `uxc search PoOrder --max 3` answers
+    `found 0` on a scope holding dozens of `PoOrder` folders — the handler deployed minutes
+    earlier read eleven of them for a single customer. `--category VIRTUAL_FOLDER` and
+    `--category FOLDER` change nothing. Folders are searched on `/rest/virtualFolder/search`,
+    documents on `/rest/documents/search` (see `coreSearch` in the POC's `po-lib.js`); the CLI
+    looks like it only ever calls the document endpoint. Consequence: an agent cannot list or
+    inspect a case from the CLI at all. I ended up reading the live state through a handler.
+19. **`ls fd.vfinstance` and `status --remote` disagree.** *(P1)* Why: `uxc ls fd.vfinstance`
+    prints `0 fd.vfinstance` while, in the same minute against the same target, `uxc status
+    --remote` lists fourteen `fd.vfinstance` rows as `server edit`. One of the two is lying, and
+    an agent that trusts `ls` concludes the instance is empty.
+20. **Lint constrained tag values before pushing.** *(P2, same family as 7)* Why: `push
+    --changed` died mid-run on `POST /core/rest/documents -> 500: F00020: the value
+    PoProfileRules is not an allowed choice for tag PoRuleSet`, after other resources had already
+    gone up. `PoRuleSet` carries `allowedValues` and the two new datasets were missing from it.
+    Both halves live in the package, so `verify` and the pre-flight of `push` can catch this
+    offline: for every dataset row and every resource tag, check the value against its tagclass's
+    `allowedValues`. Bonus: name the admitted values in the error.
+21. **Dataset scaffold: the class too, not only the manifest.** *(extends 8)* Why: `uxc add
+    fd.dataset PoProfileRules` prints the manifest error *and* `created fd.dataset/…` in the same
+    breath, so it is unclear whether anything happened; the `--class` flag that error suggests
+    does not appear in `uxc help`; and the document class the dataset needs is not scaffolded
+    either. I copied `PoRefCustomers.json` by hand for both new sets, then edited
+    `uxopian-project.json` and `registry.json` by hand — precisely what scaffolding exists to avoid.
+22. **`get doc <id>` misleads.** *(P3)* Why: `uxc get doc PoCustomerProfile_C-10021` answers
+    `document doc not found (and "doc" is not a registry resource)`, which reads as "your document
+    does not exist" when it means "drop the word doc". Same with `get document <id>`. Two
+    round-trips lost before trying `uxc get <docId>` bare.
+23. **`--raw-tag <name>`.** *(P3)* Why: TEXT tags holding JSON are the norm in these packages
+    (`PoCaseLog`, `PoObligationState`, `PoAiProcessing`, and now `PoCustomerProfileJson`).
+    `get --full` mixes a table header with the value, so reading one back means a regex over the
+    CLI output. A flag printing one tag's raw value would make them scriptable.
+
+Confirmed again this session, unchanged: **4** (the ~45 s blind window, met three times in one
+afternoon), **8**, **11** (`uxc context` — the first forty minutes went to rebuilding the package
+map by grep, exactly as described) and **13** (`--offline`: the package's 80 test books run
+without a server in 0.5 s and could run unlocked).
