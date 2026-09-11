@@ -22,14 +22,18 @@ export async function classify(ctx, entry)     // -> {state: 'insync'|'local'|'s
 export async function statusAll(ctx, { remote = false, only = [] } = {})
 //   -> { rows: [{kind,id,policy,state,detail}], untracked: [paths], orphans: [...], pendingCacheClear }
 //   local-only mode: state limited to 'local'|'insync' (hash(file) vs base) without network.
-export async function pullResources(ctx, entries, { force = false } = {})
+export async function pullResources(ctx, entries, { force = false, flatten = false } = {})
 //   per entry: serverOf -> writeLocal(canonical echo) -> setResState({syncedHash})
-//   refuses conflict unless force. Returns [{id, action}].
+//   refuses conflict unless force. REFUSES a composed @include source unless `flatten` — --force
+//   means "server wins over my edits", not "dissolve my build" (DESIGN §25.4); the refusal parks
+//   the server copy under .uxc/pulled/<kind>/<id>/. Returns [{id, action}].
+export function composedSources(pkg, entry)    // -> package-relative @include-built content files
 export async function pushResources(ctx, entries, { force = false, settle = false, recreate = false } = {})
 //   ORDER by PUSH_ORDER; per entry: validate() (abort on errors), TOCTOU re-check serverHash,
 //   policy gates (createOnly: create-if-absent else verify+report, UNLESS adapter.inPlaceUpdate —
 //     then update in place like managed, e.g. fd.taskclass; external/retired: skip),
 //   create/update -> re-GET echo -> writeLocal(echo) -> setResState IMMEDIATELY (resumable),
+//   an inPlaceUpdate kind reports detail 'updated IN PLACE — … answer bindings are preserved',
 //   pendingCacheClear set BEFORE first cacheAffecting write, cacheClear after handler block and
 //   at end, cleared in state only on success. Returns [{id, action, detail?}]. Throws on first
 //   hard failure with explain attached (state already committed for prior items).
@@ -166,6 +170,11 @@ export * as util from './util.mjs'
 export const makeRunId = () => '8-hex'            // one per `uxc test` invocation
 export function mintId(code, hint, runId)          // ZZTEST_<CODE>_<HINT>_<run8>
 export class TestFail extends Error                 // assertion failures vs infra errors
+export function createOfflineHarness(ctx, { testsDir, log })  // -> { t, teardown() }  (DESIGN §25.4)
+//   the `offline: true` tier: NO core/gateway/gui (that is the guarantee), plus
+//   t.loadShared(relPath, globals) -> evaluates a _shared library (@include expanded, as a push
+//   would) in a node:vm sandbox and returns its context. Takes no lock, skips the safety gate
+//   and the receipt stamp. Green offline != green on GraalJS (LEARNINGS §32).
 export function createHarness(ctx, { runId, testsDir, log }) // -> { t, teardown({keep}) }
 //   t: core/gateway/gui, pkg (manifest+registry view), id(hint), doc.create({classId,…,file}),
 //      track('doc'|'task', id), cleanup(fn), waitFor(fn,{timeoutMs,everyMs,label}), sleep,
@@ -180,12 +189,80 @@ export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:
 merge of UxcTestsPassedAt/UxcTestsResult (FD tags / AI receipt JSON); never creates receipts,
 never rewrites installedAt. `resolveTarget` exposes `allowTests` (targets.json / UXC_ALLOW_TESTS).
 
-## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, run(ctx) }
+## lib/lock.mjs — cross-process target lock (DESIGN §25.1)
+
+```js
+export const LOCK_ROOT                                    // ~/.uxopian/locks
+export async function acquire(key, {mode, cmd, timeoutMs, maxAgeMs, onWait, onSteal})
+//   mode 'write' -> exclusive, waits (throws on timeout); 'read' -> NEVER waits;
+//   'none' -> no-op. Returns {held, mode, contendedBy, release()} — release() is idempotent.
+export function lockOwner(key)                            // -> {pid, host, cmd, at, ageMs} | null
+export function recordHandlerWindow(key, ms, by)          // survives release()
+export function handlerWindowLeft(key)                    // -> ms remaining (0 when clear)
+export async function waitHandlerWindow(key, {onWait})    // -> ms waited
+export function listLocks()                               // -> [{key, pid, cmd, at, stale}]
+```
+
+The key is the TARGET name (the instance is what is contended, not the checkout). Orphan recovery:
+a dead pid on THIS host is stolen at once; anything older than maxAgeMs (30 min) is stolen with a
+warning. Never throws on release.
+
+## lib/agent.mjs — package operating policy (DESIGN §25.2)
+
+```js
+export function agentPolicy(pkgOrDir)   // -> {target, targetFrom, protect[], neverPull[], forbid[], gotchas, empty}
+export function globMatch(pattern, value)              // anchored, '*' only
+export function matchesEntry(pattern, entry)           // 'kind/id' or bare id, globs in both
+export function resolvePinnedTarget({pin, pinFrom, requested, ambient, write, override})
+//   -> {use, refuse:string|null, warn:string|null}   (refuse => the caller must fail())
+export function forbiddenBy(policy, {command, args, flags})   // -> [{pattern, reason}]
+export function partitionProtected(patterns, entries)         // -> {allowed, blocked:[{entry,pattern}]}
+```
+
+`.uxc/target` (one line) overrides `manifest.agent.target`. An absent block = empty policy: uxc
+behaves exactly as it did before.
+
+## lib/session.mjs — the command preamble
+
+```js
+export async function openSession(ctx, {command, modName, mod})
+//   -> {release(), lockKey, policy, mode}   — release() MUST run in a finally (bin/uxc.mjs does).
+```
+
+Runs before every `run()`: enforces `agent.forbid`, resolves the target pin (mutating
+`ctx.flags.target`), waits out a prior handler window, and takes the lock. Sets `ctx.policy` and
+`ctx.lockKey` for commands that need them (push/pull consult protect/neverPull; push records the
+handler window).
+
+## lib/lint.mjs — offline lints (DESIGN §25.3)
+
+```js
+export function tagclassIndex(pkg)          // id -> {type, values:Set, constrained}
+export function lintTagValues(pkg)          // -> [{where, tag, value, allowed[], message}]  BLOCKING
+export function promptVariables(content)    // Set of bare ${x} (helper calls excluded by shape)
+export function promptCallSites(text, id)   // -> [{line, keys:string[]|null, argText}]
+export function lintPromptVariables(pkg)    // -> [{prompt, kind:'unprovided'|'no-caller', …}]  WARNING
+export function promptProviderOrder(pkg, entries)   // -> [{prompt, before[], why}]
+export function includeOrders(pkg)          // -> [{path, includes[]}] in source order
+export function declaredIncludeOrder(pkg)   // manifest.includeOrder, basenames
+export function lintIncludeOrder(pkg)       // -> [{path, message}]  BLOCKING when declared
+export function resourceSizes(pkg, entries) // -> [{kind,id,file,bytes,strippedBytes,saved}]
+export function sizeWarnings(rows, warnAt)  // -> [{…, over:boolean, message}]
+```
+
+Every check is pure + offline: `verify` runs them all, `push` uses them as a pre-flight. Prompt
+findings are warnings BY DESIGN — a prompt may be called from outside the package.
+
+## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, lock?, run(ctx) }
 
 Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
 search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
-doctor, install-claude, help.
+doctor, install-claude, context, size, help.
+
+`lock` is optional: `'write' | 'read' | 'none'`, or a function of the flags
+(`lock: (flags) => flags.offline ? 'none' : 'write'`). Absent, the mode comes from
+`LOCK_MODES` in lib/cli-meta.mjs — the audited default per command.
 
 Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bare id); honor
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use

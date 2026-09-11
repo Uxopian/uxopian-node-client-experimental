@@ -124,3 +124,39 @@ uxc test ingest --keep                # filter by name; keep ZZTEST_* fixtures f
 - Green run ⇒ receipt stamped: `uxc installed` shows `tests: N/N pass @ date`.
 - Reference suite: `examples/ct-package/tests/` (baseline, worklists, prompt smoke, ingest e2e,
   walk-away approval e2e).
+
+## Recipe 9 — picking up a package you have never seen (start here)
+
+```bash
+uxc context                     # kinds, ids, prefixes, order bands, include order, policy, gotchas
+uxc status --remote --kind fd.handler   # what is actually drifting, summary line first
+uxc test --offline              # the cheap tier: no server, no lock, ~0.5 s
+uxc verify                      # server assertions + the offline lints
+```
+
+`uxc context` replaces the grep-the-package phase entirely — read it before touching anything.
+
+## Recipe 10 — inspecting a live case (a VIRTUAL FOLDER, not a document)
+
+Each component category has its own search endpoint, and querying the wrong one answers `found 0`
+rather than an error (LEARNINGS §39):
+
+```bash
+uxc search PoOrder --category VIRTUAL_FOLDER --max 5   # 39 folders, not "found 0"
+uxc ls fd.vfinstance                                   # enumerate every VF instance
+uxc get PoOrder_CMD-2026-21149                         # falls back to the VF when no document has the id
+uxc get PoOrder_CMD-2026-21149 --raw-tag PoOrderLines | jq .   # one TEXT tag, verbatim
+```
+
+A `search` with no `--category` that finds nothing now probes the other categories and tells you
+where the matches actually are.
+
+## Recipe 11 — a size budget before the 413
+
+```bash
+uxc size                        # composed bytes per resource vs the ~1 MB server body limit
+uxc size fd.script/po-widgets   # …and what `// @include <file> strip` would still save
+```
+
+Then add `strip` to the heaviest `@include` directives — the sources keep every comment; only the
+body sent to the server is lighter (LEARNINGS §33).

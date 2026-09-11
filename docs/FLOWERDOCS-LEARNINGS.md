@@ -577,3 +577,28 @@ tests never catch this class of bug: any "pure JS fallback" path must be exercis
 et non 404. Un lecteur qui traite tout 5xx comme une panne du Core prend une absence pour une panne et
 refuse d'écrire (vu sur la compaction des archives de journal du package `po`). Tester le corps :
 `F00012` = absence.
+
+## §39 — Chaque CATÉGORIE de composant a son propre endpoint de recherche (vérifié fd.demo, scope `default`, 2026-09-10)
+
+Il n'y a pas UNE recherche FlowerDocs. Interroger la mauvaise catégorie ne renvoie pas d'erreur :
+elle renvoie `found 0`, ce qui se lit comme « l'objet n'existe pas ».
+
+| Catégorie | Endpoint |
+|---|---|
+| documents | `POST /core/rest/documents/search` |
+| tâches | `POST /core/rest/tasks/search` |
+| dossiers virtuels | `POST /core/rest/virtualFolder/search` (F majuscule, comme les autres routes VF) |
+| dossiers | `POST /core/rest/folders/search` |
+
+- **Même corps, même enveloppe** pour les quatre : `{selectClause:{fields},filterClauses:[…],max,start}`
+  en entrée, `{found, results:[{id, fields:[{name,value}]}]}` en sortie. Les critères
+  (`classid` EQUALS_TO), la pagination (`start`/`max`) et `orderClauses` se comportent à l'identique
+  sur `virtualFolder/search` — vérifié : `classid=PoOrder` → `found=39`, `start=2` pagine,
+  `orderClauses [{name:'name',type:'STRING',ascending:true}]` trie.
+- `/rest/virtualFolders/search` (pluriel) n'existe pas : `404 No endpoint`.
+- La réponse renvoie parfois plus de champs que demandé (`acl`, `status` s'ajoutent à `name`/`classid`).
+- Conséquence pratique : un scope peut contenir 98 dossiers virtuels et 39 `PoOrder` pendant que
+  `documents/search` répond `found 0` pour le même critère. Côté uxc (0.16) : `uxc search --category
+  VIRTUAL_FOLDER`, `uxc ls fd.vfinstance` (qui répondait « 0 » en dur), `uxc get <id>` qui retombe sur
+  le dossier virtuel quand aucun document ne porte l'id, et une recherche sans `--category` qui, à
+  zéro résultat, sonde les autres catégories et dit où sont les correspondances.

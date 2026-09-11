@@ -8,6 +8,7 @@ import { findPackageDir } from '../lib/config.mjs';
 import { openPackage } from '../lib/registry.mjs';
 import { out, fail } from '../lib/output.mjs';
 import { COMMANDS, TWO_WORD as TWO_WORD_LIST } from '../lib/cli-meta.mjs';
+import { openSession } from '../lib/session.mjs';
 
 const TWO_WORD = new Set(TWO_WORD_LIST);
 
@@ -61,7 +62,14 @@ async function main() {
     return console.log(`${mod.summary}\nusage: ${mod.help}`);
   }
   const ctx = makeCtx(parsed);
-  await mod.run(ctx);
+  // Package policy + cross-process lock (DESIGN §25): which instance this checkout may talk to,
+  // what it may never do, and who else is writing to it right now. Reads never queue.
+  const session = await openSession(ctx, { command: TWO_WORD.has(cmd) ? `${cmd} ${rest[0]}` : cmd, modName, mod });
+  try {
+    await mod.run(ctx);
+  } finally {
+    session.release();
+  }
 }
 
 function makeCtx({ args, flags }) {

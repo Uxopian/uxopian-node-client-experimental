@@ -4,6 +4,48 @@ Written 2026-09-05 from three weeks of driving `uxc` through Claude agents on th
 (package `po`, scope `default`, up to two agents in parallel, one shared FlowerDocs instance).
 Everything below was hit for real; the "why" line says how it bit us. Ordered by pain.
 
+## Status — uxc 0.16.0 (2026-09-10)
+
+Twenty of the twenty-three shipped, one partial, two deliberately deferred. The design is
+DESIGN §25, the contracts are `lib/CONTRACTS.md`, and every item below carries offline unit tests.
+
+| # | item | status |
+|---|---|---|
+| 1 | composed source must not be flattened by `pull` | **shipped** — refused unless `--flatten`; the server copy is parked in `.uxc/pulled/` (`lib/sync.mjs: composedSources`) |
+| 2 | built-in lock, read/write | **shipped** — `lib/lock.mjs`, keyed on the TARGET; writes exclusive, **reads never wait** and name the writer; dead-pid orphans reclaimed |
+| 3 | pinned target per package | **shipped** — `agent.target` / `.uxc/target`; `--target` may only confirm (`lib/agent.mjs`) |
+| 4 | serialize handler pushes across processes | **shipped** — the write lock serialises them, and the ~45 s window is RECORDED so the next push waits it out instead of doubling it |
+| 5 | `push --changed` with a path scope | **shipped** — `push --changed --paths fd/handlers/X,data/` |
+| 6 | rollback for handlers | **not shipped** — needs a keep-N-1 change to rotation + live verification; see below |
+| 7 | prompt variable lint | **shipped** — warning-only, in `verify` and as a `push` pre-flight; a variable named anywhere in the call counts as provided (no false positives on the reference package) |
+| 8 | dataset scaffold writes the manifest | **shipped** — and the registry entry, in the right order |
+| 9 | include-order lint | **shipped** — `"includeOrder": [...]`, checked as a subsequence |
+| 10 | taskclass in-place update guard | **shipped** — push now prints `updated IN PLACE — existing tasks and their answer bindings are preserved` |
+| 11 | `uxc context` | **shipped** — ~600 tokens for a 180-resource package |
+| 12 | guardrails as data | **shipped** — `agent.protect` / `neverPull` / `forbid`, enforced before the command runs |
+| 13 | offline test tier | **shipped** — `offline: true` + `uxc test --offline`, with `t.loadShared()` (@include expanded, `node:vm`); takes no lock |
+| 14 | compact dataset format | **not shipped** — a second on-disk form for datasets touches canonical hashing; deferred deliberately |
+| 15 | `status` filters + summary first | **shipped** — `--kind`, `--prefix`, summary line first; `status` is a read, so it never waits |
+| 16 | explain on hang | **partial** — the client-side cause (item 7) is detected and printed; `explain` itself is unchanged |
+| 17 | composed script size guard | **shipped** — `uxc size`, plus a `push` warning naming what `strip` would save |
+| 18 | `search` cannot find a virtual folder | **shipped** — `--category VIRTUAL_FOLDER\|FOLDER`; a categoryless search that finds nothing now says which category HAS the hits. Endpoint verified live (LEARNINGS §39) |
+| 19 | `ls fd.vfinstance` vs `status --remote` | **shipped** — the adapter returned `[]` unconditionally; it now enumerates (98 rows where it used to print 0) |
+| 20 | lint constrained tag values | **shipped** — BLOCKING pre-flight naming the admitted values (`--ignore-lint` overrides) |
+| 21 | dataset scaffold: the class too | **shipped** — manifest + JSONL + document class, and the contradictory "manifest entry must exist" note is gone |
+| 22 | `get doc <id>` misleads | **shipped** — the noise word is accepted; `get <id>` also falls back to the virtual folder |
+| 23 | `--raw-tag <name>` | **shipped** — one tag, verbatim, pipeable |
+
+### Still open, and why
+
+- **6 — handler rollback.** Rotation deletes `_vN` once `_vN+1` is live. Keeping N-1 changes the
+  sweep invariant that `verify` relies on (exactly ONE live registration) and the orphan detection
+  that goes with it, so it needs its own design pass plus live verification on a throwaway handler.
+- **14 — columnar datasets.** A second on-disk form has to hash identically to the JSONL one or
+  every dataset re-hashes on upgrade (`lib/canonical.mjs` is load-bearing for sync). Worth doing,
+  not worth doing casually.
+- **16 — explain on hang.** Half of it landed via item 7. The rest wants a client-side timeout
+  classifier over the gateway stream, which belongs with a `run`/`explain` pass.
+
 ## P1 — correctness with concurrent agents
 
 1. **Composed scripts: pull must not flatten a source with `// @include` lines.**
