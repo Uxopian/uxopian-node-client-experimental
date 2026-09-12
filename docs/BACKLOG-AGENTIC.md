@@ -181,3 +181,13 @@ without a server in 0.5 s and could run unlocked).
     Fix: compare against what the composition actually does, say « already stripped » when it is,
     and name where the remaining bytes are — body versus parts. A size warning is read by someone
     who has two minutes and a 413 ahead of them.
+
+25. **`size` counts host bytes but prescribes a remedy that cannot reach them.** *(P3, measured)*
+    Why: on a handler at 94 %, `uxc size` advised « `strip` on its parts would save 70.3 kB ». The
+    bytes were real — but they were in the **host file**, and `strip` only ever applies to *included*
+    files; no directive can strip the file that carries it. So the advice named an impossible fix,
+    twice over: the parts already carried `strip` (item 24), and the remaining weight was
+    unreachable that way. Two agents chased it. What finally worked was moving the host's body into
+    `./parts/*.js` included with `strip` — which is worth suggesting, since it is the only way to
+    strip a host. Fix: split the reported saving between host and parts, say which is which, and
+    when the parts are already stripped, propose the host-into-parts move instead.
