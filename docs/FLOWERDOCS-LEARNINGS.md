@@ -602,3 +602,50 @@ elle renvoie `found 0`, ce qui se lit comme « l'objet n'existe pas ».
   VIRTUAL_FOLDER`, `uxc ls fd.vfinstance` (qui répondait « 0 » en dur), `uxc get <id>` qui retombe sur
   le dossier virtuel quand aucun document ne porte l'id, et une recherche sans `--category` qui, à
   zéro résultat, sonde les autres catégories et dit où sont les correspondances.
+
+## Session expirée : **le Core** répond **403**, jamais 401 — mais pas les greffons
+
+Mesuré le 12 septembre 2026 sur `fd.demo.uxopian.com` (scope `default`), depuis la page elle-même,
+sur trois cas qui rendent **exactement la même réponse** :
+
+| cas | statut | corps |
+|---|---|---|
+| `Authorization: Bearer <jeton invalide>` | **403** | `{"timestamp":"…","status":403,"error":"Forbidden","path":"/core/rest/documents/PO_CONFIG"}` |
+| aucun en-tête d'autorisation | **403** | identique |
+| session expirée (cookie du navigateur) | **403** | identique |
+
+`content-type: application/json`, **`WWW-Authenticate` absent**, `statusText` vide.
+
+**Pourquoi ça compte.** Tout code qui distingue « non authentifié » de « interdit » par `401` ne se
+déclenchera **jamais** : il faut lire `403`. Et comme les trois cas sont indiscernables par le
+statut, un client ne peut pas dire « votre session a expiré » plutôt que « vous n'avez pas le
+droit » à partir de la seule réponse — il doit s'appuyer sur autre chose (l'âge du jeton, ou une
+relecture de `/core/rest/authentication`).
+
+À rapprocher de l'autre surprise de la même famille : **un identifiant inconnu répond 500 F00012**,
+pas 404. Le Core n'utilise pas les statuts HTTP comme on s'y attend ; vérifier avant de brancher une
+logique dessus.
+
+**Et le jeton expire de façon ABSOLUE, pas glissante** : la documentation dit « valid for 3600s from
+the moment it is generated » ; sur `fd.demo`, un jeton frais décodé donne `exp − iat = 7200 s`,
+soit deux heures fixes, sans revendication de rafraîchissement. Aucune activité ne repousse
+l'échéance — donc une panne d'authentification peut frapper en pleine session active, ce qui la
+rend très facile à attribuer à tort à autre chose.
+
+### Correction du 13 septembre : cette règle vaut pour le Core, **pas pour les greffons**
+
+Mesuré en cherchant une panne d'envoi sur le greffon Plume, servi derrière la **même** adresse
+(`/gui/plugins/plume/...`) :
+
+| appel | statut |
+|---|---|
+| `/plume/actuator/**` avec un jeton FlowerDocs | **401** franc |
+| `POST api/emails/{id}` sur un brouillon inconnu | **404** franc |
+
+Ce sont des services Spring Boot, et ils répondent avec les statuts qu'on attend. **Les règles de
+statut du Core ne se généralisent donc pas à ce qui vit derrière la même URL.** Vérifier par service,
+jamais par déduction — c'est exactement l'erreur que la règle ci-dessus a failli induire.
+
+Autre acquis du même jour : le greffon Plume a **sa propre session** (cookies `JSESSIONID` +
+`SESSION`). Sans eux, un brouillon créé n'existe pas pour l'appel suivant — le jeton FlowerDocs ne
+suffit pas.
