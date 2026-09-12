@@ -169,3 +169,15 @@ Confirmed again this session, unchanged: **4** (the ~45 s blind window, met thre
 afternoon), **8**, **11** (`uxc context` — the first forty minutes went to rebuilding the package
 map by grep, exactly as described) and **13** (`--offline`: the package's 80 test books run
 without a server in 0.5 s and could run unlocked).
+
+## Added 2026-09-12
+
+24. **`size` advises `strip` on parts that already have it.** *(P3, but it misleads)* Why: on a
+    handler at 93 % of the limit, `uxc size` ends with « `// @include <file> strip` on its parts
+    would save 69.4 kB » — while all thirteen of that handler's directives already carry `strip`.
+    Two agents in a row read it as an available remedy and went looking for the missing flag. The
+    saving being advertised is the theoretical one, computed as if nothing were stripped; the real
+    remaining weight is the handler's own body (3 700 commented lines), which `strip` never touches.
+    Fix: compare against what the composition actually does, say « already stripped » when it is,
+    and name where the remaining bytes are — body versus parts. A size warning is read by someone
+    who has two minutes and a 413 ahead of them.
