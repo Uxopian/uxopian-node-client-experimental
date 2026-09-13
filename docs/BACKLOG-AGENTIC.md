@@ -191,3 +191,34 @@ without a server in 0.5 s and could run unlocked).
     `./parts/*.js` included with `strip` — which is worth suggesting, since it is the only way to
     strip a host. Fix: split the reported saving between host and parts, say which is which, and
     when the parts are already stripped, propose the host-into-parts move instead.
+
+## 26. `uxc diff` ne voit rien d'un script composé — il compare l'enveloppe, pas l'expansion
+
+Trouvé le 13 septembre 2026 par deux développeurs qui travaillaient sur `fd.script/po-widgets`
+en même temps, chacun sur une `parts/*.js` différente.
+
+**Le symptôme** : `uxc diff fd.script/po-widgets` répond `identical` alors que le serveur porte le
+travail **non terminé** de l'autre agent. La raison est simple et sérieuse : pour un script composé
+par `// @include`, `diff` compare le **fichier hôte** — vingt-deux lignes d'enveloppe — et non le
+corps composé qui part réellement. Deux arbres dont les parties diffèrent totalement rendent donc
+« identique ».
+
+**La conséquence** : la consigne que nous donnons à nos agents — « relis `uxc diff` avant de pousser
+et vérifie que ce que tu envoies est bien le tien » — **ne protège de rien** sur un script composé.
+Elle nous a donné une fausse assurance toute la semaine. Concrètement, ce jour-là : la poussée de A
+a déployé le `20-task.js` à moitié écrit de B, la poussée suivante de B a déployé le `10-case.js` en
+vol de A, et chacun a lu `identical` après coup.
+
+**Ce qui manquerait** — par ordre de coût croissant :
+
+1. **`uxc diff` sur le corps composé** pour les ressources qui portent des `@include` : c'est ce que
+   `uxc push` envoie, c'est donc ce que `diff` devrait montrer. Au minimum, nommer les parties qui
+   diffèrent.
+2. **Un refus de poussée** quand une partie incluse a changé depuis la base suivie, avec le nom de
+   la partie — l'équivalent du conflit « les deux côtés ont bougé » qui existe déjà pour les
+   ressources simples.
+3. **`uxc status` par partie** : aujourd'hui un script composé est « in sync » ou non, en bloc.
+
+**Contournement en attendant, et il est humain donc faillible** : un seul agent à la fois par script
+composé, ou une relecture du diff git des `parts/` avant chaque poussée. Nous avons choisi le second
+et il a échoué deux fois dans la même journée.
