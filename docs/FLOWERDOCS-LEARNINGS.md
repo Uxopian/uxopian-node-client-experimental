@@ -693,3 +693,29 @@ tag value.
 requests. Suppressing that needs either a bounded race blanking the iframe `src`, or the documented
 `componentActivityConfigurations` / `leftPanelWidthRatio` (per class and phase, **never** per
 instance — doc pp. 402-410).
+
+## An exhausted LLM quota surfaces as a **slow 500**, not a fast 429 — don't rule it out on timing
+
+Measured on `fd.demo`, 13 September 2026, and diagnosed wrongly at first.
+
+The Uxopian AI gateway answered **500 `INTERNAL_ERROR` in a constant 3.3–3.9 s** to every inference
+request, including a **two-character TEXT input with no prompt at all**, and on **three different
+providers** (`openai`, `gemini`, `anthropic`). The gateway itself was up (`/api/v1/admin/llm/providers`
+→ 200, nine providers) and prompt validation still worked (a missing global variable returned a clean
+**400**, not a 500). So the failure sat *after* validation and *before* the model.
+
+**The actual cause: the OpenAI account had run out of credit.** Confirmed by the instance owner.
+
+Two traps worth remembering:
+
+1. **The duration misleads.** A quota refusal is normally instant; 3.5 s of constant latency reads
+   like a failing outbound call with retries, and that is exactly what we concluded. It was wrong.
+   The gateway evidently retries before mapping the provider's refusal onto a generic 500.
+2. **All providers failed together**, which we read as "something in front of them" — correct, but we
+   inferred credentials or egress rather than the account behind the default provider. When several
+   providers fail at once through this gateway, **check billing first**: it is the cheapest
+   hypothesis to test and the fastest to fix.
+
+**The useful diagnostic**, which did hold: a **two-character request with no prompt** isolates the
+problem instantly. If that fails, nothing about the payload, the context size or the prompt can be
+responsible. `bin/ai-probe.mjs` in the POC tooling does exactly this.
