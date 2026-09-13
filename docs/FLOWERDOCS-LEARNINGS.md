@@ -649,3 +649,47 @@ jamais par déduction — c'est exactement l'erreur que la règle ci-dessus a fa
 Autre acquis du même jour : le greffon Plume a **sa propre session** (cookies `JSESSIONID` +
 `SESSION`). Sans eux, un brouillon créé n'existe pas pour l'appel suivant — le jeton FlowerDocs ne
 suffit pas.
+
+## `registerForComponentChange` **does** fire on a virtual folder — correction of §30
+
+Measured 13 September 2026 on `fd.demo`, with a throwaway VF class. The hook fires with
+`phase: MODIFY`, `category: VIRTUAL_FOLDER`, `classId: <the VF class>`, and `formAPI.getFields()`
+returns the virtual folder's own tags. `getObjectValue`, `getTagValue` and `getTagValues` all
+returned the expected value at hook time, with no delay.
+
+§30 said this was unconfirmed and to assume it does not fire. **It fires.**
+
+A trap that produced a false negative first, worth knowing because it looks exactly like a platform
+limit: a vfinstance JSON that puts its tags under `data.tags` stores **none of them**, so the hook
+reads an empty object and one concludes the platform does not expose VF tags. Check that the tags
+are really on the server before concluding anything about the hook.
+
+## Taking the whole content area: the platform already reserves a full-width pane
+
+`.row.content-row` carries **four** sibling panes, not two. `.content-full` is declared
+`flex: 0 0 100%` and merely `display:none` by default. So a package does not have to take space away
+from the viewer — it has to reveal a pane that already exists.
+
+**The mechanism matters more than the arrangement.** Measured on a real session:
+
+| approach | frames still showing the native viewer |
+|---|---|
+| inline styles set at hook time | **536 / 550** |
+| one stylesheet + one attribute on the row | **0 / 604** |
+
+The platform finishes building its screen around 240 ms and rewrites inline styles afterwards — 18
+rewrites counted in one session. A declarative rule with `!important` wins permanently; inline styles
+set at hook time lose. No poll and no MutationObserver are needed for the layout itself.
+
+**`.row.content-row` is the same DOM node for the whole session.** Any attribute written on it
+survives navigation, so a per-object layout must write the attribute on **every** arrival, including
+its default value, or each screen inherits the previous one's layout.
+
+**Hiding native fields is lossless.** `formAPI.setVisible(field, false)` hides the widget without
+touching the model: a save performed with every field hidden bumped the version and preserved every
+tag value.
+
+**But hidden is not absent**: with `.viewer` at `display:none`, ARender is still loaded — 61 network
+requests. Suppressing that needs either a bounded race blanking the iframe `src`, or the documented
+`componentActivityConfigurations` / `leftPanelWidthRatio` (per class and phase, **never** per
+instance — doc pp. 402-410).
