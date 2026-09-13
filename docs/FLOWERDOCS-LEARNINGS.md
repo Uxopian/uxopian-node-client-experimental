@@ -719,3 +719,46 @@ Two traps worth remembering:
 **The useful diagnostic**, which did hold: a **two-character request with no prompt** isolates the
 problem instantly. If that fails, nothing about the payload, the context size or the prompt can be
 responsible. `bin/ai-probe.mjs` in the POC tooling does exactly this.
+
+## The GUI caches package scripts: a normal reload does NOT pick up a push (verified 2026-09-13, fd.demo scope `default`)
+
+After `uxc push fd.script/<name>` reports `updated`, the running GUI keeps serving the **previous**
+script. `location.reload()` — even `reload(true)` — does not refresh it: the package scripts come
+from `/gui/rest/scripts/<name>` and the browser answers that request from cache.
+
+How this misleads you: the server is correct and the browser is not, so you "verify" a fix against
+code that was never loaded, and conclude the fix failed. I spent three deploy cycles on this today.
+
+- **Check the server, not the page**, before doubting the fix:
+  `await fetch('/gui/rest/scripts/po-widgets?bust=' + Date.now(), {cache:'reload'}).then(r=>r.text())`
+  then look for a marker string from your change. If it is there, the deploy is fine.
+- **Force the page**: `cmd+shift+R` (hard reload) is what actually rebinds the new script. The
+  platform's own "A new version is available · Refresh" toast is **not** enough — it reloads the
+  page but the script still comes from cache.
+- A **dataset** push (`fd.dataset/...`) does not have this problem: datasets are read at runtime by
+  search, so a plain reload shows the new rows immediately. This asymmetry is itself a trap — you
+  can see your new dataset values render while the code that reads them is still the old one.
+
+## `.viewer` is hidden but alive: writing to it succeeds and shows nothing (verified 2026-09-13)
+
+When an arrangement hides the platform's viewer pane (`.viewer { display: none }`), the iframe
+inside it is still in the DOM and still loads: setting `.viewer iframe`'s `src` fires the request,
+fills the frame, throws nothing, and displays nothing. Any "open this document" helper that targets
+the viewer **first and returns** will silently do nothing on every screen that hides it.
+
+Decide from the **declaration** of the current arrangement, not from a measurement: a layout that
+failed to apply leaves the native arrangement, where the viewer *is* shown, so the declaration is
+right in both cases. A `getBoundingClientRect()` check additionally cannot be exercised in an
+offline harness that has no layout engine — it makes the decision untestable.
+
+## The platform's answer buttons live in `.content-page > footer.footer` (verified 2026-09-13)
+
+The task footer (`Cancel · Save · Done · Need info · Cancel`) sits **outside** `.row.content-row`,
+so a rule scoped to the content row will not reach it; scope it from the root element instead
+(`html[data-po-cadre="<mode>"] .content-page > footer.footer`). The answer-carrying buttons carry
+class `.answer-action`.
+
+Two traps if you try to hide them by matching their **label**: the platform renders them in the
+**UI language of the platform** (English) while your own screen may be in another language, so a
+label comparison silently matches nothing; and answering through the JS API (`task.answer`) does not
+go through these buttons at all, so hiding them removes no path.
