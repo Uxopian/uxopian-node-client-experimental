@@ -762,3 +762,11 @@ Two traps if you try to hide them by matching their **label**: the platform rend
 **UI language of the platform** (English) while your own screen may be in another language, so a
 label comparison silently matches nothing; and answering through the JS API (`task.answer`) does not
 go through these buttons at all, so hiding them removes no path.
+
+## §40 — Loading shared library code at RUNTIME from a handler: `load()` works, strict `eval` does not, no persistence (verified fd.demo/gfdefault, 2026-09-14)
+- **`load({ name, script })` is available in the FlowerDocs Graal handler context** (`typeof load === 'function'`, `typeof eval === 'function'`). Top-level `var`/`function` of the loaded text become globals visible to the rest of the handler — **including for a `'use strict'` text**.
+- ⚠️ **Indirect `(0, eval)(text)` of a `'use strict'` text does NOT expose its top-level `var`s** (strict eval gets its own variable environment) — sloppy text is fine. Handlers composed by uxc start with `'use strict'`, so **use `load`, not eval**.
+- **Cost, measured on a real 731 kB composed handler body** (fetched from the live registration's content via REST with a minted `system` JWT, then `load`ed): cold execution fetch 271 ms + load 189 ms; a later execution fetch 116 ms + load 90 ms; a second `load` of the same text in the same execution ~100 ms.
+- **No persistence between executions**: at the start of each execution, globals defined by the previous execution's `load` (and a sloppy implicit global marker) are `undefined` — every execution gets a fresh context, so a runtime-loaded library is paid on every execution (budget it against the 55-60 s handler bound).
+- A probe registration (order 29, CREATE/DOCUMENT, guarded on its own class) fired **~5 s after cache clear** this time — still fire fresh events past the ~45 s window (§27) rather than rely on it.
+- Probe tool: `gerflor-poc-work/bin/sonde-bibliotheque.mjs` (reuses `uxc doctor --sandbox` mechanics from `lib/preflight.mjs`: throwaway registration, fresh events, cleanup by known id). Design context: `gerflor/qa/conception/LE-BUDGET-DES-GESTIONNAIRES.md`.
