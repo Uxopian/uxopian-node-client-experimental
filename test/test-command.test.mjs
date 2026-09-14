@@ -147,3 +147,21 @@ test('safety gate: refuses without allowTests/--yes (subprocess: exit 2, message
     assert.match(String(e.stderr), /allowTests|--yes/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('runner --offline: a test whose module does not load is a FAILURE, never filed as server-dependent', async () => {
+  // Seen on the po package (15 Sept.): a book threw at import, `offline` could not be read from the module
+  // it failed to produce, the runner sorted it with the live tests and the green count silently dropped.
+  const OFFLINE_PASS = `export default { name: 'offline ok', offline: true, run: async (t) => { t.expect(true); } };\n`;
+  const THROWS_AT_IMPORT = `const x = undefined; x.map(() => 1);\nexport default { name: 'never seen', offline: true, run: async () => {} };\n`;
+  const dir = scaffold({ tests: { '10-ok.test.mjs': OFFLINE_PASS, '20-throws.test.mjs': THROWS_AT_IMPORT } });
+  const { ctx, rec } = cmdCtx(dir, { flags: { json: true, offline: true } });
+  try {
+    await cmd.run(ctx);
+    const res = rec.results[0];
+    assert.deepEqual(res.tests.map((t) => t.file), ['10-ok.test.mjs', '20-throws.test.mjs']);
+    assert.equal(res.tests[1].status, 'fail');
+    assert.match(res.tests[1].detail, /does not load/);
+    assert.equal(res.failed, 1);
+    assert.equal(ctx.target, null); // still no server for the offline tier
+  } finally { rmSync(dir, { recursive: true, force: true }); process.exitCode = 0; }
+});
