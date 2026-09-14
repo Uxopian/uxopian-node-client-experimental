@@ -9,6 +9,7 @@ import "./destroy.test.mjs";
 import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
 import "./f2map.test.mjs";
+import "./fd-script.test.mjs";
 import "./include.test.mjs";
 import "./kinds.test.mjs";
 import "./lint.test.mjs";

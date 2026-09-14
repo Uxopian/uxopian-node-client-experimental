@@ -107,3 +107,54 @@ test('includeDirectiveFiles: finds directive-bearing sources under fd/scripts+fd
   assert.match(INCLUDE_MIN_CLIENT, /^\d+\.\d+\.\d+$/); // the publish lint pins against this
   rmSync(pkg, { recursive: true, force: true });
 });
+
+// ---- strip, 0.17: full-line BLOCK comments go too (a /** … */ that owns its lines) ----
+import { stripFullLineComments, INCLUDE_STRIP_BLOCKS_MIN_CLIENT } from '../lib/include.mjs';
+
+test('strip drops a full-line block comment, single-line or JSDoc, and keeps the code around it', () => {
+  const src = [
+    'var a = 1;',
+    '/** one-liner doc */',
+    'function f() {',
+    '  /**',
+    '   * multi-line doc',
+    '   */',
+    '  return a;',
+    '}',
+    '/* plain block */',
+    'f();',
+  ].join('\n');
+  assert.equal(stripFullLineComments(src), 'var a = 1;\nfunction f() {\n  return a;\n}\nf();');
+  assert.equal(INCLUDE_STRIP_BLOCKS_MIN_CLIENT, '0.17.0');
+});
+
+test('strip keeps a block that is followed by code, opened after code, or never closed', () => {
+  const followed = '/* note */ var x = 1;\nvar y = 2;';
+  assert.equal(stripFullLineComments(followed), followed);
+  const multiFollowed = '/* start\n   end */ var x = 1;\nvar y = 2;';
+  assert.equal(stripFullLineComments(multiFollowed), multiFollowed);
+  const after = 'var x = 1; /* trailing */\nvar y = 2;';
+  assert.equal(stripFullLineComments(after), after);
+  const unclosed = '/* never closed\nvar x = 1;';
+  assert.equal(stripFullLineComments(unclosed), unclosed);
+  // `/*/` does not close its own block: the block ends on the NEXT `*/`
+  assert.equal(stripFullLineComments('/*/ still open\n */\nvar z = 3;'), 'var z = 3;');
+});
+
+test('strip still keeps uxc:include markers and collapses blank runs across removed blocks', () => {
+  const src = '// >>> uxc:include a.js (expanded)\n\n/** doc */\n\nvar a = 1;\n// <<< uxc:include a.js';
+  assert.equal(stripFullLineComments(src), '// >>> uxc:include a.js (expanded)\n\nvar a = 1;\n// <<< uxc:include a.js');
+});
+
+test('an @include … strip expansion drops the included file\'s block comments, never the host\'s', () => {
+  const pkg = scaffold();
+  const f = join(pkg, 'fd/handlers/A/handler.js');
+  const host = '/** host doc stays */\n// @include ../_shared/lib.js strip\nmain();\n';
+  writeFileSync(f, host);
+  writeFileSync(join(pkg, 'fd/handlers/_shared/lib.js'), '/**\n * lib doc\n */\nfunction lib() {}\n');
+  const out = String(expandIncludes(host, f, pkg));
+  assert.match(out, /^\/\*\* host doc stays \*\/\n/);
+  assert.doesNotMatch(out, /lib doc/);
+  assert.match(out, /function lib\(\) \{\}/);
+  rmSync(pkg, { recursive: true, force: true });
+});
