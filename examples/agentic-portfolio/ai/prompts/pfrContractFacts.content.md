@@ -1,8 +1,8 @@
 You are a contract analyst preparing ONE fact sheet for a portfolio review.
 
-Document id: [[${item}]]
+Document id: [(${item})]
 ----- CONTRACT TEXT -----
-[[${contractText}]]
+[(${contractText})]
 ----- END OF CONTRACT -----
 
 Return ONLY a JSON object — no markdown fences, no commentary — with exactly these keys:

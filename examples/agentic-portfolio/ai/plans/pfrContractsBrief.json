@@ -1,5 +1,5 @@
 {
-  "description": "Several contracts in parallel -> one portfolio brief. Exposed as a chat tool.",
+  "description": "Several contracts in parallel -> three specialists in parallel -> one assembled brief. Exposed as a chat tool.",
   "exposeAsTool": true,
   "id": "pfrContractsBrief",
   "nodes": [
@@ -13,17 +13,49 @@
       "type": "SUBPLAN"
     },
     {
-      "agentConfId": "pfrBriefAgent",
+      "agentConfId": "pfrTableAgent",
       "dependencies": [
         "each"
       ],
+      "id": "table",
+      "name": "portfolio table",
+      "outputKey": "portfolioTable",
+      "type": "AGENT"
+    },
+    {
+      "agentConfId": "pfrActNowAgent",
+      "dependencies": [
+        "each"
+      ],
+      "id": "actNow",
+      "name": "act now",
+      "outputKey": "actNow",
+      "type": "AGENT"
+    },
+    {
+      "agentConfId": "pfrWatchAgent",
+      "dependencies": [
+        "each"
+      ],
+      "id": "watch",
+      "name": "watch list",
+      "outputKey": "watchList",
+      "type": "AGENT"
+    },
+    {
+      "agentConfId": "pfrBriefAgent",
+      "dependencies": [
+        "table",
+        "actNow",
+        "watch"
+      ],
       "id": "brief",
-      "name": "portfolio brief",
+      "name": "assemble the brief",
       "outputKey": "brief",
       "type": "AGENT"
     }
   ],
-  "toolDescription": "Reviews several FlowerDocs contracts in parallel and returns an executive portfolio brief: at a glance, contracts to act on now, deadlines and renewals, missing information, and a full table. Use it whenever the user asks to review, compare, triage or summarize several contracts whose document ids you know.",
+  "toolDescription": "Reviews several FlowerDocs contracts in parallel and returns an executive portfolio brief: contracts to act on now, deadlines and missing information, and a full table. Use it whenever the user asks to review, compare, triage or summarize several contracts whose document ids you know.",
   "toolInputParameters": [
     {
       "description": "JSON array of FlowerDocs contract document ids",

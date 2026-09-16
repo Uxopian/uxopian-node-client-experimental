@@ -4,11 +4,11 @@
   "displaySettings": {
     "enabled": false
   },
-  "id": "pfrPortfolioBrief",
+  "id": "pfrWatchList",
   "reasoningDisabled": true,
   "requiresFunctionCallingModel": false,
   "requiresMultiModalModel": false,
   "role": "user",
   "temperature": "0",
-  "timeSaved": 300
+  "timeSaved": 600
 }

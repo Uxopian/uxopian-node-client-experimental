@@ -315,11 +315,28 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
   rating drives a decision.
 - Prompt pitfall: asked for "null" in a JSON template, gpt-4o wrote the STRING `"null"` — say
   "the JSON literal null (never the string \"null\")".
+- **`[[${var}]]` HTML-ESCAPES the value** (Thymeleaf text inlining): `Borrower's "x" <y> & z` reaches
+  the model as `Borrower&#39;s &quot;x&quot; &lt;y&gt; &amp; z` and leaks into answers. **`[(${var})]`**
+  renders it raw (request history shows the unescaped text). Use `[(${…})]` for document text and
+  JSON payloads in agent prompts; uxc's variable lints read both forms.
+- **LLM reduce steps are approximate — and `successCriteria` does not fix that.** One gpt-4o brief
+  over 15 fact sheets: "At a glance" claimed 8 HIGH while its own table held 5; after an explicit
+  "count the table rows" rule plus a successCriteria demanding matching counts, it claimed 7 vs 5
+  and the gate still PASSED — the criteria are self-assessed by the same agent, so they catch
+  missing sections, not the agent's own arithmetic. Splitting the reduce into three parallel narrow
+  specialists (table / act-now filter / watch list) + an assembler made "Act now" match the HIGH
+  rows (6 = 6) but the table agent still merged one of three near-identical documents (14/15 rows);
+  cost +8 s (45 s vs 37 s). Design rule: never ask an LLM reduce for counts; keep per-item decisions
+  in the map; when a number or a complete set matters, compute it from the fan-out output
+  (`factSheets`, via `uxc run --plan --json` or the chat caller), not from the brief.
+- **No per-element retry**: one transient provider error on 1 of 15 gpt-4o-mini calls
+  (`[facts] java.lang.reflect.UndeclaredThrowableException`) failed the whole 15-contract run after
+  30.7 s; the identical rerun completed. Callers should retry the RUN (uxc does not yet).
 
 **Recommendations (design)**
 1. Read documents with a DIRECT_TOOL (`extractDocumentText`), then give the text to a TOOL-LESS
-   agent: deterministic, cheaper, no envelope, and the prompt stays payload-only (the §A9 chat
-   extraction stall does not apply).
+   agent through `[(${contractText})]`: deterministic, cheaper, no envelope, no HTML escaping, and
+   the prompt stays payload-only (the §A9 chat extraction stall does not apply).
 2. Per-item work = a small SUBPLAN (`item` in) fanned out from the parent; reduce with one agent
    that depends on the fan-out node.
 3. Declare every root variable in `toolInputParameters` (§A14) and run `uxc verify` — the

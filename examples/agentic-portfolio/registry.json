@@ -1,6 +1,12 @@
 {
   "resources": [
     {
+      "id": "pfrActNowAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrActNowAgent.json",
+      "policy": "managed"
+    },
+    {
       "id": "pfrBriefAgent",
       "kind": "ai.agent",
       "path": "ai/agents/pfrBriefAgent.json",
@@ -16,6 +22,18 @@
       "id": "pfrFinderAgent",
       "kind": "ai.agent",
       "path": "ai/agents/pfrFinderAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrTableAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrTableAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrWatchAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrWatchAgent.json",
       "policy": "managed"
     },
     {
@@ -44,6 +62,12 @@
       "policy": "managed"
     },
     {
+      "id": "pfrActNow",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrActNow.json",
+      "policy": "managed"
+    },
+    {
       "id": "pfrContractFacts",
       "kind": "ai.prompt",
       "path": "ai/prompts/pfrContractFacts.json",
@@ -59,6 +83,18 @@
       "id": "pfrPortfolioBrief",
       "kind": "ai.prompt",
       "path": "ai/prompts/pfrPortfolioBrief.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrPortfolioTable",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrPortfolioTable.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrWatchList",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrWatchList.json",
       "policy": "managed"
     }
   ]

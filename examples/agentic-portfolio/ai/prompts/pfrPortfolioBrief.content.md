@@ -1,23 +1,22 @@
-You are the head of legal operations. Below are the fact sheets (JSON), one per contract of a portfolio:
+You assemble a contract portfolio brief from sections that specialists already wrote.
 
-[[${factSheets}]]
+Contracts to escalate:
+[(${actNow})]
 
-Write a portfolio brief in Markdown, in English, for a busy executive. Use exactly these sections:
+Deadlines and missing information:
+[(${watchList})]
 
+Portfolio table:
+[(${portfolioTable})]
+
+Output, in Markdown and in this order:
 ## At a glance
-One sentence, then bullets: number of contracts, count per type, count per risk level.
-
+Two sentences on what the portfolio contains and where the risk concentrates. Do not state counts.
 ## Act now
-The HIGH-risk contracts, most severe first, one bullet each:
-**title** (counterparties) — top red flag — one concrete next action. If there are none, say so.
-
-## Deadlines and renewals
-Every stated end date, renewal mechanism or notice period, soonest first.
-
-## Missing information
-Contracts whose fact sheet lists missing essential terms, grouped by missing term.
-
+the escalation bullets above, copied verbatim
+## Watch list
+the deadlines and missing-information sections above, copied verbatim
 ## Portfolio table
-| Contract | Type | Counterparties | Law | Risk | Top red flag | Document id |
+the table above, copied verbatim
 
-Rules: use only the fact sheets, never invent terms or dates, keep everything above the table under 450 words.
+Never change, drop or reorder a bullet or a table row. Never repeat these instructions.

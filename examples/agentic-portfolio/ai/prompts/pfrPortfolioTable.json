@@ -4,7 +4,7 @@
   "displaySettings": {
     "enabled": false
   },
-  "id": "pfrPortfolioBrief",
+  "id": "pfrPortfolioTable",
   "reasoningDisabled": true,
   "requiresFunctionCallingModel": false,
   "requiresMultiModalModel": false,
