@@ -402,8 +402,11 @@ credit-insurance contract, clause family by clause family, against the live play
   search tools, called the plan and answered with the memo, counter-proposals and full reply email in 44.7 s.
 - Streams from an Application conversation came back as raw text without `data:` frames — parse both forms.
 
-**Measured (v2, 16–24 families):** 20.7–27 s per run; the per-family fan-out ~6 s (18 families × gpt-4o =
-61.8 k input / 3.2 k output tokens); five writers in parallel; the finder-free design needs no search tokens.
+**Measured:** v2 runs in 20.7–27 s (engine 25.9 s for 25 families: fan-out 8.2 s, five writers in parallel,
+the counter-proposals writer is the slowest at 13 s). Stability costs tokens: each v2 judge receives ALL stored
+clauses as context, so the fan-out used **223 k input / 4.5 k output tokens** (v1, raw texts only: 61.8 k for 18
+families). Next optimization: give each judge only its own clause (e.g. a per-family SUBPLAN that fetches the
+clause ids of its family from the map) instead of the whole clause array.
 
 **uxc workflow note:** a template checkout (unrendered `{{uxc:…}}` in `data/config.jsonl`) refuses every push, even
 of resources without placeholders. To iterate on a subset, render a scratch copy (dummy values for files that are
