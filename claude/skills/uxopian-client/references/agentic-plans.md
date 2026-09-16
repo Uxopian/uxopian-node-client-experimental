@@ -2,21 +2,25 @@
 
 Every point below was verified live on fd.demo in 2026-09. The full detail and measurements are in
 `docs/UXOPIAN-AI-LEARNINGS.md`: §A13 CRUD, §A14 runs, §A15 applications and tools, §A16 mechanics and
-recommendations, §A17 building a reproducible plan (the negotiation war-room).
+recommendations, §A17 building a reproducible plan (the negotiation war-room), §A18 mining an archive (search
+without an LLM, Thymeleaf-rendered tool arguments, chat scoping).
 
 ## Start from a working example
 - `examples/agentic-portfolio`: read, then a SUBPLAN fan-out, then parallel specialist writers. It includes a
   finder agent and a chat Application. `uxc push --all` · `uxc run --plan … --json` · `uxc destroy --confirm pfr`.
 - `examples/ct-package` (private): `ctNegotiationWarRoom` is a reproducible design that builds on data already
-  stored in FlowerDocs.
+  stored in FlowerDocs; `ctClauseMining` mines 33 clause families in ~47 s with per-family searches.
 
 ## The traps that cost the most time
 1. **`[[${x}]]` HTML-escapes payloads.** `'`, `"`, `<` and `&` reach the model as entities and leak into answers.
    Use **`[(${x})]`** for document text and JSON.
 2. **Declare every variable a root node's prompt reads in `toolInputParameters`.** The payload alone isn't enough:
    the run is refused with 400 "Plan is not executable". `uxc verify` lints this.
-3. **DIRECT_TOOL arguments are strings.** `extractDocumentText`, `getDocumentProperties` and `chunkText` chain
-   fine. The search builders (criteria lists) don't, so give search to an agent (~24 k tokens per search).
+3. **DIRECT_TOOL arguments are strings, unless the caller sends real JSON.** `extractDocumentText`,
+   `getDocumentProperties` and `chunkText` chain fine. `doSearch` runs as a 0-token DIRECT_TOOL only when `filters`
+   is real JSON in the run payload (`uxc run --payload-json`); a JSON string gets a 500, and a node output is always a
+   string. In a plan or chat, give search to an agent and RENDER the exact filter into its prompt with Thymeleaf
+   (`[(${#strings.replace(item,'Prefix_','')})]`) so it only copies it: builders went wrong 1 time in 4 (silent `[]`).
 4. **One failed fan-out element fails the whole run, and nothing retries it.** That covers a transient provider
    error, an invented id (the Core returns 500), or an agent reporting itself "unmet" even without
    `successCriteria`. The prompt must say that returning the object IS success. Serialize heavy runs and retry
@@ -34,6 +38,11 @@ recommendations, §A17 building a reproducible plan (the negotiation war-room).
    cannot be null".
 10. **Pause and stop only act between nodes.** A stop inside a long node ends the run FAILED (the docs say
     CANCELLED).
+11. **Keep thresholds and set conditions out of the model.** « In at least half of the contracts », « none CONFORM »:
+    gpt-4o, gpt-4.1 and gpt-5.4 all fired them when false. Return per-item facts (copied stored values) and compute.
+12. **Don't let a chat assistant build a de-duplicated scope.** It took ids from the wrong documents, sent ids as
+    names and misreported its steps. Pin the scope (or store it in FlowerDocs) and keep chat to a few items;
+    run big fan-outs (62 families) from the admin Run button or uxc: the same request failed in chat after ~10 s.
 
 ## Useful facts
 - **Fan-out:** `listKey` accepts a JSON array, a JSON-array string, or an upstream output (including another
@@ -46,4 +55,8 @@ recommendations, §A17 building a reproducible plan (the negotiation war-room).
 - **Chat:** an Application with `permissions.allowedSubPlans` plus `X-Application-Id` lets the assistant call an
   `exposeAsTool` plan. Streams may arrive as raw text without `data:` frames.
 - **Built-in prompts:** `summarizeChunkFacts` and `summarizeCombine` for long-document map-reduce.
+- **Limits met:** SUBPLAN fan-out items must be strings (an object item fails in the execution store); `doSearch`
+  over ~150+ hits fails (Core 400, one GET with every id); `toolCalls[].result` in the trace is cut at 4,000 chars.
+- **Residual noise:** ≈ 1.5 % of tool-using agent calls skipped the tool (silent empty result) or broke their JSON;
+  parse tolerantly and treat an impossible empty result as « rerun ».
 - **Admin panel:** Plans offers a flow editor, **Run**, and a **Runs** tab (tokens, tool calls, Pause/Resume/Stop).
