@@ -128,6 +128,17 @@ uxc doc create MpDoc --file nda.docx --tag MpStatus=New
 uxc watch MP_123 --until 'MpStatus=Done' --timeout 300
 uxc run mpSummary --payload documentId=MP_123 --expect 'term'
 uxc explain T00104                            # built-in error knowledge base
+uxc context                                   # the whole package map in ~600 tokens
+uxc size                                      # composed push-body bytes vs the ~1 MB server limit
+```
+
+Each component category has its own search endpoint, and querying the wrong one answers `found 0`
+rather than an error — so `search`/`ls`/`get` are category-aware:
+
+```bash
+uxc search PoOrder --category VIRTUAL_FOLDER   # documents, tasks, virtual folders, folders
+uxc ls fd.vfinstance                           # real enumeration
+uxc get PoOrder_CMD-2026-21149 --raw-tag PoOrderLines | jq .   # one TEXT tag, verbatim
 ```
 
 ### Sync — drift in both directions
@@ -193,6 +204,28 @@ uxc scope create Acme --blank                 # or --from <scope.json> (clone an
 uxc scope get Acme                            # exists-check + summary (--json dumps the full object)
 uxc scope delete Acme --yes                   # destructive
 ```
+
+### Share — several agents, one instance
+
+Writes take an exclusive lock on the **target** (`~/.uxopian/locks/<target>.lock`); **reads never
+wait** and instead name the writer holding it. A handler deploy's ~45 s blind window is recorded so
+the next push waits it out rather than opening a second, overlapping one.
+
+A package can carry its own operating policy, enforced by the CLI before a command runs:
+
+```json
+"agent": {
+  "target":    "gfdefault",                     // --target may only CONFIRM this
+  "protect":   ["fd.handler/PoEmail_onCreate"], // naming it is an error; a sweep skips it
+  "neverPull": ["ai.prompt/*"],                 // the server copy is older on purpose
+  "forbid":    ["push --changed"],
+  "gotchas":   "docs/GOTCHAS.md"                // surfaced by uxc context
+}
+```
+
+`verify` and `push` also run the **offline lints** — constrained tag values (the `F00020` that kills
+a push mid-run), the declared `includeOrder`, and prompt variables no caller provides (a warning:
+a prompt may be called from outside the package). Details: DESIGN §25.
 
 ## The package format
 

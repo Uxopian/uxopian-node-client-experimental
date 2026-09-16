@@ -95,3 +95,34 @@ or `--both`. Tombstoned (`retired: true`) resources never push by default (`push
 un-tombstones). Datasets never delete server docs without tombstone rows or `--prune` + confirm.
 `uxc destroy` (full teardown) requires typing the project code; use `--dry-run` first.
 `createOnly` entries are KEPT by destroy unless `--force` — the same delete gate `rm`/prune honor (§14).
+
+## Several agents on one instance (uxc 0.16, DESIGN §25)
+
+**The lock.** Writes take an exclusive lock on the TARGET (`~/.uxopian/locks/<target>.lock`); reads
+never wait and instead name the writer holding it. A lock owned by a dead process is reclaimed
+automatically. `--no-lock` exists for emergencies — using it to skip a queue means two writers
+interleaving on one instance, which is what the handler-rotation window (~45 s) turns into lost
+events. After a handler deploy the window is RECORDED and outlives the process, so the next
+handler-touching write waits it out.
+
+**The pin.** `uxopian-project.json` `agent.target` (or a one-line `.uxc/target`) names the only
+instance this checkout deploys to. `--target` may CONFIRM it; anything else is refused. A differing
+CLI default blocks writes (confirm with `--target <pin>`) and only warns reads.
+
+**Guardrails as data**, all in the `agent` block, all enforced before the command runs:
+
+| key | meaning | naming it explicitly | in a sweep |
+|---|---|---|---|
+| `protect` | never written by a routine command | **error** | skipped, printed |
+| `neverPull` | the server copy is older on purpose | **error** | skipped, printed |
+| `forbid` | command shapes (`"push --changed"`, `"rm --server"`) | **error** | — |
+
+**Composed sources are never flattened.** `pull` refuses a source built from `// @include`
+directives: `--force` means "the server's edits win over mine", not "dissolve my build". The
+server copy is parked in `.uxc/pulled/` so you can still compare. Only `--flatten` gives it up
+(LEARNINGS §35 is what that costs).
+
+**Offline lints run before the push, not after the 500.** `verify` and `push` both check:
+constrained tag values (BLOCKING — the `F00020` that kills a push mid-run, `--ignore-lint` to
+override), the declared `includeOrder` (BLOCKING), and prompt variables no caller provides
+(WARNING, never blocking: a prompt can be called from outside the package).

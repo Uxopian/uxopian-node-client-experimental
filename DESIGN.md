@@ -709,3 +709,103 @@ the `.uxpkg` and are inert to older clients). `uxc test` runs them SERIALLY in f
 
 Out of scope v1 (PACKAGE-TESTS-DESIGN.md): declarative JSON tests, parallel execution,
 browser/GUI assertions, CI orchestration beyond `--json`.
+
+## 25. Several agents on one instance
+
+Three weeks of driving uxc through coding agents on one shared FlowerDocs instance (the Gerflor
+POC, `docs/BACKLOG-AGENTIC.md`) produced a class of failure the single-operator design never had
+to answer: two writers with no arbiter, a checkout with no opinion about which instance it belongs
+to, and briefs full of "never do X" that get skimmed. The answer is the same in all three cases —
+put the rule where the tool can enforce it, not where a human has to remember it.
+
+### 25.1 The target lock (`lib/lock.mjs`)
+
+The contended resource is the INSTANCE, so the lock key is the target NAME and the lock lives in
+`~/.uxopian/locks/<target>.lock` — two clones of one package pushing to one server collide exactly
+like two agents in one clone. `mkdir()` is the atomic test-and-set; the owner file carries
+`{pid, host, cmd, at}`.
+
+- **`write` is exclusive.** Writes serialise on the target. This is also what serialises handler
+  deploys, which is the point of §7.11's rotation window: two rotations at once lose events in each
+  other's shadow.
+- **`read` NEVER waits.** A `status` that queues four minutes behind a `test --yes` campaign is
+  what made the POC wrap uxc in a shell script. Reads take no lock; when a writer holds one they
+  say who, so a surprising read explains itself.
+- **Orphans**: a lock owned by a dead pid on this host is stolen immediately; one older than
+  `maxAgeMs` (30 min) is stolen with a warning — the only recovery available for another host's
+  lock, which we cannot probe.
+- **The blind window outlives the process.** A rotation's ~45 s window (LEARNINGS §36) starts when
+  push exits, so it is recorded in a file that survives release (`recordHandlerWindow`), and the
+  next handler-touching write waits it out (`waitHandlerWindow`) instead of opening a second,
+  overlapping one. `--settle` already sat through it under the lock, so it records nothing.
+- Modes are declared in `lib/cli-meta.mjs` (`LOCK_MODES`), one audited place; a command may export
+  its own `lock`, including a function of its flags — `uxc test --offline` takes none.
+- Escape hatches: `--no-lock`, `--lock-timeout <s>`.
+
+### 25.2 The package's operating policy (`lib/agent.mjs`)
+
+`uxopian-project.json` gains an optional `agent` block. Absent, uxc behaves exactly as before.
+
+```json
+"agent": {
+  "target":    "gfdefault",
+  "protect":   ["fd.handler/PoEmail_onCreate"],
+  "neverPull": ["ai.prompt/*"],
+  "forbid":    ["push --changed"],
+  "gotchas":   "docs/GOTCHAS.md"
+}
+```
+
+- **`target` pins the instance.** `--target` may only CONFIRM it; naming another is refused
+  (`--allow-target-mismatch` is the deliberate way out). A differing ambient default is refused for
+  WRITES — confirm with `--target <pin>` — and warned for reads, which must stay usable.
+  `.uxc/target` (one line) overrides the manifest pin for a single checkout.
+- **`protect`** — naming a protected resource explicitly is an ERROR; a sweep (`--all`/`--changed`)
+  skips it with a printed line. A sweep never meant to single it out; a direct hit did.
+- **`neverPull`** — same split, for resources whose server copy is older on purpose.
+- **`forbid`** — command shapes: `<command> [--flag | positional-glob]…`, all conditions ANDed.
+  Two-word commands (`data push`) are matched whole.
+- **`gotchas`** — a path surfaced by `uxc context`.
+
+Enforcement is a preamble (`lib/session.mjs`) that runs before every command's `run()`.
+
+### 25.3 Offline lints (`lib/lint.mjs`)
+
+Checks whose BOTH halves live in the package hold with or without a server, and — more usefully —
+BEFORE a push rather than after a 500 that left half the plan deployed. `verify` runs them all;
+`push` runs them as a pre-flight.
+
+- **Constrained tag values** (BLOCKING, `--ignore-lint` overrides): a CHOICELIST tag value outside
+  its tagclass's `allowedValues` is the `500 F00020` that killed a `push --changed` mid-run. The
+  message names the admitted values. Only CHOICELIST is constrained (FREELIST is open by design)
+  and only package-owned tagclasses can be checked.
+- **Prompt variables** (WARNING, never blocking): a `[[${var}]]` no caller provides makes the
+  gateway HANG to timeout with no error code — the most expensive failure shape in the backlog.
+  Evidence is required: a variable counts as provided when it is an object key OR simply named
+  anywhere in the call (a key gathered asynchronously, a spread). A prompt with no caller in the
+  package is informational only — it may be called from another client entirely.
+- **Include order** (BLOCKING when declared): `"includeOrder": ["po-lib.js", …]` is declared once;
+  every composed source's directives must be a SUBSEQUENCE of it (a source need not use every
+  library — it must only not contradict the order).
+- **Composed size**: what a resource composes to versus the ~1 MB server body limit, plus what
+  `// @include <file> strip` would still save. `uxc size` reports it on demand; `push` warns.
+
+### 25.4 Agent ergonomics
+
+- **`uxc context`** — the package map an agent otherwise rebuilds by grep: kinds and counts, ids,
+  prefixes, registrationOrder bands, include order, policy, size budget, sync state, gotchas.
+  Offline, deterministic, ~600 tokens for a 180-resource package.
+- **`uxc test --offline`** — the tier that needs nothing but the checkout. A test declares
+  `offline: true` and gets a harness WITHOUT core/gateway plus `t.loadShared(path, globals)`, which
+  evaluates a `_shared` library (`@include` expanded, as a push would) in a `node:vm` sandbox. It
+  takes no lock and skips the safety gate and the receipt stamp. A green offline book is necessary,
+  never sufficient: handler scripts run on GraalJS, where `String` is `java.lang.String` (§32).
+- **Composed sources are never flattened by `pull`.** `--force` means "server wins over my edits";
+  it does not mean "dissolve my build". Flattening a 22-line composer into its 13 000-line
+  expansion (LEARNINGS §35) needs its own consent, `--flatten`, and the refusal parks the server
+  copy under `.uxc/pulled/` so the comparison is still possible.
+- **`push --paths a,b`** scopes `--changed` to the files this task owns, so a sweep stops shipping
+  another agent's half-done work.
+- Category-aware reads: `search --category VIRTUAL_FOLDER|FOLDER|TASK`, `ls fd.vfinstance` really
+  enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
+  one TEXT tag verbatim for a pipe (LEARNINGS §39).

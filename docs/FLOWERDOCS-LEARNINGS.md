@@ -491,3 +491,282 @@ deterministic per SOURCE (not per execution) wherever duplicates would hurt.
     existence/id/name level and preserves the package's entries via a readServer overlay
     (uxc ≥ 0.13.1); adopting a foreign ACL yields an entry-less stub to author;
   - `uxc doctor --roundtrip` compares fd.acl on the echoed keys only (write-only: entries).
+
+## §38 — Task-answer completion UX, solution search screens, and home dashlets (Gerflor PO, verified fd.demo/default, 2026-07-16)
+- **"I click Terminé and nothing happens" is usually NOT the answer handler** — verify the handler by inspecting side effects (here the order VF's `PoStateLog` proved a `DONE` answer transitioned it). The real cause: a **taskclass with `answers` but NO `workflow` never CLOSES an answered task** — it stays at `data.status: NEW`, keeps showing in backlogs (which filter only by `classid`), and FD's **first-answer-only** rule means re-answering "returns 200 but does NOT dispatch" → dead-feeling. The answered state is **opaque in search rows** (uxc: "status does not distinguish answered tasks"; the REST task object exposes no answer field). Fix pattern (no risky taskclass-workflow surgery): a **`PoTaskState` marker tag** — the create handler stamps `OPEN`; the ANSWER handler, after transitioning the order, does a mint-REST `POST /rest/tasks/{id}` setting `PoTaskState=<answer>`; operator VF searches add a criterion `PoTaskState EQUALS_TO OPEN`. Answered tasks then leave My-tasks/Team-backlog. Backfill existing tasks by scanning each order's `PoStateLog` for a `Tâche « <name> » : <answer>` entry (answered → mark done, else OPEN); order-less tasks → done. ⚠️ The answer handler's early-return-on-missing-order-VF means it won't mark a task done if its order VF is absent — keep operator-visible (OPEN) tasks only on real orders.
+- **Solution SEARCH screens (Recherches menu)** = the `ct-*-search` pattern: a GUIConfig with `FilterCriterionPresenter` beans (one per business tag: `displayOperatorSelector=false`, `forceMonovalued=true`, `description` i18n = the input label, `model` Criterion name/type/operator) collected in a `ComponentSearchPresenter` (`categorySelectorPresenter`=FakeCategorySelectorPresenter with the Category, `advancedCriteriaPresenter`/`fixedCriterionPresenters`, and a `hiddenRequest` = SearchRequest with the classid filter + selectClause columns + single-level aggregation). **Surface each search via the profile property `search.template = <beanId>`** (bare id; label from the bean's `title` I18NLabel). ⚠️ Each criterion resolves its tag against the presenter's **category** classes — DOCUMENT criteria must exist on the document class (e.g. PoEmail), TASK on the taskclass, VIRTUAL_FOLDER on the vfclass — wrong category = an empty-shell input.
+- **Home DASHLETS from searches** = the `ct-home` pattern: `SearchCountPresenter` (a KPI count — header/title/icon + `search`=Search{category,request{filterClauses}}), `HomeGraphPresenter` (donut — `search` with a single-level `FieldAggregation`), `HomeSearchPresenter` (a result list — `search` with selectClause/orderClauses/max), all collected in a `SimpleWidgetCatalog` bean. **Wire the catalog to the home page via the profile property `home.widget.catalog = <catalogBeanId>`** (FD docs §"Home page"; the default solution catalog is `homeWidgetsSolution` = just favorites). It REPLACES the home widget set for that profile.
+- **Plume (email compose/send) is a separate backend SERVICE addon** — not a uxc-deployable object and not on the Pulse marketplace; `{"error":"Service Unavailable"}` in the Plume pane = the Plume service isn't provisioned for the scope/cluster. Needs a platform install before the FD-side wiring (route/scripts) or an auto-attach-to-task behavior can work.
+
+## 2026-09-04 · `uxc export` crashed with `out is not defined`
+`exportPackage` in `lib/packageio.mjs` passed an undeclared `out` to `scrubF2MapSecrets`. Fixed by
+declaring `const out = ctx.out ?? makeOut(ctx.flags ?? {});` at the top of the function. Symptom: any
+`uxc export` / `uxc mp publish --dry-run` died before zipping. Verified on the gerflor package (506 entries).
+
+## 2026-09-04 · Client-side document creation: §211 needs correction (fd.demo, FlowerDocs 2026.0.0)
+Probed in a live GUI session (scope default): `POST ./upload` relative to `/gui/` (i.e.
+`/gui/upload`, multipart field `file`) returns `200` with `tmp_<uuid>|<name>|<mime>`; `/gui/rest/files/tmp`
+was the wrong URL. The client `Document` object DOES have `addTag(name, value, readonly)` (documented
+p. 651-653, same as `Task.addTag`), plus `addFile(tmpId)`, `setFiles`, `setClassId`, `setName`.
+Documented create path: `JSAPI.get().document().create([doc], ok, err)`. End-to-end persistence not yet
+re-proven from a script (automation guard blocked the write); to be confirmed by a human click. Core
+REST from the browser stays 403 (GUI cookie is not core auth).
+
+## FREELIST tags and the GUI (verified live on fd.demo scope `default`, 2026-09-05, DEF-4-40)
+
+- **The GUI does NOT resolve `displayNames` of a `FREELIST` tag class.** Virtual-folder aggregation buckets on a FREELIST field are rendered with the **raw symbolic name** (`SC_FR_GP`), in every locale, even when the value and its FR/EN `displayNames` are declared in the tag class (the same tag class rendered labels while it was a `CHOICELIST`). The native results-table column and the search-criteria field of that tag show the raw code too. Only `CHOICELIST` (and presumably `ICON`) values get labelled natively. A stale per-language GUI cache can make one locale still show labels for a while after a CHOICELIST→FREELIST switch: that is a cache artefact, not a working locale.
+- **Workaround that works: the JSAPI bucket API** (doc pp. 692-695). `JSAPI.get().getHelperFactory().getBucketAPI().register(searchId, function (buckets, callback) { ...; callback.onProcessed(buckets); })`, then `bucket.setName(label)`. The bucket value is read from `bucket.getRequest().getFilters()[0].getCriteria()[0]` (`getName()` = tag id, `getValues()[0]` = symbolic name). `getName()` on a FREELIST bucket returns the raw code. Renaming keeps click, count and the URL selection key (`Orders__SC_FR_GP`) intact; the callback is chained per aggregation level, so filter on the criterion name. Registration survives SPA navigation: guard it with a window flag (learnings §33 pattern). `searchId` is the `searches[].id` of the vfclass (`poOrdersSearch`), not the vfclass id.
+- **GUI config REST needs the browser session, not the Core JWT**: `GET /gui/rest/config/labels`, `/gui/rest/config/classes/tag` answer **500** with the `token:` header (only `/gui/rest/caches` accepts the JWT). What the GUI actually loads at start: `config/objects`, `config/labels?locale=xx`, `config/user`, `config/classes/{document,folder,virtualFolder,tag,task/creatable}`, `config/tagCategories`, `config/securityObjects`, `config/scope`, `config/features`, `config/extensions`, then `scripts/<id>?v=<ts>` per registered Script, `config/tabs/virtualFolders?ids=...`, `check-update`, `prefs/stamps`; all carry a `policy=` hash plus `scope`/`user` query params.
+- **Script cache in the browser**: after a `uxc push` of a Script + cache-clear, an open GUI tab keeps the OLD script until a real reload; a hash-only navigation does not reload it. The GUI shows the toast "Une nouvelle version est disponible / A new version is available" (from `rest/check-update`): click Refresh, or Cmd+R. Adding a query parameter to the GUI URL to bust the cache can log the session out (L4-COCKPIT-2, 2026-09-05): use the toast or a plain reload instead.
+
+## 2026-09-06 · `GET /core/rest/documents/{id}` on a missing document id also 500s, not 404s (fd.demo, scope default)
+Confirmed live (Gerflor POC, lot MEMORY-CLIENT, `tests/40-uc1-e2e`): `PoMem.loadCustomerDoc` calls
+`coreGet(ctx, '/rest/documents/PoCustomerMemory_C-10021')` for a customer that has never had a
+document created for it yet (a fresh `PoCustomerMemory` class, zero documents at all). The server
+answers **500** (surfaced in the package's own diagnostic as `coreErreur500(rest-documents-...)`),
+not 404. This is the SAME family already documented at §"F00206" for `GET /rest/<classtype>/{id}`
+(missing class → 500), now confirmed to extend to `GET /rest/documents/{id}` (missing DOCUMENT → 500
+too, no distinct error code surfaced through this path). The Gerflor package's `coreGet` helper
+already treats any status ≥500 the same as a 4xx-not-found (returns `null`, only the diagnostic label
+differs: `coreErreur<status>` vs `absent<status>`) — so this is not a functional defect, just a
+noisier-than-expected diagnostic line; any caller doing an existence-check-by-GET on
+`/rest/documents/{id}` should treat 500 as "does not exist yet", exactly like the classtype case.
+
+## §30 — Handler script size ceiling (verified 2026-09-07, fd.demo default)
+- **`POST /core/rest/files/tmp` returns nginx `413 Request Entity Too Large` around 1 MB.** A handler whose expanded script (handler + `@include`d shared libs) reaches ~1.02 MB deployed fine; ~1.03 MB failed. `uxc push` stops at the first failing resource and says "re-run --changed to resume" — the OTHER resources in the same command are NOT pushed; check `uxc status` afterwards.
+- Mitigations seen: drop includes a handler does not need (typeof guards keep the code safe), move shared helpers to a lib every handler already includes, split a very large handler by command family. Stripping full-line comments at push would save ~35 % but must keep the `// >>> uxc:include` markers and a consistent content hash for diff/verify.
+
+## 31. Answering a task over REST = PUT, not POST (verified 2026-09-07, fd.demo FD2026)
+
+`PUT /core/rest/tasks/{taskId}/answer` with body `{ "id": "<answerId>" }` answers the task and
+fires the task answer handler (obligations, work items, reconciler all ran). `POST` on the same
+path returns `405 Method 'POST' is not supported`. `lib/testkit.mjs` already uses PUT; a package
+helper that tries POST first and falls back to "mark PoTaskState" silently skips the answer
+handler on this server, so use PUT when the handler MUST run (`gerflor-poc-work/bin/task-answer.mjs`).
+
+## 32. In FlowerDocs handler scripts the global `String` is java.lang.String (verified 2026-09-07)
+
+Inside a server handler (Graal JS), `String` resolves to the Java class, not the JS constructor:
+`String(x)` and `String.fromCharCode(n)` fail with `invokeMember (fromCharCode) on
+java.lang.String failed due to: Unknown identifier: fromCharCode`. Use `('' + x)` for conversion
+and build characters through Java: `'' + new (Java.type('java.lang.String'))(Java.type('java.lang.Character').toChars(n))`,
+with a `typeof Java === 'undefined'` fallback to `String.fromCharCode` for Node unit tests. Node
+tests never catch this class of bug: any "pure JS fallback" path must be exercised on the server.
+
+## §33 — `// @include <file> strip` : les bibliothèques partagées sans leurs commentaires (2026-09-08, gfdefault)
+- Symptôme : `POST /core/rest/files/tmp -> 413` sur `PoAdminCommand_onCreate` dès que son script EXPANSÉ dépasse ~1 030 000 octets (10 includes partagés, 297 Ko de lignes de commentaires dans ces bibliothèques).
+- Remède dans uxc 0.15 : le suffixe `strip` sur une directive `@include` retire du corps expansé les lignes qui ne sont QU'un commentaire `//` et tasse les lignes vides ; les marqueurs `uxc:include` restent, les commentaires en fin de ligne aussi (un `//` dans une chaîne rendrait le retrait dangereux). Les sources gardent tout ; seul le corps envoyé au serveur est allégé. Résultat sur le package `po` : 1 050 922 -> 766 944 octets pour l'admin, tous les handlers sous 720 Ko.
+- Le contrôle de dérive (`status`, `pull`) passe par la même expansion : un include `strip` reste « en phase » avec le serveur.
+
+## §34 — Uxopian AI : `[[` et `]]` DANS une valeur de payload font tomber la passerelle (2026-09-08, gfdefault)
+- Symptôme : `POST /api/v1/requests` → `500 {"code":"INTERNAL_ERROR"}` en ~500 ms, sans appel au modèle, dès que la valeur d'une variable de prompt contient `[[` ou `]]` (ici un JSON avec des tableaux imbriqués : `"paths":[[{...}]]`). La même charge sans ces séquences passe ; une charge de 40 Ko sans elles passe aussi (ce n'est pas la taille).
+- Cause probable : la substitution des variables `[[${x}]]` du prompt relit le texte substitué.
+- Remède : espacer les séquences dans les valeurs (`[[` → `[ [`, `]]` → `] ]`) avant l'envoi ; un JSON reste lisible par le modèle. `${` seul n'a pas posé de problème dans nos essais (non présent dans nos données).
+- Au passage : `gpt-5.5` (openai) n'accepte que `temperature` = 1 (« Unsupported value: 'temperature' does not support 0.3 ») ; la passerelle renvoie alors `400 LLM_BAD_REQUEST` avec le message d'OpenAI. Latence plancher observée sur ce périmètre : ~22 s (gpt-5.4) à ~30 s (gpt-5.5) même pour une réponse de 200 jetons.
+
+## §35 — Un script `@include` aplati en copie figée pousse « avec succès » sans rien changer (2026-09-08, gfdefault)
+- Symptôme : `uxc push` rend « push: 1 resources », `uxc status --remote` dit « insync », et pourtant l'écran ne change pas. Cause : `fd/scripts/po-widgets/po-widgets.js`, qui doit être une liste de 11 directives `// @include ./parts/…` (1 Ko), s'était retrouvé remplacé par sa propre expansion (987 Ko, sans directive) à un commit du soir ; dès lors les modifications des `parts/` n'entraient plus dans le script poussé. Quand c'est arrivé : entre deux pushs dont l'un s'était interrompu (« state is committed for the resources already pushed — re-run ») ; la voie exacte (pull, reprise, écriture de l'état) n'a pas été identifiée.
+- Diagnostic en dix secondes : `grep -c @include fd/scripts/<script>/<script>.js` (doit être > 0) et `wc -c` (doit être petit) ; ou expander localement avec `lib/include.mjs` et chercher un marqueur récent.
+- Remède : `git checkout <bon commit> -- fd/scripts/<script>/<script>.js`, puis `uxc push`. Garde-fou dans le package `po` : `tests/00-includes-intacts.test.mjs` échoue dès qu'un script d'assemblage perd ses directives ou qu'une partie n'est plus incluse.
+
+
+## GET d'un composant absent : 500 « F00012 », pas 404 (vérifié le 9 septembre 2026)
+
+`GET /rest/documents/{id}` et `GET /rest/virtualFolder/{id}` sur un identifiant inconnu répondent
+**500** avec le corps `{"code":"F00012","message":"F00012: The component [Id{value=...}] does not exist"}`,
+et non 404. Un lecteur qui traite tout 5xx comme une panne du Core prend une absence pour une panne et
+refuse d'écrire (vu sur la compaction des archives de journal du package `po`). Tester le corps :
+`F00012` = absence.
+
+## §39 — Chaque CATÉGORIE de composant a son propre endpoint de recherche (vérifié fd.demo, scope `default`, 2026-09-10)
+
+Il n'y a pas UNE recherche FlowerDocs. Interroger la mauvaise catégorie ne renvoie pas d'erreur :
+elle renvoie `found 0`, ce qui se lit comme « l'objet n'existe pas ».
+
+| Catégorie | Endpoint |
+|---|---|
+| documents | `POST /core/rest/documents/search` |
+| tâches | `POST /core/rest/tasks/search` |
+| dossiers virtuels | `POST /core/rest/virtualFolder/search` (F majuscule, comme les autres routes VF) |
+| dossiers | `POST /core/rest/folders/search` |
+
+- **Même corps, même enveloppe** pour les quatre : `{selectClause:{fields},filterClauses:[…],max,start}`
+  en entrée, `{found, results:[{id, fields:[{name,value}]}]}` en sortie. Les critères
+  (`classid` EQUALS_TO), la pagination (`start`/`max`) et `orderClauses` se comportent à l'identique
+  sur `virtualFolder/search` — vérifié : `classid=PoOrder` → `found=39`, `start=2` pagine,
+  `orderClauses [{name:'name',type:'STRING',ascending:true}]` trie.
+- `/rest/virtualFolders/search` (pluriel) n'existe pas : `404 No endpoint`.
+- La réponse renvoie parfois plus de champs que demandé (`acl`, `status` s'ajoutent à `name`/`classid`).
+- Conséquence pratique : un scope peut contenir 98 dossiers virtuels et 39 `PoOrder` pendant que
+  `documents/search` répond `found 0` pour le même critère. Côté uxc (0.16) : `uxc search --category
+  VIRTUAL_FOLDER`, `uxc ls fd.vfinstance` (qui répondait « 0 » en dur), `uxc get <id>` qui retombe sur
+  le dossier virtuel quand aucun document ne porte l'id, et une recherche sans `--category` qui, à
+  zéro résultat, sonde les autres catégories et dit où sont les correspondances.
+
+## Session expirée : **le Core** répond **403**, jamais 401 — mais pas les greffons
+
+Mesuré le 12 septembre 2026 sur `fd.demo.uxopian.com` (scope `default`), depuis la page elle-même,
+sur trois cas qui rendent **exactement la même réponse** :
+
+| cas | statut | corps |
+|---|---|---|
+| `Authorization: Bearer <jeton invalide>` | **403** | `{"timestamp":"…","status":403,"error":"Forbidden","path":"/core/rest/documents/PO_CONFIG"}` |
+| aucun en-tête d'autorisation | **403** | identique |
+| session expirée (cookie du navigateur) | **403** | identique |
+
+`content-type: application/json`, **`WWW-Authenticate` absent**, `statusText` vide.
+
+**Pourquoi ça compte.** Tout code qui distingue « non authentifié » de « interdit » par `401` ne se
+déclenchera **jamais** : il faut lire `403`. Et comme les trois cas sont indiscernables par le
+statut, un client ne peut pas dire « votre session a expiré » plutôt que « vous n'avez pas le
+droit » à partir de la seule réponse — il doit s'appuyer sur autre chose (l'âge du jeton, ou une
+relecture de `/core/rest/authentication`).
+
+À rapprocher de l'autre surprise de la même famille : **un identifiant inconnu répond 500 F00012**,
+pas 404. Le Core n'utilise pas les statuts HTTP comme on s'y attend ; vérifier avant de brancher une
+logique dessus.
+
+**Et le jeton expire de façon ABSOLUE, pas glissante** : la documentation dit « valid for 3600s from
+the moment it is generated » ; sur `fd.demo`, un jeton frais décodé donne `exp − iat = 7200 s`,
+soit deux heures fixes, sans revendication de rafraîchissement. Aucune activité ne repousse
+l'échéance — donc une panne d'authentification peut frapper en pleine session active, ce qui la
+rend très facile à attribuer à tort à autre chose.
+
+### Correction du 13 septembre : cette règle vaut pour le Core, **pas pour les greffons**
+
+Mesuré en cherchant une panne d'envoi sur le greffon Plume, servi derrière la **même** adresse
+(`/gui/plugins/plume/...`) :
+
+| appel | statut |
+|---|---|
+| `/plume/actuator/**` avec un jeton FlowerDocs | **401** franc |
+| `POST api/emails/{id}` sur un brouillon inconnu | **404** franc |
+
+Ce sont des services Spring Boot, et ils répondent avec les statuts qu'on attend. **Les règles de
+statut du Core ne se généralisent donc pas à ce qui vit derrière la même URL.** Vérifier par service,
+jamais par déduction — c'est exactement l'erreur que la règle ci-dessus a failli induire.
+
+Autre acquis du même jour : le greffon Plume a **sa propre session** (cookies `JSESSIONID` +
+`SESSION`). Sans eux, un brouillon créé n'existe pas pour l'appel suivant — le jeton FlowerDocs ne
+suffit pas.
+
+## `registerForComponentChange` **does** fire on a virtual folder — correction of §30
+
+Measured 13 September 2026 on `fd.demo`, with a throwaway VF class. The hook fires with
+`phase: MODIFY`, `category: VIRTUAL_FOLDER`, `classId: <the VF class>`, and `formAPI.getFields()`
+returns the virtual folder's own tags. `getObjectValue`, `getTagValue` and `getTagValues` all
+returned the expected value at hook time, with no delay.
+
+§30 said this was unconfirmed and to assume it does not fire. **It fires.**
+
+A trap that produced a false negative first, worth knowing because it looks exactly like a platform
+limit: a vfinstance JSON that puts its tags under `data.tags` stores **none of them**, so the hook
+reads an empty object and one concludes the platform does not expose VF tags. Check that the tags
+are really on the server before concluding anything about the hook.
+
+## Taking the whole content area: the platform already reserves a full-width pane
+
+`.row.content-row` carries **four** sibling panes, not two. `.content-full` is declared
+`flex: 0 0 100%` and merely `display:none` by default. So a package does not have to take space away
+from the viewer — it has to reveal a pane that already exists.
+
+**The mechanism matters more than the arrangement.** Measured on a real session:
+
+| approach | frames still showing the native viewer |
+|---|---|
+| inline styles set at hook time | **536 / 550** |
+| one stylesheet + one attribute on the row | **0 / 604** |
+
+The platform finishes building its screen around 240 ms and rewrites inline styles afterwards — 18
+rewrites counted in one session. A declarative rule with `!important` wins permanently; inline styles
+set at hook time lose. No poll and no MutationObserver are needed for the layout itself.
+
+**`.row.content-row` is the same DOM node for the whole session.** Any attribute written on it
+survives navigation, so a per-object layout must write the attribute on **every** arrival, including
+its default value, or each screen inherits the previous one's layout.
+
+**Hiding native fields is lossless.** `formAPI.setVisible(field, false)` hides the widget without
+touching the model: a save performed with every field hidden bumped the version and preserved every
+tag value.
+
+**But hidden is not absent**: with `.viewer` at `display:none`, ARender is still loaded — 61 network
+requests. Suppressing that needs either a bounded race blanking the iframe `src`, or the documented
+`componentActivityConfigurations` / `leftPanelWidthRatio` (per class and phase, **never** per
+instance — doc pp. 402-410).
+
+## An exhausted LLM quota surfaces as a **slow 500**, not a fast 429 — don't rule it out on timing
+
+Measured on `fd.demo`, 13 September 2026, and diagnosed wrongly at first.
+
+The Uxopian AI gateway answered **500 `INTERNAL_ERROR` in a constant 3.3–3.9 s** to every inference
+request, including a **two-character TEXT input with no prompt at all**, and on **three different
+providers** (`openai`, `gemini`, `anthropic`). The gateway itself was up (`/api/v1/admin/llm/providers`
+→ 200, nine providers) and prompt validation still worked (a missing global variable returned a clean
+**400**, not a 500). So the failure sat *after* validation and *before* the model.
+
+**The actual cause: the OpenAI account had run out of credit.** Confirmed by the instance owner.
+
+Two traps worth remembering:
+
+1. **The duration misleads.** A quota refusal is normally instant; 3.5 s of constant latency reads
+   like a failing outbound call with retries, and that is exactly what we concluded. It was wrong.
+   The gateway evidently retries before mapping the provider's refusal onto a generic 500.
+2. **All providers failed together**, which we read as "something in front of them" — correct, but we
+   inferred credentials or egress rather than the account behind the default provider. When several
+   providers fail at once through this gateway, **check billing first**: it is the cheapest
+   hypothesis to test and the fastest to fix.
+
+**The useful diagnostic**, which did hold: a **two-character request with no prompt** isolates the
+problem instantly. If that fails, nothing about the payload, the context size or the prompt can be
+responsible. `bin/ai-probe.mjs` in the POC tooling does exactly this.
+
+## The GUI caches package scripts: a normal reload does NOT pick up a push (verified 2026-09-13, fd.demo scope `default`)
+
+After `uxc push fd.script/<name>` reports `updated`, the running GUI keeps serving the **previous**
+script. `location.reload()` — even `reload(true)` — does not refresh it: the package scripts come
+from `/gui/rest/scripts/<name>` and the browser answers that request from cache.
+
+How this misleads you: the server is correct and the browser is not, so you "verify" a fix against
+code that was never loaded, and conclude the fix failed. I spent three deploy cycles on this today.
+
+- **Check the server, not the page**, before doubting the fix:
+  `await fetch('/gui/rest/scripts/po-widgets?bust=' + Date.now(), {cache:'reload'}).then(r=>r.text())`
+  then look for a marker string from your change. If it is there, the deploy is fine.
+- **Force the page**: `cmd+shift+R` (hard reload) is what actually rebinds the new script. The
+  platform's own "A new version is available · Refresh" toast is **not** enough — it reloads the
+  page but the script still comes from cache.
+- A **dataset** push (`fd.dataset/...`) does not have this problem: datasets are read at runtime by
+  search, so a plain reload shows the new rows immediately. This asymmetry is itself a trap — you
+  can see your new dataset values render while the code that reads them is still the old one.
+
+## `.viewer` is hidden but alive: writing to it succeeds and shows nothing (verified 2026-09-13)
+
+When an arrangement hides the platform's viewer pane (`.viewer { display: none }`), the iframe
+inside it is still in the DOM and still loads: setting `.viewer iframe`'s `src` fires the request,
+fills the frame, throws nothing, and displays nothing. Any "open this document" helper that targets
+the viewer **first and returns** will silently do nothing on every screen that hides it.
+
+Decide from the **declaration** of the current arrangement, not from a measurement: a layout that
+failed to apply leaves the native arrangement, where the viewer *is* shown, so the declaration is
+right in both cases. A `getBoundingClientRect()` check additionally cannot be exercised in an
+offline harness that has no layout engine — it makes the decision untestable.
+
+## The platform's answer buttons live in `.content-page > footer.footer` (verified 2026-09-13)
+
+The task footer (`Cancel · Save · Done · Need info · Cancel`) sits **outside** `.row.content-row`,
+so a rule scoped to the content row will not reach it; scope it from the root element instead
+(`html[data-po-cadre="<mode>"] .content-page > footer.footer`). The answer-carrying buttons carry
+class `.answer-action`.
+
+Two traps if you try to hide them by matching their **label**: the platform renders them in the
+**UI language of the platform** (English) while your own screen may be in another language, so a
+label comparison silently matches nothing; and answering through the JS API (`task.answer`) does not
+go through these buttons at all, so hiding them removes no path.
+
+## §40 — Loading shared library code at RUNTIME from a handler: `load()` works, strict `eval` does not, no persistence (verified fd.demo/gfdefault, 2026-09-14)
+- **`load({ name, script })` is available in the FlowerDocs Graal handler context** (`typeof load === 'function'`, `typeof eval === 'function'`). Top-level `var`/`function` of the loaded text become globals visible to the rest of the handler — **including for a `'use strict'` text**.
+- ⚠️ **Indirect `(0, eval)(text)` of a `'use strict'` text does NOT expose its top-level `var`s** (strict eval gets its own variable environment) — sloppy text is fine. Handlers composed by uxc start with `'use strict'`, so **use `load`, not eval**.
+- **Cost, measured on a real 731 kB composed handler body** (fetched from the live registration's content via REST with a minted `system` JWT, then `load`ed): cold execution fetch 271 ms + load 189 ms; a later execution fetch 116 ms + load 90 ms; a second `load` of the same text in the same execution ~100 ms.
+- **No persistence between executions**: at the start of each execution, globals defined by the previous execution's `load` (and a sloppy implicit global marker) are `undefined` — every execution gets a fresh context, so a runtime-loaded library is paid on every execution (budget it against the 55-60 s handler bound).
+- A probe registration (order 29, CREATE/DOCUMENT, guarded on its own class) fired **~5 s after cache clear** this time — still fire fresh events past the ~45 s window (§27) rather than rely on it.
+- Probe tool: `gerflor-poc-work/bin/sonde-bibliotheque.mjs` (reuses `uxc doctor --sandbox` mechanics from `lib/preflight.mjs`: throwaway registration, fresh events, cleanup by known id). Design context: `gerflor/qa/conception/LE-BUDGET-DES-GESTIONNAIRES.md`.

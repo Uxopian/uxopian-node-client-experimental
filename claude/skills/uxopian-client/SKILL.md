@@ -71,8 +71,26 @@ tested-on tags; version comes from the manifest. Full surface + gotchas: `refere
   run `uxc cache-clear`. Don't sprinkle manual clears.
 - **Write only to resources the registry owns** (project-prefixed). Shared/native resources are
   `external` — read-only, always.
+- **A package may PIN its target** (`agent.target` / `.uxc/target`). `--target` may only confirm
+  it; uxc refuses another instance. Do not reach for `--allow-target-mismatch` to get past this.
+- **`agent.protect` / `neverPull` / `forbid` are enforced by the CLI.** A refusal naming them is
+  the package's own rule — respect it or change the manifest deliberately, never work around it.
 
 Full rationale + more rules: `references/policies.md`.
+
+## Sharing an instance with another agent
+
+- **Start with `uxc context`.** Kinds, ids, prefixes, order bands, include order, policy, size
+  budget and gotchas in ~600 tokens — do NOT rebuild that map by grepping the package.
+- Writes serialise on a **target lock**; reads never wait. If a write says it is waiting, another
+  agent is mid-push — wait, do not pass `--no-lock`.
+- `push --changed` ships **whatever is dirty in the checkout**, including another agent's
+  half-done work. Scope it: `push --changed --paths fd/handlers/PoEmail_onCreate`.
+- After any handler deploy there is a ~45 s blind window; uxc records it so the NEXT push waits it
+  out. Don't defeat that by racing pushes.
+- Cheap tier first: `uxc test --offline` runs `offline: true` books with no server and no lock.
+- `uxc verify` also runs the offline lints (constrained tag values, include order, prompt
+  variables). Run it BEFORE a push, not only after.
 
 ## Token-economy habits (you are the primary user — keep outputs small)
 
@@ -83,6 +101,10 @@ Full rationale + more rules: `references/policies.md`.
 - Never `--full` unless the capped output truly lacks what you need; `get --content` writes
   bytes to a file instead of dumping them.
 - `--json` everywhere when you will parse the output.
+- `uxc get <docId> --raw-tag PoCaseLog` prints ONE tag verbatim (pipe it to jq) — never regex a
+  tag value out of the table.
+- `uxc status --kind fd.handler --prefix Po` narrows a big package; the summary prints FIRST.
+- `uxc size` shows the composed push-body size against the ~1 MB limit before a 413.
 - Multi-step bespoke jobs (migrations, seeders): write a small script on the lib
   (`import { connect, runPrompt } from 'uxopian-client'`)
   — never a re-grown ad-hoc `http()` helper.
@@ -115,3 +137,4 @@ browser tooling, not uxc.
 - `references/errors.md` — error code/signature KB + gateway stream quirks.
 - `references/recipes.md` — worked end-to-end flows with exact commands (incl. `uxc test` — package-embedded functional tests, recipe 8).
 - `references/marketplace.md` — `uxc mp` publish/browse, marketplace.json schema, audience + tested-on compatibility.
+- `../../../docs/BACKLOG-AGENTIC.md` — what still hurts when several agents share one instance.
