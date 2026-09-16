@@ -72,7 +72,8 @@ test('uxopian-ai: admin-list fingerprint 200-array -> ai-2026-07 (adminPromptLis
   assert.equal(d.source, 'probe');
   assert.equal(d.dialect, 'ai-2026-07');
   assert.equal(d.caps.adminPromptList, true);
-  assert.equal(d.caps.promptVersioning, false); // reserved flag stays off until the release lands
+  assert.equal(d.caps.promptVersioning, false); // rows without a version number: flat prompts (ft4)
+  assert.equal(d.caps.goals, true);
 });
 
 test('uxopian-ai: admin list erroring (2025-era 500) -> ai-2025 (adminPromptList: false)', async () => {
@@ -82,12 +83,48 @@ test('uxopian-ai: admin list erroring (2025-era 500) -> ai-2025 (adminPromptList
   assert.equal(d.caps.adminPromptList, false);
 });
 
-test('uxopian-ai: aiVersion override maps through the version ranges (no probe)', async () => {
-  const ctx = ctxWith({ target: { aiVersion: '2026.08' } });
+test('uxopian-ai: aiVersion override maps PRODUCT versions through the ranges (no probe)', async () => {
+  const pin = async (aiVersion) => {
+    const ctx = ctxWith({ target: { aiVersion } });
+    const d = await capabilities(ctx, 'uxopian-ai');
+    assert.equal(d.source, 'override');
+    assert.equal(ctx.calls.filter(([k]) => k === 'gw.tryGet').length, 0);
+    return d;
+  };
+  assert.equal((await pin('2025.3.1')).dialect, 'ai-2025');
+  assert.equal((await pin('2026.0.0-ft4')).dialect, 'ai-2026-07');
+  const ft5 = await pin('2026.0.0-ft5');
+  assert.equal(ft5.dialect, 'ai-2026-ft5');
+  assert.equal(ft5.caps.promptWrite, 'versioned-v1');
+  assert.equal(ft5.caps.goals, false);
+  assert.equal(ft5.caps.agenticPlans, true);
+  // ft10 must NOT sort below ft5 (plain semver compares 'ft10' < 'ft5' as ASCII)
+  assert.equal((await pin('2026.0.0-ft10')).dialect, 'ai-2026-ft5');
+  assert.equal((await pin('2026.0.0')).dialect, 'ai-2026-ft5');
+});
+
+test('naturalVersion splits letter+digit prerelease ids so they compare numerically', async () => {
+  const { naturalVersion } = await import('../lib/dialects.mjs');
+  assert.equal(naturalVersion('2026.0.0-ft10'), '2026.0.0-ft.10');
+  assert.equal(naturalVersion('2026.0.0-rc.1'), '2026.0.0-rc.1');
+  assert.equal(naturalVersion('2026.0.0'), '2026.0.0');
+  assert.equal(naturalVersion('1.0.0-beta2+b7'), '1.0.0-beta.2+b7');
+});
+
+test('uxopian-ai: ft5 fingerprint — admin rows carry their served version number', async () => {
+  const ctx = ctxWith({ adminList: [{ id: 'x', version: 3, usage: { deletable: true } }] });
   const d = await capabilities(ctx, 'uxopian-ai');
-  assert.equal(d.source, 'override');
-  assert.equal(d.dialect, 'ai-2026-07'); // 2026.08 falls in the open-ended newest range
-  assert.equal(ctx.calls.filter(([k]) => k === 'gw.tryGet').length, 0);
+  assert.equal(d.dialect, 'ai-2026-ft5');
+  assert.equal(d.caps.promptVersioning, true);
+  assert.equal(d.caps.goals, false);
+});
+
+test('uxopian-ai: EMPTY admin list falls back to the plans surface (ft5) — or not (ft4)', async () => {
+  const withPlans = ctxWith({ adminList: [] });
+  withPlans.clients.gateway.tryGet = async (p) => (p === '/api/v1/admin/plans' ? [] : []);
+  assert.equal((await capabilities(withPlans, 'uxopian-ai')).dialect, 'ai-2026-ft5');
+  const noPlans = ctxWith({ adminList: [] }); // tryGet -> null for /admin/plans (404)
+  assert.equal((await capabilities(noPlans, 'uxopian-ai')).dialect, 'ai-2026-07');
 });
 
 test('unknown product throws with the known-product list', async () => {

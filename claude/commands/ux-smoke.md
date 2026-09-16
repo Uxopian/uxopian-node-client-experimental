@@ -4,8 +4,8 @@ description: Smoke-test a deployed prompt, goal, or handler pipeline end to end
 
 `uxc` = the `uxc` CLI on your PATH. Run from the package directory.
 
-`$ARGUMENTS` names what to smoke (a promptId, goal name, handler logical id, or classId). Pick
-the matching flow; if ambiguous, ask which.
+`$ARGUMENTS` names what to smoke (a promptId, goal name, plan id, handler logical id, or classId).
+Pick the matching flow; if ambiguous, ask which.
 
 **Prompt:**
 ```
@@ -16,7 +16,17 @@ uxc run <promptId> --payload k=v … --expect '<regex>'
 - Gateway errors stream as 200 bodies; uxc retries once automatically — a reported `error`
   after that is real. `uxc explain '<message>'` for the next move.
 
-**Goal (routing):**
+- uxopian-ai ft5+: `--prompt-version <n>` smokes a specific published version;
+  `--application <id>` runs it as that ai.application (its provider/model/tools).
+
+**Plan (uxopian-ai 2026.0.0-ft5+):**
+```
+uxc run --plan <planId> --payload k=v … --expect '<regex>'
+```
+- Prints each node's status + output. `REJECTED` = the engine refused the plan at submit (usually a
+  variable not declared in `toolInputParameters`); `UNSATISFIED` = an agent's successCriteria failed.
+
+**Goal (routing — uxopian-ai ≤ ft4; ft5 removed goals and uxc refuses `--goal` there):**
 ```
 uxc run <goalName> --goal --payload k=v … --expect '<regex>'
 ```

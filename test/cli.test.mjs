@@ -77,3 +77,12 @@ test('target add warns when gui/ai are DERIVED from the core host; silent when e
   assert.equal(explicit.status, 0);
   assert.doesNotMatch(explicit.stderr, /DERIVED/);
 });
+
+test('test/index.js imports EVERY *.test.mjs — npm test silently skips a file it does not list', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const dir = new URL('./', import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith('.test.mjs'));
+  const index = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  const missing = files.filter((f) => !index.includes(`"./${f}"`));
+  assert.deepEqual(missing, [], `add to test/index.js: ${missing.map((f) => `import "./${f}";`).join(' ')}`);
+});

@@ -49,7 +49,7 @@ Puppeteer/iris-session — `uxc` covers the API surfaces, and the skill says so 
 | Surface | Base | Auth |
 |---|---|---|
 | Core REST | `https://<host>/core` | `POST /rest/authentication` `{user,password,scope}` → `{value: JWT}`; header `token: <JWT>`; ~1 h expiry, transparent re-auth on expiry/401 |
-| uxopian-ai gateway | `https://<host>/gui/plugins/<scope>/gateway/uxopian-ai` | same JWT, `token:` header — **live-verified 2026-06-12** incl. admin endpoints (`admin/goals`, `admin/llm/*`) |
+| uxopian-ai gateway | `https://<host>/gui/plugins/<scope>/gateway/uxopian-ai` | same JWT, `token:` header — **live-verified 2026-06-12** incl. admin endpoints (`admin/goals`, `admin/llm/*`); the OpenAPI spec is served at `/v3/api-docs` (2026.0.0-ft5) |
 | GUI caches | `https://<host>/gui/rest/caches` | same JWT `token:` header — *strong evidence* (deploy-handlers.mjs cleared caches this way through v13 with working handler chains) but **not formally recorded**: `uxc doctor` probes it first and records the verdict in FLOWERDOCS-LEARNINGS; until green, push prints the manual-clear fallback instead of claiming success |
 
 No Puppeteer, no cookies. The HTTP layer (`lib/http.mjs`):
@@ -182,14 +182,18 @@ template`. All five class types + tagcategory have verified LIST endpoints (full
 | 11 | `fd.handler` | meta + resolved script/filter | ✅ see §7.11 below |
 | 12 | `fd.surfacing` | `surfacing.json` | ✅ see §7.12 below |
 | 13 | `fd.dataset` | JSONL | ✅ see §7.13 below |
-| 14 | `ai.prompt` | meta JSON + `.content.md` | ✅ fields `id, role, content, defaultLlmProvider, defaultLlmModel, temperature, reasoningDisabled, requiresMultiModalModel, requiresFunctionCallingModel, timeSaved` (strip `createdAt`; normalize `temperature` to string in canonical form — echo-verified by doctor). Push = POST `/api/v1/admin/prompts`, 409 → PUT (id in body). List via **user** `GET /api/v1/prompts` — which can return a **reduced projection** (id+content only on some builds), so `readServer` overlays the echo on the local meta (server-present keys win → drift detectable; omitted keys fall back to local → config like `role`/`defaultLlmProvider`/`defaultLlmModel`/`temperature` is never lost on the push echo-leg writeback). Validate: `requiresFunctionCallingModel:true` ⇒ explicit `reasoningDisabled:false` (refuse push); helper calls linted against `GET /api/v1/admin/templating/completion` |
-| 15 | `ai.goal` | `goals.json` | natural key **(goalName, promptId, filter)** — duplicate keys rejected at validate. Server row id is per-target → state. Reconcile reads `GET /api/v1/admin/goals` (filter client-side; `?goal_name=` used only once live-verified). **Only rows whose promptId belongs to the package are ever created/updated/deleted.** Import detects `index` collisions within a goalName vs foreign rows and re-bands with a printed report |
+| 14 | `ai.prompt` | meta JSON + `.content.md` | ✅ fields `id, role, content, defaultLlmProvider, defaultLlmModel, temperature, reasoningDisabled, requiresMultiModalModel, requiresFunctionCallingModel, timeSaved` (strip `createdAt`; normalize `temperature` to string in canonical form — echo-verified by doctor; ft5 also strips `version`/`draft`/`usage`). Push goes through the dialect's **write strategy** (§18): `admin-v1` (≤ ft4) = POST `/api/v1/admin/prompts`, 409 → PUT (id in body); `versioned-v1` (2026.0.0-ft5) = POST create, update = open/reuse THE draft (`POST …/{id}/versions`) + publish (`PUT …/versions/{n}` `draft:false`), refusing a foreign unpublished draft unless `--force` (AI learnings §A11). List via **user** `GET /api/v1/prompts` — which can return a **reduced projection** (id+content only on some builds), so `readServer` overlays the echo on the local meta (server-present keys win → drift detectable; omitted keys fall back to local → config like `role`/`defaultLlmProvider`/`defaultLlmModel`/`temperature` is never lost on the push echo-leg writeback). Validate: `requiresFunctionCallingModel:true` ⇒ explicit `reasoningDisabled:false` (refuse push); helper calls linted against `GET /api/v1/admin/templating/completion` |
+| 15 | `ai.goal` | `goals.json` | **Removed by uxopian-ai 2026.0.0-ft5** (404 / GOAL content 400, AI learnings §A12): dialect cap `goals:false` classifies every row `unsupported` — skipped by status/pull/push/verify, never a failure. Up to ft4: natural key **(goalName, promptId, filter)** — duplicate keys rejected at validate. Server row id is per-target → state. Reconcile reads `GET /api/v1/admin/goals` (filter client-side; `?goal_name=` used only once live-verified). **Only rows whose promptId belongs to the package are ever created/updated/deleted.** Import detects `index` collisions within a goalName vs foreign rows and re-bands with a printed report |
 | 16 | `ai.mcp` | JSON | CRUD `/api/v1/admin/mcp/mcp-conf` (hot-reload server-side). Doctor verifies whether GETs mask header secrets; masked fields are excluded from the canonical hash (llmconf-style) and **push never overwrites a non-empty server secret with a placeholder** |
 | 17 | `ai.llm` | JSON | CRUD `/api/v1/admin/llm/provider-conf` — LLM **provider configs** (provider + model catalog). Same secret contract as `ai.mcp`: `globalConf.apiSecret` echoes as `********` → masked to `__masked__` (never written to the package); on push `__masked__` resolves to the live server value, and a **fresh install ships an empty key** (operator sets it — an LLM provider is legitimately created keyless). `uxc ls ai.llm`. (Supersedes the former inspect-only `ai.llmconf`.) |
+| 18 | `ai.agent` | JSON | **2026.0.0-ft5+** (cap `agenticPlans`). CRUD `/api/v1/admin/agent/agent-conf[/{id}]`: create 201 empty body, existing id = **400** (fallback to PUT), `PUT /{id}` full replace. `objective` = the prompt it runs (required); `successCriteria`; `permissions` (tool/tag/MCP/sub-plan whitelists); `secrets.*.value` under the `ai.mcp` mask contract. The gateway checks no references → `lintAgentic` warns offline; unknown tool names/tags warn at push (`GET /api/v1/admin/tools`). AI learnings §A13 |
+| 19 | `ai.plan` | JSON | **2026.0.0-ft5+** (cap `agenticPlans`). CRUD `/api/v1/admin/plans[/{id}]`, same verbs as `ai.agent`. Validate (blocking): node ids unique, types AGENT/SUBPLAN/DIRECT_TOOL with their required field, dependencies exist, **no cycle** (server 400), `exposeAsTool` ⇒ `toolDescription` + tool-name-safe id. Lint (warning): each AGENT node's prompt variables must come from a dependency `outputKey`, a `persistOutput` node or `toolInputParameters` — else the run is refused (400). Runs: `uxc run --plan` (§14). AI learnings §A13/§A14 |
+| 20 | `ai.application` | JSON | **2026.0.0-ft5+** (cap `applications`). CRUD `/api/v1/admin/application/application-conf[/{id}]`: existing name = **409** (fallback to PUT). **id = name** (the gateway derives one from the other — validate refuses a mismatch). Selected at run time by `X-Application-Id` (`uxc run --application`). A referenced prompt cannot be deleted, and the reference outlives the application ~2 s (prompt remove retries). AI learnings §A15 |
 
 **Push order** (topological, always): acl → tagclass → tagcategory → documentclass →
 taskclass → folderclass → workflow → vfclass → dataset → script → guiconfig → handler →
-vfinstance → surfacing → ai.prompt → ai.goal → ai.mcp. Delete = reverse. (acl first: classes
+vfinstance → surfacing → ai.llm → ai.prompt → ai.goal → ai.mcp → ai.agent → ai.plan →
+ai.application → f2.map. Delete = reverse. (acl first: classes
 reference it via `data.ACL`. workflow after taskclass: a workflow lists `taskClasses`.)
 
 **Cache clears**: a `pendingCacheClear` flag is persisted in state **before** the first
@@ -428,7 +432,9 @@ uxc install-claude
 - `add fd.guiconfig ct-foo-search --template search|home|vf-override --class CtBar`
 - `add fd.script ct-foo --order <auto-from-band>`
 - `add ai.prompt ctFoo [--fcm]` (`--fcm` sets requiresFunctionCallingModel + reasoningDisabled:false)
-- `add ai.goal --goal <goalName> --prompt ctFoo [--filter expr] [--index n]`
+- `add ai.goal --goal <goalName> --prompt ctFoo [--filter expr] [--index n]` (≤ ft4)
+- `add ai.agent ctFooAgent --objective ctFoo` · `add ai.plan ctFooPlan --agent ctFooAgent` ·
+  `add ai.application ctPortal [--provider FlowerDocsProvider] [--prompt ctFoo]` (ft5+)
 - any kind: `--from-file <path>` registers an existing/generated file instead of scaffolding.
 
 **Output discipline** (the token-economy contract):
@@ -525,7 +531,10 @@ branches on **capability flags**, never on raw version strings in adapters (`lib
 2. version endpoint — FlowerDocs Core `GET /core/actuator/info` → `{version:"2026.0.0", build}`
    (verified live, LEARNINGS §25); uxopian-ai exposes NO version surface as of 2026-07;
 3. capability fingerprint — uxopian-ai: `GET /api/v1/admin/prompts` answers 200-array on 2026-07+
-   builds and 500'd on 2025-era gateways — one cheap probe.
+   builds and 500'd on 2025-era gateways; on 2026.0.0-ft5 its rows carry their served `version`
+   (an empty list falls back to `GET /api/v1/admin/plans`, same release) — one or two cheap probes.
+   Pinned versions are PRODUCT versions (`2026.0.0-ft5`); letter+digit prerelease ids compare
+   naturally (`ft10` > `ft5`).
 
 **Registry contract**: `DIALECTS[product].ranges` = ordered `{name, max, caps}` entries (exclusive
 upper bounds, newest open-ended). Supporting a new server release = ONE new range entry plus the
@@ -537,9 +546,16 @@ the detected version, dialect and caps per product.
 **Capabilities wired today**: `vfInstanceCreatePath` (FD 2025 trailing-slash vs FD 2026 no-slash —
 dialect picks the first attempt, the 404/405 fallback stays as safety net);
 `adminPromptList` (2026-07+ gateway: prompt reads use the ADMIN list with FULL objects — the lossy
-user-list projection stops mattering; audit fields stripped in canonicalization).
-**Reserved**: `promptVersioning` (announced prompt versioning / working copies — will gate the
-prompt write path + the post-create duplicate assertion when that release lands).
+user-list projection stops mattering; audit fields stripped in canonicalization);
+uxopian-ai **2026.0.0-ft5** (`ai-2026-ft5`): `promptVersioning` + `promptWrite: 'versioned-v1'`
+(draft → publish; `uxc run --prompt-version`), `goals: false` (ai.goal → `unsupported`,
+`run --goal` refused), `agenticPlans` (ai.agent, ai.plan, `run --plan`), `applications`
+(ai.application, `run --application`).
+
+**Kind dialect gate** — `adapter.serverSupport(ctx)` → `null | reason`: a kind the connected server
+does not have (ai.goal on ft5, the agentic kinds and applications before it) classifies
+**`unsupported`** in status, and pull/push/verify skip it with the reason instead of failing the
+run. One package can therefore carry both generations and deploy what each server understands.
 
 **Write strategies**: kinds whose write API may change per release dispatch through a strategy
 table selected by a capability (ai.prompt: `caps.promptWrite` → `WRITE_STRATEGIES['admin-v1']` =

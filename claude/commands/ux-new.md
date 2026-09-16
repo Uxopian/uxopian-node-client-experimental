@@ -21,7 +21,10 @@ uxc add fd.handler       CtBar_onCreate --object DOCUMENT --filter-class CtBar [
 uxc add fd.guiconfig     ct-foo-search  --template search|home|vf-override --class CtBar
 uxc add fd.script        ct-foo
 uxc add ai.prompt        ctFoo  [--fcm]
-uxc add ai.goal          --goal <goalName> --prompt ctFoo [--filter expr] [--index n]
+uxc add ai.goal          --goal <goalName> --prompt ctFoo [--filter expr] [--index n]   # ≤ ft4 only
+uxc add ai.agent         ctFooAgent --objective ctFoo                                   # ft5+
+uxc add ai.plan          ctFooPlan  --agent ctFooAgent                                  # ft5+
+uxc add ai.application   ctPortal   [--provider FlowerDocsProvider] [--prompt ctFoo]   # ft5+
 uxc add <kind> <Name> --from-file <path>     # register an existing/generated file instead
 ```
 

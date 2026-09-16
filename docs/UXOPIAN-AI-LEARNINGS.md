@@ -13,22 +13,25 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
 - The gateway 404s until Uxopian-AI is provisioned for the scope — a SEPARATE product layer, NOT
   in flower-templates (FD §23).
 
-## §A2 — Versioning: NO version surface (as of the 2026-07 build)
+## §A2 — Versioning: NO version surface (as of the 2026-07 build — still true on 2026.0.0-ft5)
 - `/actuator` exposes links but `info` is EMPTY `{}` and `health` is 401; no `/api/v1/version`.
   uxc resolves the dialect by CAPABILITY FINGERPRINT: `GET /api/v1/admin/prompts` → 200-array on
-  2026-07+ builds, 500 on 2025-era (FD §25). Ask the AI team to populate actuator info.
+  2026-07+ builds, 500 on 2025-era (FD §25); on ft5 its rows carry a `version` number (§A11).
+  Ask the AI team to populate actuator info.
 - Releases are MONTHLY and the API may still change pre-GA — uxc absorbs differences via
-  `lib/dialects.mjs` capability flags + per-kind write strategies (DESIGN §18). The announced
-  prompt versioning / working copies will be a new dialect range + a `promptWrite` strategy.
+  `lib/dialects.mjs` capability flags + per-kind write strategies (DESIGN §18). Product versions
+  are `2026.0.0-ftN` (ft2 Feb, ft3 Apr, ft4 Jun, ft5 Aug 2026); the "2026-07 build" of §A3-§A10 is
+  ft4. Dialects: `ai-2025` < `2026.0.0-ft1` ≤ `ai-2026-07` < `2026.0.0-ft5` ≤ `ai-2026-ft5`.
 
 ## §A3 — Prompts
 - READ: the **user list** `GET /api/v1/prompts` can be a REDUCED projection (id + content only —
   FD §8/§17); the **admin list** `GET /api/v1/admin/prompts` 500'd on 2025-era gateways but
   returns FULL objects on 2026-07+ (role, defaultLlmProvider/Model, temperature, flags, audit
   fields). uxc reads the admin list when the dialect allows, else user list + local-meta overlay.
-- WRITE (`admin-v1` strategy): `POST /api/v1/admin/prompts` (object body), on 409 → `PUT` same
-  path; updates = `PUT` with **id in the BODY, not the path**. Content is verbatim (templating
-  helpers `[[${service.method(…)}]]` lintable against `GET /api/v1/admin/templating/completion`).
+- WRITE (`admin-v1` strategy, ≤ ft4): `POST /api/v1/admin/prompts` (object body), on 409 → `PUT`
+  same path; updates = `PUT` with **id in the BODY, not the path** (ft5 replaced this — §A11).
+  Content is verbatim (templating helpers `[[${service.method(…)}]]` lintable against
+  `GET /api/v1/admin/templating/completion`).
 - Canonical strips: `temperature` normalizes to a string; `role` echoes lowercase; audit fields
   (`createdAt/createdBy/updatedAt/updatedBy`, null `displaySettings`) dropped.
 - `requiresFunctionCallingModel: true` REQUIRES explicit `reasoningDisabled: false` (Java default
@@ -36,7 +39,7 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
 - Duplicate-proofing: exists-check FIRST, then a post-create assertion that the list holds
   exactly ONE entry with the id — a duplicating (versioning) gateway fails loudly (FD §25).
 
-## §A4 — Goals
+## §A4 — Goals (REMOVED in 2026.0.0-ft5 — §A12)
 - `GET/POST /api/v1/admin/goals`; a goal row's natural key is **(goalName, promptId, filter)**;
   the server row id is PER-TARGET (state, not content). Only rows whose promptId belongs to the
   package are ever touched by uxc.
@@ -110,3 +113,111 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
   labels, non-zero priority, aiReferenceInfo:true) survive and still diff.
 - The USER list `GET /api/v1/prompts` can be a reduced projection (id+content only — §A2/§A6
   family): the ai-prompt adapter overlays it on local meta; the ADMIN list is the full read.
+
+## §A11 — 2026.0.0-ft5: prompts are VERSION HISTORIES (verified fd.demo/IRIS, 2026-09-16)
+
+- The gateway is self-describing: **`GET /v3/api-docs`** (through the FlowerDocs plugin path, JWT
+  `token:` header) returns the full OpenAPI 3.1 spec. Read it before guessing a new endpoint.
+- `GET /api/v1/admin/prompts/{id}` → `{id, versions:[…], createdAt, createdBy, updatedAt, updatedBy}`
+  (the old flat object is gone). Each snapshot: the prompt fields + `version` (0 = baseline) and
+  `draft` (true on THE open draft; absent on v0, `false` once a later version was published).
+- **Create**: `POST /api/v1/admin/prompts` → **201**, echo WITHOUT `version`; an existing id → **409**
+  `CONFLICT "Prompt with id 'x' already exists"`.
+- **The bare `PUT /api/v1/admin/prompts` answers 500 INTERNAL_ERROR** (not 404/405) — a pre-0.18
+  uxc fails opaquely on every prompt UPDATE against ft5.
+- **Update** = `POST …/prompts/{id}/versions` with a FULL snapshot body → **201**
+  `{…, id, version: n+1, draft: true}`; a second draft → **409** `"A draft already exists … Publish or
+  discard it"`; an empty body → 400 `Prompt role is empty`. Then `PUT …/versions/{n}` with the full
+  body + `draft:false` → **200**: the body REPLACES the draft AND publishes it in one call.
+  `PUT` on a published version → **409** `"is published and read-only. Edit the draft instead."`;
+  unknown version → 404. `DELETE …/versions/{n}` discards the draft (409 on a published one).
+- The ADMIN list serves each prompt's ACTIVE (highest published) version, now with `version`,
+  `draft` and `usage {deletable, basePrompt, referencedBy[]}` — an open draft is invisible there.
+  The USER list `GET /api/v1/prompts` is `{id, content}` of the served version.
+- Runs: `inputs[].content[].version` pins a version (null = served). The request history
+  (`GET /api/v1/requests?conversation=`) records the resolved `promptId`, `version` and the
+  RENDERED `value`. **An absent version is NOT an error**: the request goes out with an empty prompt
+  and the LLM answers nonsense — check `GET …/versions/{n}` first. `type` is case-insensitive
+  (`PROMPT` still works).
+- A prompt created without provider/model echoes `temperature: "1"` (default) and no
+  `defaultLlm*` keys.
+- Statistics: `GET …/{id}/statistics` (all versions) and `GET …/{id}/versions/{n}/statistics` →
+  `{nbUsage, totalCost, costAverage, good/bad/neutralFeedback, timeSavedInSeconds}`. They answer
+  **200 with zeros for ANY id or version, even absent ones** — never an existence check. Requests
+  made before the ft5 upgrade count in the prompt-wide aggregate only (ctAssessBatch: 200 uses
+  overall, 0 on v0). `uxc versions <id> [--stats]` shows the history (served/draft/published,
+  `= local`) read-only.
+- uxc (0.18.0): dialect `ai-2026-ft5`, strategy `versioned-v1` — an open draft is REUSED only when it
+  equals the package content (a push that died between POST and PUT) or the served version (opened,
+  never edited); a draft carrying other edits (someone in the admin UI) is REFUSED unless
+  `push --force`. Canonical drops `version`/`draft`/`usage`. Receipts go through the same strategy
+  (each receipt write publishes a version).
+
+## §A12 — 2026.0.0-ft5: goals REMOVED (verified fd.demo/IRIS, 2026-09-16)
+
+- `GET /api/v1/admin/goals` → **404** `RESOURCE_NOT_FOUND`; a request content `type: GOAL` → **400**
+  `"Unknown content type: GOAL"` (Content.type enum is now `text|prompt|image`).
+- uxc: dialect cap `goals:false` → every `ai.goal` resource classifies **`unsupported`** (status,
+  pull, push, verify skip it with the reason; exit code unaffected) so ONE package still deploys
+  its goals on ≤ ft4 and everything else on ft5. `uxc run --goal` is refused up front.
+
+## §A13 — 2026.0.0-ft5: Agentic Plan engine — agents + plans CRUD (verified fd.demo/IRIS, 2026-09-16)
+
+- Agents: CRUD `/api/v1/admin/agent/agent-conf[/{id}]`; plans: `/api/v1/admin/plans[/{id}]`.
+  Create **201 with an EMPTY body**; an existing id → **400** `"… already exists for id"` (NOT 409);
+  `PUT /{id}` → 200 empty, **FULL replace** (a field left out comes back null; id in path suffices);
+  `DELETE` → 204, 404 when absent. Client-supplied ids are honored.
+- Ids may not hold whitespace, control characters, `/` or `\` (400 "contains an illegal character").
+- **No referential integrity**: an agent whose `objective` prompt does not exist → 201; a plan
+  node naming a missing agent → 201; deleting an agent a plan uses → 204. Failures surface only
+  when the plan RUNS. uxc lints references offline (`lintAgentic`, warnings).
+- Plan save-time validation exists for cycles: `400 "Invalid plan: Circular dependency detected
+  involving node: a"`.
+- Echo projection: every unset field as `null`; agents add `permissions {allowAllTools:false,
+  allowAllMcpServers:false, …null}` even when none was sent, `createdBy`/`updatedAt`/`updatedBy`
+  null (audit bug); plans add `exposeAsTool:false` and per node `persistOutput:false`,
+  `dependencies:[]`. An `allowedTools: []` sent echoes `[]` (kept distinct from absent).
+- Agent `secrets {NAME:{value, description}}`: value echoes `********`; a PUT sending `********`
+  is accepted and keeps the stored secret (same contract as MCP/LLM confs, §A5).
+- uxc kinds `ai.agent` (`ai/agents/<id>.json`) and `ai.plan` (`ai/plans/<id>.json`), cap
+  `agenticPlans`, push order after ai.prompt/ai.mcp; `uxc ls ai.tool` lists native tool names.
+
+## §A14 — 2026.0.0-ft5: running plans (verified fd.demo/IRIS, 2026-09-16)
+
+- `POST /api/v1/admin/plan-executions/run {planId, inputPayload}` → **202** with the execution
+  (`status RUNNING`, `nodeExecutions[]` snapshot, `tenantId`, `roles`); poll
+  `GET /api/v1/admin/plan-executions/{id}` → `status COMPLETED|FAILED|CANCELLED`, per node `status`,
+  `outputData`, `errorMessage`, `toolCalls`, tokens. A one-node gpt-4o agent completed in ~2.5 s.
+  `DELETE /{id}` → 204; `POST /{id}/stop|pause|resume` exist.
+- **Static validation at SUBMIT**: a node's prompt variable must be provided by a dependency's
+  `outputKey`, a `persistOutput:true` node, or the plan's **`toolInputParameters`** (the declared
+  initial payload) — `inputPayload` alone is NOT enough: `400 "Plan is not executable: Node 'ask'
+  (agent: 'x'): prompt references variable 'word' which is not provided by any dependency …"`.
+  Unknown plan → 404.
+- An AGENT node runs its agent's `objective` prompt with the payload variables; an unmet
+  `successCriteria` marks the node **`UNSATISFIED`** (with the agent's reason in `errorMessage`)
+  and the execution **`FAILED`**.
+- uxc: `uxc run --plan <id> --payload k=v [--expect re]` (lib `runPlan`) — REJECTED on a 400/404
+  submit, STOPS the execution on timeout, `--expect` over every node output.
+
+## §A15 — 2026.0.0-ft5: Applications, native tools, stop (verified fd.demo/IRIS, 2026-09-16)
+
+- Applications: CRUD `/api/v1/admin/application/application-conf[/{id}]`; create **201** empty;
+  an existing name → **409** `"Application already exists for name"`; `PUT /{id}` full replace.
+  **The id is DERIVED from `name`** — a client `id` that differs is silently ignored. `provider`
+  was NOT enforced by the API (a provider-less app saved). The gateway auto-creates one app per
+  connection provider (IRIS: `default`, `FlowerDocs` with `allowAllMcpServers:true`,
+  `allowedToolTags [flowerdocs, files, interaction]`).
+- **`X-Application-Id` crosses the FlowerDocs gateway plugin**: the same provider-less prompt ran
+  on gpt-5.1 (system default) without the header and on the app's `gpt-4o-mini` with it.
+- A prompt an application references: `GET /prompts/{id}/usage` → `{deletable:false,
+  referencedBy:[app]}`, `DELETE` → **409** `"Prompt 'x' is referenced by application(s): [app]"`.
+  **The reference OUTLIVES the application by ~2 s**: deleting the app then the prompt immediately
+  → one 409, then 204. uxc's prompt remove retries (4 × 1.5 s).
+- `GET /api/v1/admin/tools` → 51 native tools `{name, description, params[], tags[]}` tagged
+  `alfresco|flowerdocs|filenet|interaction|text|files` — push warns on unknown tool names/tags in
+  agent/application permissions and DIRECT_TOOL nodes.
+- `POST /api/v1/conversations/{id}/stop` → 200 (even idle) — uxc stops the conversation when a
+  prompt run times out.
+- Conversation listing pages with `offset`/`limit`/`orderBy`/`ascending` (not page/size); titles
+  are LLM-generated from the first answer.
