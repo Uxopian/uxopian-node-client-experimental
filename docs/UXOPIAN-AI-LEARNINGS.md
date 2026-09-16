@@ -233,7 +233,8 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
   string chain fine (`extractDocumentText {documentId}` ~1.5–3 s, `chunkText {content}` 5 ms), but
   a tool expecting structured JSON (`buildAndClause {criteria: [Criterion]}`) fails:
   `Cannot deserialize value of type ArrayList<Criterion> from String value`. The FlowerDocs
-  search tools therefore can NOT be chained as DIRECT_TOOLs — use an agent for search.
+  search tools therefore can NOT be chained as DIRECT_TOOLs — use an agent for search. (Correction, §A18: `doSearch`
+  DOES run as a DIRECT_TOOL when its `filters` value is real JSON in the run payload; only strings fail.)
 - `chunkText` returns a JSON array string (a 6.7 k-char contract = 1 chunk) — directly usable as a
   `listKey`.
 - A node sees: the plan inputs (`toolInputParameters`), the `outputKey` of its DIRECT
@@ -411,3 +412,88 @@ clause ids of its family from the map) instead of the whole clause array.
 **uxc workflow note:** a template checkout (unrendered `{{uxc:…}}` in `data/config.jsonl`) refuses every push, even
 of resources without placeholders. To iterate on a subset, render a scratch copy (dummy values for files that are
 not pushed) and `uxc push <ids…>` from it; the template stays the source of truth.
+
+## §A18 — Mining an archive: clause-library mining over 33 families (fd.demo/IRIS, gpt-4.1, 2026-09-17)
+
+Built in the private contract-management package (`ctClauseMining`: for each playbook clause family, find the clause
+documents stored for a set of contracts, group them by position, recommend a playbook action). Probed with throwaway `zz*`
+plans first; every number below comes from `uxc run --plan` or plan-execution reads.
+
+**Search without an LLM, and its limits**
+- **`doSearch` runs as a DIRECT_TOOL (0 tokens) when `filters` is REAL JSON in `inputPayload`**, e.g.
+  `{"filters":[{"operator":"AND","criteria":[{"name":"classid","operator":"EQUALS_TO","type":"STRING","values":["CtClause"]},…],"subFilters":[]}]}`,
+  and also as a DIRECT_TOOL fan-out whose `listKey` is a real JSON array of filter arrays. The same filter sent as a JSON
+  STRING is refused at submit with a **500** `INTERNAL_ERROR`. An upstream node's output is always a string, so a plan can
+  still not BUILD a filter and run it: the structured value must come from the caller (`uxc run --payload-json`).
+- A SUBPLAN fan-out over OBJECTS fails before running: the execution store maps `inputPayload.item` as text
+  (`OpenSearchException … mapper_parsing_exception … failed to parse field [inputPayload.item] of type [text]`). Sub-plan
+  items must be strings (an array of arrays of strings works: each sub-plan gets a JSON-array string usable as `listKey`).
+- A chat assistant could not pass a structured `filters` array to a plan tool (the call errored); plan tool parameters
+  behave as strings.
+- `doSearch` over 186 hits failed: the tool fetches every hit with one Core `GET /core/rest/documents/<id,id,…>` →
+  **400 Bad Request** (URL too long). 123 hits worked (237 KB of output). Keep searches narrow (one family: ≤ 10 hits).
+- **Thymeleaf utility objects work in prompt templates**: `[(${#strings.replace(item,'CtFam_CREDIT_INSURANCE_','')})]`
+  rendered `waiting_period`. Use it to render EXACT tool arguments into an agent prompt (the whole `doSearch` filter JSON with
+  the family code and `[(${sourceContractIds})]` spliced in) and tell the agent to copy it verbatim: over 10 full runs
+  (≈ 360 family searches) every search that ran returned the exact clause set. The same agent building criteria with the builder tools produced
+  a wrong class criterion 1 time in 4 (`{"name":"CtClause",…}`) and silently got `[]`.
+- Nested fan-out works: a SUBPLAN fan-out whose sub-plan runs its own DIRECT_TOOL fan-out (1.8 s for 2 × 3 reads).
+
+**Traces**
+- `toolCalls[].result` in `GET /admin/plan-executions/{id}` is CUT at 4,000 characters with `... (truncated)`. The model
+  receives the full result (input tokens match the full 17 KB), so the trace cannot be used to re-check what the model saw.
+- Chat requests (`GET /api/v1/requests?conversation=`) keep only the answer and token counts, no tool arguments, and
+  plan runs started from chat are not listed (§A16). Asked afterwards, the assistant misreported its own tool arguments.
+
+**Where LLM list-building failed (measured against the stored data)**
+- Partition of 122 clause ids into 33 families in ONE gpt-4o call: 9 groups returned, 8 ids dropped from those.
+- One gpt-4o-mini id-filter call per family (6 k tokens each, 33 elements, 8 in parallel): 3+ elements failed with
+  `UndeclaredThrowableException` within 11 s (195 k tokens) → run FAILED. At 4 in parallel with gpt-4.1 (≈ 220 k tokens per
+  run) 10 full runs completed.
+- Enumerating the documents of a 9-hit search: gpt-4o and gpt-5.4-mini each dropped 1 clause; gpt-4.1 and gpt-5.4 listed
+  all. None of gpt-4o, gpt-4.1, gpt-5.4-mini, gpt-5.4 evaluated set conditions reliably (« in at least half of the
+  contracts », « none of them CONFORM » fired when false). Keep thresholds and counts out of the model: return per-item
+  facts and let the consumer compute.
+- LLM section writers over the 33 family results: a single brief dropped the only fallback proposal; four parallel
+  writers covered 41/44 positions (hold-the-line), 8–10/11 (absent clauses), 11/11 (data issues), and fell to 29–34/45 when
+  asked for one bullet per position with document lists; one mapped a clause to the wrong document. Shipped design: exact
+  `familyData` pass-through (DIRECT_TOOL `chunkText`) + one short « highlights » writer that does not claim completeness
+  (it still wrote « missing from most documents » for a clause absent from 2 of 6).
+
+**What made it reproducible**
+- Anchor on stored data again (§A17): each clause's assessment is COPIED from its stored `CtDeviation`, and two clauses
+  may share a position only when stored assessment AND stored extracted value are equal; the model only groups within
+  that, describes, quotes and recommends (KEEP / HOLD_THE_LINE / ACCEPT_AS_FALLBACK / ADD_CLAUSE). Result over the final
+  runs: clause sets exact 33/33, stored values copied exactly 33/33, grouping rule respected 33/33; run-to-run grouping
+  identical on 30/33 families (the model lumps or splits same-assessment clauses without a value), per-clause
+  recommendation identical 121/123.
+- Residual per-family failure rate ≈ 1.5 % (5 of ≈ 360): the tool-using agent SKIPPED the search twice (silent `"clauses":[]`; a closing
+  « your answer is only valid if you called doSearch first » reminder was added) and broke its JSON 3 times (a raw quote
+  around a cited rule field name, a trailing `"` after the object). Parse tolerantly (cut after the last `}`); treat an
+  empty family that the maps say exists as « not searched, rerun ».
+- Map ids to names INSIDE the per-family agent (≤ 10 clauses: 98/98 and 94/94 exact once told « the text after = , never a
+  SourceContractId »), not in a reducer.
+
+**Chat**
+- Scope selection by the assistant failed: told how to de-duplicate a CtContract search (skip annotated copies, ZZ test
+  documents, same-name duplicates), gpt-4.1 instead took 13 SourceContractIds from clause documents (one existed only on
+  orphaned clauses), sent ids as names, and described the rules as applied. Pinning a DEFAULT PORTFOLIO (the 6 distinct
+  contracts) in `toolDescription` fixed it: « Comment avons-nous réellement accepté la franchise… » → correct contracts,
+  positions and recommendations in **17.3 s**. Real fix: store the portfolio of record in FlowerDocs (a tag or a virtual
+  folder) so the assistant never has to de-duplicate.
+- Recommendation codes need their meaning in `toolDescription`: without it the assistant presented HOLD_THE_LINE as
+  « toléré ». With it, a 10-family chat request completed in 38.3 s but the assistant's summary still invented « add as a
+  fallback » items absent from `familyData`. A full review (62 families) failed in chat after ~10 s with no visible error,
+  while the same run through the admin API completed in **63.3 s**. Keep chat to a few families; run full reviews from the
+  admin panel Run button or `uxc run --plan --payload-json`.
+
+**Measured:** 33 families × 6 contracts (123 clauses): 45–49 s end to end; the family fan-out 39.6–43.3 s at 4 in
+parallel, 219.5 k input / 25 k output tokens; highlights 3.7 s, 19.4 k / 0.4 k. 62 families (catalogue): 63.3 s.
+
+**The archive itself (what mining surfaced before any playbook change):** 16 CtContract documents were 6 distinct
+credit-insurance contracts (V1 ingested three times, annotated copies, a DPA typed CREDIT_INSURANCE, a ZZ test contract);
+17 clause documents of a deleted contract; a re-ingested contract with 186 stored clauses for 63 in its map; one contract
+whose clause texts were truncated to one character (« L », « U »); a clause map entry holding a clause NAME instead of an
+id (an id-driven fan-out on it would 500); required clauses (effective date, legal notice, complaints) absent from 5 of 6
+contracts — more likely a classification gap at ingestion than missing wording. Mine an archive only after de-duplicating
+it, and report data issues next to the findings.
