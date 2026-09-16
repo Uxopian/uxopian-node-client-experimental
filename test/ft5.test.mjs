@@ -618,3 +618,30 @@ test('lintAgentic: an application naming a prompt outside the package warns', ()
     assert.match(lintAgentic(openPackage(dir)).map((f) => f.message).join('\n'), /ai\.application\/tpPortal: prompt "tpElsewhere"/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('uxc versions: served/draft/published rows, = local marker, per-version + aggregate stats', async () => {
+  const dir = scaffold();
+  try {
+    const fake = fakeGateway({ ft5: true });
+    const { ctx } = ctxFor(dir, fake);
+    await pushResources(ctx, [ctx.requirePkg().entry('ai.prompt', 'tpHello')]);
+    const local = JSON.parse(readFileSync(join(dir, 'ai/prompts/tpHello.json'), 'utf8'));
+    await fake.gateway.post('/api/v1/admin/prompts/tpHello/versions', { ...local, content: 'draft in the admin UI' });
+    fake.gateway.get = (orig => async (p) => (/statistics$/.test(p) ? { nbUsage: 3, goodFeedback: 1, badFeedback: 0, timeSavedInSeconds: 7200 } : orig(p)))(fake.gateway.get);
+    fake.gateway.tryGet = (orig => async (p) => (/statistics$/.test(p) ? { nbUsage: 3, goodFeedback: 1, badFeedback: 0, timeSavedInSeconds: 7200 } : orig(p)))(fake.gateway.tryGet);
+    const { default: cmd } = await import('../lib/commands/versions.mjs');
+    const results = [];
+    const lines = [];
+    const run = async (gw, flags) => cmd.run({
+      args: ['tpHello'], flags: { dir, ...flags }, target: { name: 'fake' }, clients: { gateway: gw }, connect() {},
+      out: { json: !!flags.json, result: (r) => results.push(r), table: (rows) => lines.push(rows), line: (l) => lines.push(l), note: (l) => lines.push(l), warn: () => {} },
+    });
+    await run(fake.gateway, { json: true, stats: true });
+    const r = results.at(-1);
+    assert.equal(r.served, 0);
+    assert.deepEqual(r.versions.map((v) => [v.version, v.state, v.local]), [[1, 'draft', ''], [0, 'served', '= local']]);
+    assert.equal(r.versions[1].uses, 3);
+    assert.equal(r.versions[1]['saved (h)'], 2);
+    assert.equal(r.statistics.nbUsage, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -141,6 +141,12 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
   (`PROMPT` still works).
 - A prompt created without provider/model echoes `temperature: "1"` (default) and no
   `defaultLlm*` keys.
+- Statistics: `GET …/{id}/statistics` (all versions) and `GET …/{id}/versions/{n}/statistics` →
+  `{nbUsage, totalCost, costAverage, good/bad/neutralFeedback, timeSavedInSeconds}`. They answer
+  **200 with zeros for ANY id or version, even absent ones** — never an existence check. Requests
+  made before the ft5 upgrade count in the prompt-wide aggregate only (ctAssessBatch: 200 uses
+  overall, 0 on v0). `uxc versions <id> [--stats]` shows the history (served/draft/published,
+  `= local`) read-only.
 - uxc (0.18.0): dialect `ai-2026-ft5`, strategy `versioned-v1` — an open draft is REUSED only when it
   equals the package content (a push that died between POST and PUT) or the served version (opened,
   never edited); a draft carrying other edits (someone in the admin UI) is REFUSED unless

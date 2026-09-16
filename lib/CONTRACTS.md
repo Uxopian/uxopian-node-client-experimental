@@ -111,6 +111,9 @@ export async function runPrompt(ctx, idOrGoal, { payload = {}, goal = false, pro
 // existence check; application -> X-Application-Id header; a stream timeout POSTs
 // /conversations/{id}/stop (best-effort) before rethrowing.
 // -> { answer, elapsedMs, pass: expect ? regex.test(answer) : null, error?: string }
+// lib/commands/versions.mjs (uxc versions <promptId> [--stats], read-only, caps.promptVersioning):
+//   GET …/prompts/{id}/versions (+ …/versions/{n}/statistics, …/{id}/statistics) -> rows
+//   {version, state served|draft|published, provider/model, size, local '= local'?, uses, feedback, saved (h)}
 export async function runPlan(ctx, planId, { payload = {}, expect = null, maxChars = 2000, timeoutMs, pollMs = 2000, onProgress } = {})
 // caps.agenticPlans required. POST /admin/plan-executions/run -> poll GET /{id} to
 // COMPLETED|FAILED|CANCELLED; 400/404 at submit -> status REJECTED; timeout -> POST /{id}/stop.

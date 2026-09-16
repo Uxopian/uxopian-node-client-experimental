@@ -139,7 +139,8 @@ Push order is topological and automatic; you never order writes yourself.
 - uxopian-ai **2026.0.0-ft5**: a prompt is a VERSION HISTORY. `uxc push` publishes the edit as a new
   version (open draft → publish) — you never manage versions by hand. If someone left an
   unpublished draft with OTHER content in the admin UI, push REFUSES (publish/discard it there,
-  or `push --force` to overwrite it). `uxc run ctFoo --prompt-version 2` smokes an older version.
+  or `push --force` to overwrite it). `uxc versions ctFoo [--stats]` shows the history (served /
+  draft / which version equals the local file); `uxc run ctFoo --prompt-version 2` smokes an older one.
   A prompt an Application references cannot be deleted (409).
 - Gotcha: a prompt with NO `displaySettings` SHOWS in the FlowerDocs Quick Prompt panel
   (filter is `enabled !== false` — AI learnings §A8). The scaffold defaults to
