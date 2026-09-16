@@ -185,6 +185,7 @@ Push order is topological and automatic; you never order writes yourself.
 - On a pre-ft5 gateway the kind is `unsupported` (skipped).
 
 ## ai.plan — managed (uxopian-ai 2026.0.0-ft5+)
+- Before designing one: `references/agentic-plans.md` (the traps that cost the most time).
 - Storage: `ai/plans/<id>.json` (CRUD `/api/v1/admin/plans`)
 - Fields: `id, description, nodes[{id, name, type AGENT|SUBPLAN|DIRECT_TOOL, agentConfId |
   subPlanId | toolName+toolArgumentBindings, outputKey, dependencies[], persistOutput, listKey

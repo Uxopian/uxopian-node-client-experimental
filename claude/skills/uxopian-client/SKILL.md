@@ -133,6 +133,7 @@ browser tooling, not uxc.
 ## References (read on demand, not up front)
 
 - `../../../docs/DIAGNOSTICS.md` — BEFORE installing on a new/unknown scope: uxc doctor --ready / --sandbox / --ai-smoke, layer gates, symptom table.
+- `references/agentic-plans.md` — READ FIRST before building an ai.agent / ai.plan / ai.application: the 10 verified traps + working examples.
 - `references/kinds.md` — 21-kind cheat sheet: storage, fields, policy, add signature, top gotcha
   (incl. uxopian-ai ft5: versioned prompts, goals removed, ai.agent / ai.plan / ai.application).
 - `references/policies.md` — the non-negotiables with the verified WHY behind each.
