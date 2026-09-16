@@ -268,7 +268,14 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
 **Control**
 - `pause`/`stop` are cooperative and read at node FRONTIERS: pausing during one long fan-out
   node leaves the run `RUNNING` (controlSignal `PAUSE`; `resume` → 409 "Only a PAUSED execution
-  can be resumed"); `stop` mid-node ends the run **`FAILED`** (not CANCELLED), node output empty.
+  can be resumed"); `stop` mid-node ended the run **`FAILED`**, node output empty — the product
+  docs say stop → `CANCELLED` (observed on fd.demo ft5: FAILED; don't branch on the distinction).
+- Product limits (docs, Aug 2026): fan-out list ≤ **200** elements; SUBPLAN nesting depth ≤ **5**.
+- A `SUBPLAN` node's output is the sub-plan's FINAL output (a nested brief came back as 4.8 k
+  chars of markdown). Nested runs are not in `GET /admin/plan-executions` (depth-0 runs only);
+  the parent node aggregates their tokens and `toolCalls`.
+- `toolCalls[]` keep the full `arguments` AND `result` of every tool call (15 extracted contract
+  texts sit in the trace) — great for audit, heavy to fetch: project node fields, never dump it.
 
 **Plans as chat tools**
 - `exposeAsTool:true` + `toolDescription` + `toolInputParameters`, and an Application whose
@@ -278,6 +285,36 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
   `…/uxopian-ai/temp-files/<uuid>` download link (file tools work in chat, via
   `allowedToolTags: ["files"]`). Plan runs started from chat do NOT appear in
   `GET /admin/plan-executions`.
+
+**Built-ins & the admin UI**
+- ai-standalone ships map-reduce prompts `summarizeChunkFacts` (reads `item`) and
+  `summarizeCombine` (reads `chunkSummaries`), no provider/model pinned — reuse them as agent
+  objectives for long-document summaries instead of writing new prompts.
+- Admin panel > Plans: visual flow editor (drag edges = dependencies; per-node variable
+  highlighting; DIRECT_TOOL arguments auto-bound when one source exists), **Run** button (asks for
+  the input parameters), **Runs** tab (status, tokens, tool calls, Pause/Resume/Stop). Point
+  business users there; build with uxc.
+- The model of an AGENT node = its objective prompt's `defaultLlmProvider/defaultLlmModel`: tier
+  cheap map (gpt-4o-mini) vs strong reduce (gpt-4o) per prompt.
+
+**Measured: examples/agentic-portfolio on 15 contracts (fd.demo, 2026-09-16)**
+- `uxc run --plan pfrPortfolioReview --payload classId=CtContract` → COMPLETED in **36.8 s**:
+  finder agent 6.9 s (24.3 k/0.4 k tokens, 3 tool calls) + nested `pfrContractsBrief` 29.6 s
+  (15 DIRECT_TOOL reads, 15 gpt-4o-mini fact sheets, 1 gpt-4o brief; 31.7 k/3.8 k tokens).
+- Same 15-contract review, `maxParallelElements` 8 vs 1: fan-out node **20.2 s vs 50.2 s** (2.5×),
+  identical tokens — the gain is real but NOT linear (one element alone ≈ 3.3 s; the text
+  extraction service and provider latency bound concurrency).
+- Chat through application `pfrAssistant` (allowedTools: read-only search + file exports,
+  allowedSubPlans: `pfrContractsBrief`): "which Banque Horizon contracts need attention first?
+  review all CtContract documents" → searched, called the plan, answered with a prioritized list
+  and FlowerDocs deep links `#/documents/edit:<id>` in **22.8 s**; "export the full table to Excel"
+  → download link in 3.6 s.
+- LLM judgments drift between runs: the gpt-4o-mini map rated 8/15 HIGH in one run and 0 HIGH for
+  the 4 Banque Horizon contracts in the chat run. Present risk levels as TRIAGE, and anchor the
+  rating rules in the prompt (done in `pfrContractFacts`) or use a stronger map model when the
+  rating drives a decision.
+- Prompt pitfall: asked for "null" in a JSON template, gpt-4o wrote the STRING `"null"` — say
+  "the JSON literal null (never the string \"null\")".
 
 **Recommendations (design)**
 1. Read documents with a DIRECT_TOOL (`extractDocumentText`), then give the text to a TOOL-LESS
@@ -290,3 +327,11 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
 4. Let search happen where tokens are cheapest: in chat the assistant already has the ids; in a
    standalone plan a finder agent costs ~24 k tokens per run.
 5. Keep fan-out lists clean (one bad id = whole run FAILED) and keep file exports in chat.
+6. Expose the reusable core (ids in → brief out) as a tool and grant it through an Application
+   with an explicit read-only `allowedTools` list — the chat assistant then does the search, the
+   plan does the heavy parallel reading, and exports stay in the conversation.
+7. Start from `examples/agentic-portfolio` (read → SUBPLAN fan-out → reduce, finder, application):
+   `uxc push --all`, `uxc run --plan …`, `uxc destroy` — no hand-written HTTP needed.
+8. Probing a plan: `uxc run --plan <id> --json` gives statuses and outputs; per-node timing and
+   tokens are in `GET /admin/plan-executions/{id}` (`startedAt/completedAt`, `inputTokens`) —
+   project those fields, the tool-call results can be megabytes.
