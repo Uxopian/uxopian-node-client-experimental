@@ -221,3 +221,72 @@ FlowerDocs file — cross-references below point at them; NEW uxopian-ai finding
   prompt run times out.
 - Conversation listing pages with `offset`/`limit`/`orderBy`/`ascending` (not page/size); titles
   are LLM-generated from the first answer.
+
+## §A16 — Agentic plans in practice: verified mechanics (fd.demo/IRIS, gpt-4o, 2026-09-16)
+
+Probed with throwaway `zz*` plans over the 15 `CtContract` documents of IRIS (#69). Timings are
+wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputTokens/outputTokens`.
+
+**Payload & wiring**
+- `DIRECT_TOOL` nodes call a native tool with NO LLM (0 tokens): `toolArgumentBindings`
+  `{toolArg: payloadKey}`. **Payload values are passed as STRINGS** — tools whose argument is a
+  string chain fine (`extractDocumentText {documentId}` ~1.5–3 s, `chunkText {content}` 5 ms), but
+  a tool expecting structured JSON (`buildAndClause {criteria: [Criterion]}`) fails:
+  `Cannot deserialize value of type ArrayList<Criterion> from String value`. The FlowerDocs
+  search tools therefore can NOT be chained as DIRECT_TOOLs — use an agent for search.
+- `chunkText` returns a JSON array string (a 6.7 k-char contract = 1 chunk) — directly usable as a
+  `listKey`.
+- A node sees: the plan inputs (`toolInputParameters`), the `outputKey` of its DIRECT
+  dependencies, and the `outputKey` of any `persistOutput:true` node — nothing transitive. The
+  submit-time 400 lists exactly what is available: `Available outputKeys from dependencies:
+  [outB, seed]`.
+
+**Fan-out (`listKey`)**
+- The list can be a real JSON array in `inputPayload`, a JSON-array STRING, or the output of an
+  upstream node (DIRECT_TOOL `chunkText`, an agent returning `["a","b"]`, or another fan-out —
+  a fan-out's output IS a JSON array of its per-element outputs, so fan-outs chain).
+- Each element reaches the node as `[[${item}]]`; for a `SUBPLAN` node the sub-plan receives
+  `item` in its payload and must declare `toolInputParameters: [{name: "item"}]`.
+- Parallelism is real: 15 trivial elements 2.4 s; 3 contract reads+extractions 6.4 s vs 3.3 s
+  for one. Tokens and `toolCalls` of all elements are AGGREGATED on the parent node.
+- **One failed element fails the whole node and the plan** (`Failed elements: [1] Sub-plan … [read]
+  Error: Failed to get document info for ID: Id{value=NO-SUCH-DOC}`) — no partial output is
+  exposed. Clean the list upstream; don't put a `successCriteria` gate inside a fan-out unless
+  one bad element SHOULD sink the batch.
+
+**Agents**
+- An agent runs its objective prompt with the payload variables; `permissions.allowedTools`
+  lets it call FlowerDocs tools itself (the `toolCalls` trace names them). A finder agent with
+  `buildCriterionClass, buildAndClause, doSearch` returned the 15 contract ids as a clean JSON
+  array in 9 s — but **24 k input tokens** (search results are fed back to the model).
+- A tool-using agent's output inside a fan-out came back wrapped in an envelope
+  `{"status":"SUCCESS","output":"…","reason":null}` (sometimes nested twice); tool-less agents
+  return plain text. Prefer DIRECT_TOOL reads + tool-less agents inside fan-outs.
+- File tools (`writeExcelAndGetLink`, `writeCsvAndGetLink`) FAIL as plan DIRECT_TOOLs:
+  `Conversation ID cannot be null or empty` — they only work in a chat conversation.
+
+**Control**
+- `pause`/`stop` are cooperative and read at node FRONTIERS: pausing during one long fan-out
+  node leaves the run `RUNNING` (controlSignal `PAUSE`; `resume` → 409 "Only a PAUSED execution
+  can be resumed"); `stop` mid-node ends the run **`FAILED`** (not CANCELLED), node output empty.
+
+**Plans as chat tools**
+- `exposeAsTool:true` + `toolDescription` + `toolInputParameters`, and an Application whose
+  `permissions.allowedSubPlans` lists the plan: a chat turn sent with `X-Application-Id` ("compare
+  contracts A, B and C: table with parties, dates, law, top risk") made gpt-4o CALL the plan and
+  answer with the table in 10.1 s. The follow-up "export that table to Excel" returned a
+  `…/uxopian-ai/temp-files/<uuid>` download link (file tools work in chat, via
+  `allowedToolTags: ["files"]`). Plan runs started from chat do NOT appear in
+  `GET /admin/plan-executions`.
+
+**Recommendations (design)**
+1. Read documents with a DIRECT_TOOL (`extractDocumentText`), then give the text to a TOOL-LESS
+   agent: deterministic, cheaper, no envelope, and the prompt stays payload-only (the §A9 chat
+   extraction stall does not apply).
+2. Per-item work = a small SUBPLAN (`item` in) fanned out from the parent; reduce with one agent
+   that depends on the fan-out node.
+3. Declare every root variable in `toolInputParameters` (§A14) and run `uxc verify` — the
+   unprovided-variable lint catches the 400 before a push.
+4. Let search happen where tokens are cheapest: in chat the assistant already has the ids; in a
+   standalone plan a finder agent costs ~24 k tokens per run.
+5. Keep fan-out lists clean (one bad id = whole run FAILED) and keep file exports in chat.
