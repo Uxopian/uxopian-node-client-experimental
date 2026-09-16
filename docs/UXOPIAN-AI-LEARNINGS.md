@@ -352,3 +352,59 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
 8. Probing a plan: `uxc run --plan <id> --json` gives statuses and outputs; per-node timing and
    tokens are in `GET /admin/plan-executions/{id}` (`startedAt/completedAt`, `inputTokens`) —
    project those fields, the tool-call results can be megabytes.
+
+## §A17 — Building a trustworthy plan: the negotiation war-room (fd.demo/IRIS, gpt-4o, 2026-09-16)
+
+Built in the private contract-management package (`ctNegotiationWarRoom`: answer a counterparty's V2 of a
+credit-insurance contract, clause family by clause family, against the live playbook). Most lessons are general.
+
+**Reproducibility is the hard requirement — and free LLM judgement from raw text fails it**
+- v1 let agents pick the playbook families from both raw texts and quote/judge each: two back-to-back runs on
+  identical inputs agreed on the response for **5 of 9** shared families, and picked different family sets
+  (16 each, 23 in the union). A negotiation tool that changes its advice on a rerun is not credible.
+- v2 builds on data FlowerDocs already STORED at ingestion — the per-contract clause→family map (`CtClauseMap`,
+  `clauseDocId:FAMILY:DEVIATION`), the clause documents (verbatim `ClauseText`) and their stored `CtDeviation` —
+  and tells the judge to START from the stored assessment. Two runs then agreed on **18/18**, and after the fixes
+  below **22/22** families. Design rule: let an agentic plan orchestrate over reviewed, persisted judgements;
+  keep fresh LLM judgement for what is genuinely new (counter-wording, the email, the memo).
+- The family list still came from an LLM parsing the stored map: gpt-4o-mini dropped 2/20 entries, gpt-4o was
+  stable across runs but **systematically omitted the `CT_MISS_…:family:MISSING` entries** until the prompt said
+  they must be included (they are the most important negotiation points). Residual variation: 23 vs 25 for a true
+  union of 24. A deterministic list/JSON transform tool in the gateway would remove this last LLM step.
+
+**Plan outputs**
+- A plan with SEVERAL terminal nodes returns a JSON object keyed by their `outputKey`s — both as a SUBPLAN node's
+  output (`{"secA":"…","secB":"…"}`) and as the tool result a chat assistant receives. With ONE terminal node the
+  output is that node's raw value. So never add an LLM "assembler": a gpt-4o-mini node told to copy five sections
+  verbatim DROPPED a whole section and spent 12 of 29 s re-typing text; removing it cut the run to 20.6 s.
+- Exact data out without an LLM: a DIRECT_TOOL `chunkText` leaf bound to the fan-out output (`judgements`) passes
+  it through unchanged (one chunk for ~17 k chars) — consumers compute exact counts from it (`clauseData`).
+- A DIRECT_TOOL node can itself fan out: `getDocumentProperties` with `listKey` over 22 clause ids, 0 tokens.
+- Sub-plans receive parent payload values (`previousProps`, `receivedClauses`…) once they declare them in their own
+  `toolInputParameters` and the fan-out node depends on the producers.
+
+**Failure modes met (each one failed a whole run)**
+- An AGENT can mark ITSELF failed with no `successCriteria`: a judge that concluded "this family is absent, a
+  deviation" answered "the goal of this task is unmet" and the element FAILED. Say in the prompt that returning the
+  object IS success, whatever the verdict.
+- An invented id in a fan-out list (`CtFam_CREDIT_INSURANCE_benefits_calculation`, not in the playbook) made the
+  DIRECT_TOOL `getDocumentProperties` hit a Core 500. Embed the exact list of valid ids and require verbatim copies.
+- Two runs launched concurrently (~16 gpt-4o calls at once) → one transient `UndeclaredThrowableException` → run
+  FAILED. Serialize heavy runs; retry the RUN.
+- Verbatim clause text copied into JSON strings breaks the JSON about 1 time in 20 (raw double quotes): ask for
+  « » and parse tolerantly (LLM downstream nodes don't care, code consumers do).
+
+**Chat integration**
+- **`Application.prompt` had no effect** on the REST chat path through the FlowerDocs gateway plugin: the same
+  "Hello" cost 571 input tokens with and without a ~420-token application prompt, and the model ignored its
+  content (fresh and updated applications alike). Put the "how to use this tool" guidance (how to find the ids,
+  what to present) in the plan's **`toolDescription`** — that worked: a French request found V1/V2 through the
+  search tools, called the plan and answered with the memo, counter-proposals and full reply email in 44.7 s.
+- Streams from an Application conversation came back as raw text without `data:` frames — parse both forms.
+
+**Measured (v2, 16–24 families):** 20.7–27 s per run; the per-family fan-out ~6 s (18 families × gpt-4o =
+61.8 k input / 3.2 k output tokens); five writers in parallel; the finder-free design needs no search tokens.
+
+**uxc workflow note:** a template checkout (unrendered `{{uxc:…}}` in `data/config.jsonl`) refuses every push, even
+of resources without placeholders. To iterate on a subset, render a scratch copy (dummy values for files that are
+not pushed) and `uxc push <ids…>` from it; the template stays the source of truth.
