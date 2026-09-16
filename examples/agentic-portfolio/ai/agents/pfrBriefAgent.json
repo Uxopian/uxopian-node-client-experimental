@@ -1,0 +1,6 @@
+{
+  "description": "Consolidates per-contract fact sheets into an executive portfolio brief.",
+  "id": "pfrBriefAgent",
+  "objective": "pfrPortfolioBrief",
+  "successCriteria": "The brief has the five sections At a glance, Act now, Deadlines and renewals, Missing information and Portfolio table, and the table has one row per fact sheet."
+}

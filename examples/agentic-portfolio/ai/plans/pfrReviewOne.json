@@ -1,0 +1,33 @@
+{
+  "description": "One contract: read its text (no LLM), then produce its JSON fact sheet.",
+  "id": "pfrReviewOne",
+  "nodes": [
+    {
+      "id": "read",
+      "name": "read",
+      "outputKey": "contractText",
+      "toolArgumentBindings": {
+        "documentId": "item"
+      },
+      "toolName": "extractDocumentText",
+      "type": "DIRECT_TOOL"
+    },
+    {
+      "agentConfId": "pfrFactsAgent",
+      "dependencies": [
+        "read"
+      ],
+      "id": "facts",
+      "name": "facts",
+      "outputKey": "factSheet",
+      "type": "AGENT"
+    }
+  ],
+  "toolInputParameters": [
+    {
+      "description": "FlowerDocs document id of one contract",
+      "name": "item",
+      "required": true
+    }
+  ]
+}

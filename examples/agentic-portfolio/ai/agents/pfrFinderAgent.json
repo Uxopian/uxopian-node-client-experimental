@@ -1,0 +1,12 @@
+{
+  "description": "Lists the ids of every document of a FlowerDocs class, using read-only search tools.",
+  "id": "pfrFinderAgent",
+  "objective": "pfrFindDocuments",
+  "permissions": {
+    "allowedTools": [
+      "buildCriterionClass",
+      "buildAndClause",
+      "doSearch"
+    ]
+  }
+}
