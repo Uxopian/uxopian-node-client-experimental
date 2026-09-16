@@ -1,6 +1,6 @@
 ---
 name: uxopian-client
-description: Use uxc (uxopian-client) for ALL FlowerDocs and Uxopian AI customization work on IRIS or any other instance — building, fixing, deploying, or syncing a handler (OperationHandler), prompt, goal, tagclass, taskclass, documentclass, GUIConfiguration, script, virtual folder, scope property, or dataset; calling Core REST or the uxopian-ai gateway; deploy, smoke test, drift check, cache clear; packaging and shipping a uxpkg; publishing/browsing addons on the Pulse Addons Marketplace. Fires on phrasings like "fix the ingest handler", "add a column to the deviation worklist", "push the prompt", "why didn't the handler fire", "export the ct package", "the search template disappeared", "publish this addon to the marketplace", "download the contract demo package".
+description: Use uxc (uxopian-client) for ALL FlowerDocs and Uxopian AI customization work on IRIS or any other instance — building, fixing, deploying, or syncing a handler (OperationHandler), prompt, goal, agent, plan, application, tagclass, taskclass, documentclass, GUIConfiguration, script, virtual folder, scope property, or dataset; calling Core REST or the uxopian-ai gateway; deploy, smoke test, drift check, cache clear; packaging and shipping a uxpkg; publishing/browsing addons on the Pulse Addons Marketplace. Fires on phrasings like "fix the ingest handler", "add a column to the deviation worklist", "push the prompt", "why didn't the handler fire", "export the ct package", "the search template disappeared", "publish this addon to the marketplace", "download the contract demo package".
 ---
 
 # uxopian-client (uxc)
@@ -24,7 +24,8 @@ uxc add <kind> <Name> [flags]     # scaffold with verified mechanics baked in (s
 # edit the scaffolded file(s)
 uxc push --changed [--settle]     # validated, ordered, resumable; --settle waits out the handler window
 uxc verify                        # post-deploy assertions + cross-reference lint
-uxc run <promptId> --payload k=v --expect 'regex'        # smoke a prompt
+uxc run <promptId> --payload k=v --expect 'regex'        # smoke a prompt (--prompt-version n, --application id on ft5)
+uxc run --plan <planId> --payload k=v --expect 'regex'   # smoke an ai.plan (uxopian-ai ft5+)
 uxc doc create <classId> --file f && uxc watch <docId> --until 'Tag=V'   # smoke a handler
 ```
 
@@ -132,7 +133,8 @@ browser tooling, not uxc.
 ## References (read on demand, not up front)
 
 - `../../../docs/DIAGNOSTICS.md` — BEFORE installing on a new/unknown scope: uxc doctor --ready / --sandbox / --ai-smoke, layer gates, symptom table.
-- `references/kinds.md` — 18-kind cheat sheet: storage, fields, policy, add signature, top gotcha.
+- `references/kinds.md` — 21-kind cheat sheet: storage, fields, policy, add signature, top gotcha
+  (incl. uxopian-ai ft5: versioned prompts, goals removed, ai.agent / ai.plan / ai.application).
 - `references/policies.md` — the non-negotiables with the verified WHY behind each.
 - `references/errors.md` — error code/signature KB + gateway stream quirks.
 - `references/recipes.md` — worked end-to-end flows with exact commands (incl. `uxc test` — package-embedded functional tests, recipe 8).

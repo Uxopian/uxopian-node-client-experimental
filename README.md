@@ -27,8 +27,9 @@ for your documents and records with a rich, fully customizable content model (do
 classes, tags, virtual folders), workflows, fine-grained ACLs, and multi-tenant **scopes**, all
 reachable over clean REST APIs.
 
-**Uxopian AI** layers intelligence directly on top of that content — prompts, goals, function
-calling, and MCP, wired to the documents *and* to the model itself. Put them together and a passive
+**Uxopian AI** layers intelligence directly on top of that content — versioned prompts, agents and
+multi-step plans, applications, function calling, and MCP, wired to the documents *and* to the model
+itself. Put them together and a passive
 archive becomes an active one: drop in a contract and it gets classified, its clauses extracted and
 assessed against a playbook, deviations flagged, and the right review tasks opened — all under the
 same governance and security as everything else. You're not bolting AI onto files; you're teaching
@@ -41,8 +42,9 @@ version, and deploy them.
 > ### Status
 > **Experimental and unofficial.** This is a community/internal tool, not an official Uxopian
 > product, and it comes with no support or warranty (see [License](#license)). APIs and commands
-> may change. It targets the FlowerDocs / Uxopian AI **2025.x** API surface. Use against a
-> non-production instance first.
+> may change. It targets the FlowerDocs **2025.x / 2026.x** and Uxopian AI **2025.x → 2026.0.0-ft5**
+> API surfaces — it detects the server's generation and adapts (prompt versioning, removed goals,
+> agents/plans/applications on ft5; see DESIGN.md §18). Use against a non-production instance first.
 
 ---
 
@@ -127,6 +129,7 @@ uxc search MpDoc --where 'MpStatus=New' --max 10
 uxc doc create MpDoc --file nda.docx --tag MpStatus=New
 uxc watch MP_123 --until 'MpStatus=Done' --timeout 300
 uxc run mpSummary --payload documentId=MP_123 --expect 'term'
+uxc run --plan mpReview --payload documentId=MP_123     # uxopian-ai ft5+: an agentic plan, node by node
 uxc explain T00104                            # built-in error knowledge base
 uxc context                                   # the whole package map in ~600 tokens
 uxc size                                      # composed push-body bytes vs the ~1 MB server limit

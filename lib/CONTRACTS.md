@@ -18,7 +18,10 @@ export async function serverOf(ctx, entry)     // -> {obj, contents?}|null  (ada
 export async function serverHash(ctx, entry)   // -> 'sha256:…'|null
 export function baseHash(pkg, targetName, entry) // from state
 // One resource's 3-way classification (full matrix incl. no-base rows + rebased):
-export async function classify(ctx, entry)     // -> {state: 'insync'|'local'|'server'|'rebased'|'conflict'|'server-missing'|'new'|'adopted'|'collision'|'retired'|'external', detail?}
+export async function classify(ctx, entry)     // -> {state: 'insync'|'local'|'server'|'rebased'|'conflict'|'server-missing'|'new'|'adopted'|'collision'|'retired'|'external'|'unsupported', detail?}
+export async function unsupportedReason(ctx, kind) // adapter.serverSupport(ctx) cached per kind per ctx: null | reason
+//   'unsupported' (dialect gate, DESIGN §18): status reports it (not drift), pull/push return
+//   action 'unsupported' with the reason, verify notes and skips it — never a failure.
 export async function statusAll(ctx, { remote = false, only = [] } = {})
 //   -> { rows: [{kind,id,policy,state,detail}], untracked: [paths], orphans: [...], pendingCacheClear }
 //   local-only mode: state limited to 'local'|'insync' (hash(file) vs base) without network.
@@ -69,6 +72,9 @@ export async function capabilities(ctx, product)
 //   -> { product, version|null, build?, source: 'override'|'actuator'|'probe'|'unknown',
 //        dialect, caps }  — cached per ctx; detection: target pin > version endpoint > fingerprint.
 //   Adapters read caps (e.g. caps.adminPromptList, caps.vfInstanceCreatePath), never versions.
+//   uxopian-ai caps: adminPromptList, promptVersioning, promptWrite ('admin-v1'|'versioned-v1'),
+//   goals, agenticPlans, applications. Pinned versions are product versions (2026.0.0-ft5).
+export function naturalVersion(v)          // '2026.0.0-ft10' -> '2026.0.0-ft.10' (ft10 > ft5)
 ```
 
 ## lib/packageio.mjs
@@ -97,11 +103,19 @@ export function crossReferenceLint(pkg)  // every classid/promptId-looking token
 
 ```js
 export async function runPrompt(ctx, idOrGoal, { payload = {}, goal = false, provider, model,
-  temperature, maxChars = 2000, expect = null, onText = null } = {})
+  temperature, version = null, application = null, maxChars = 2000, expect = null, onText = null, timeoutMs } = {})
 // conversations POST -> requests/stream POST -> tolerant parse (SSE 'data:' frames OR raw text,
 // accumulate content||text||delta.content||answer, skip [DONE]); error-as-body detection
 // (/timed out|HttpTimeout|Error: java/) with ONE cold-start retry; LLM override via query params.
+// ft5: goal refused when caps.goals === false; version -> content.version after a GET …/versions/{n}
+// existence check; application -> X-Application-Id header; a stream timeout POSTs
+// /conversations/{id}/stop (best-effort) before rethrowing.
 // -> { answer, elapsedMs, pass: expect ? regex.test(answer) : null, error?: string }
+export async function runPlan(ctx, planId, { payload = {}, expect = null, maxChars = 2000, timeoutMs, pollMs = 2000, onProgress } = {})
+// caps.agenticPlans required. POST /admin/plan-executions/run -> poll GET /{id} to
+// COMPLETED|FAILED|CANCELLED; 400/404 at submit -> status REJECTED; timeout -> POST /{id}/stop.
+// -> { executionId, status, answer (final nodes), nodes:[{id,type,status,outputKey,output,error?}],
+//      elapsedMs, pass (expect over every node output, false when error), error? }
 ```
 
 ## lib/index.mjs (public lib)
@@ -111,7 +125,7 @@ export { connect } from …       // async connect(targetName?) -> { core, gatew
 export { openPackage } from '../registry path'
 export { KINDS, PUSH_ORDER } from './kinds/index.mjs'
 export { canonicalize, hashResource } from './canonical.mjs'
-export { runPrompt } from './run.mjs'
+export { runPrompt, runPlan } from './run.mjs'
 export { explainCode, explainError } from './explain.mjs'
 export * as naming from './naming.mjs'
 export * as util from './util.mjs'
@@ -151,8 +165,13 @@ export * as util from './util.mjs'
   readServer: user `GET /api/v1/prompts` (cache per ctx), find by id, then OVERLAY the echo on the
   local meta — the user endpoint may return a reduced projection (id+content), so server-present keys
   win (drift detectable) while omitted keys fall back to local (never lose role/provider/model/…).
-  push: POST /api/v1/admin/prompts (object body), on 409 PUT same path (id in body). validate per DESIGN.
-- **ai-goal**: single file ai/goals/goals.json `[{goalName, promptId, filter, index}]`; registry
+  push: through WRITE_STRATEGIES[caps.promptWrite] — 'admin-v1' (≤ ft4): POST /api/v1/admin/prompts
+  (object body), on 409 PUT same path (id in body); 'versioned-v1' (ft5): POST create (409 -> update),
+  update = GET …/{id}/versions, reuse a harmless open draft or POST one, PUT …/versions/{n} draft:false;
+  a foreign draft throws unless flags.force. export async function upsertPrompt(ctx, body) — uxc's own
+  prompts (receipts). remove: DELETE, retrying a stale "referenced by application" 409. validate per DESIGN.
+- **ai-goal**: serverSupport -> reason when caps.goals === false (ft5 removed goals; rows classify
+  'unsupported', remove is a no-op). Single file ai/goals/goals.json `[{goalName, promptId, filter, index}]`; registry
   entry per row, id `<goalName>+<promptId>+<filterHash8>`. readServer: GET /api/v1/admin/goals
   (list), filter client-side to rows whose promptId is package-owned. push: match by
   (goalName, promptId, filter) -> POST (capture id into state) or PUT {id in body}.
@@ -164,6 +183,19 @@ export * as util from './util.mjs'
   as ai-mcp (`********`→`__masked__`, resolve to live on push, secrets never in the package), plus
   strips audit fields (createdAt/By, updatedAt/By). Divergence: a masked secret with NO live value
   pushes as EMPTY (fresh keyless install) rather than erroring. list = GET base (array); id⇄provider.
+- **ai-agentic** (shared, ft5): agenticCrud({kind, base, support, conflictStatus}) -> {list, get, create
+  (conflict -> PUT), update (PUT /{id} full replace), remove (404 ok, no-op when unsupported), scan};
+  agenticSupport(ctx, kind); idErrors(entry, obj); toolWarnings(ctx, permissions, extraToolNames)
+  (GET /api/v1/admin/tools, warnings only).
+- **ai-agent**: /api/v1/admin/agent/agent-conf; secrets under the ai-mcp mask contract
+  (maskNormalize on read/writeLocal, resolveMasks(obj, live, id, 'ai.agent') on push); objective required.
+- **ai-plan**: /api/v1/admin/plans; export planErrors(o), findCycle(nodes); validate = structure + cycle
+  + exposeAsTool rules; lintHelpers = DIRECT_TOOL names.
+- **ai-application**: /api/v1/admin/application/application-conf (existing name = 409); id === name
+  (create/update send name = id; validate refuses a mismatch); serverSupport = caps.applications.
+- lint.mjs **lintAgentic(pkg)** -> [{where, kind:'dangling'|'unprovided', message}] — warnings from
+  verify and push (agent objective / allowedSubPlans, application prompt, plan agentConfId /
+  subPlanId, AGENT node prompt variables vs dependency outputKeys ∪ persistOutput ∪ toolInputParameters).
 
 ## lib/testkit.mjs — package-embedded functional tests (DESIGN §24)
 

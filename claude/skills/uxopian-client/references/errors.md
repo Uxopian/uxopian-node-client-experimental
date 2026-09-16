@@ -22,6 +22,14 @@ explanation. This table mirrors `lib/explain.mjs` — if you learn a new one, ad
 | `HttpTimeout` / `request timed out` | Gateway streamed an UPSTREAM failure as a 200 body (LLM/tool timeout). Retry once (cold start), then check prompt/provider. |
 | `Error: java…` in an "answer" | Gateway error-as-body: upstream exceptions stream as 200-status TEXT, not HTTP errors. Treat as failure, retry once. uxc run detects + retries automatically. |
 | 400 with unresolved `[[${var}]]` | Goal run with unresolved Thymeleaf variables. Run as a direct PROMPT input with a full payload instead of a GOAL. |
+| `Unknown content type: GOAL` / 404 on `api/v1/admin/goals` | uxopian-ai 2026.0.0-ft5 removed goals. Run the prompt directly; route with an ai.plan / ai.application. uxc reports ai.goal as `unsupported` there. |
+| 500 on `PUT /api/v1/admin/prompts` | The bare prompt PUT is gone on ft5 — an uxc older than 0.18.0 is writing prompts. Upgrade uxc. |
+| `A draft already exists for prompt` / `an unpublished draft vN … is open` | ft5 allows ONE draft per prompt. Someone is editing it in the admin UI: publish/discard it there, or `uxc push --force` to overwrite. |
+| `is published and read-only` | ft5 versions are immutable once published — only the draft is editable. uxc push handles this; seeing it means a hand-rolled call. |
+| `Plan is not executable … not provided by any dependency` | A node's prompt reads a variable nothing provides: declare it in the plan's `toolInputParameters`, give a dependency that `outputKey`, or `persistOutput:true` on the producer. `uxc verify` lints it. |
+| `Agent configuration already exists` / `Agent plan already exists` (400) | Create on an existing id — agents/plans answer 400, not 409. uxc push falls back to PUT. |
+| `Prompt 'x' is referenced by application(s)` (409) | An ai.application uses the prompt. Delete/repoint the application first; right after deleting it the reference lingers ~2 s (uxc retries). |
+| `contains an illegal character` | uxopian-ai ids may not hold whitespace, control characters, `/` or `\`. |
 
 ## Gateway stream quirks (uxc run handles all of these — know them for diagnosis)
 
@@ -43,8 +51,10 @@ explanation. This table mirrors `lib/explain.mjs` — if you learn a new one, ad
   tasks; never build worklist filters on it. (`uxc task ls` footnotes this.)
 - Re-answering an already-answered task returns 200 but does NOT dispatch ANSWER handlers —
   always smoke-test on fresh tasks.
-- `GET /api/v1/admin/prompts` 500s on this server version — uxc lists prompts via the user
-  endpoint; not an auth problem, don't debug it.
+- `GET /api/v1/admin/prompts` 500s on 2025-era gateways — uxc lists prompts via the user
+  endpoint there; not an auth problem, don't debug it. (2026-07+ answers it; ft5 adds `version`.)
+- The uxopian-ai gateway serves its OpenAPI spec at `…/uxopian-ai/v3/api-docs` — check it before
+  guessing an endpoint on a new release.
 - Search rows DO carry a top-level `id` per result (alongside `fields[]`) for documents AND tasks.
 - A `pendingCacheClear` line in `uxc status` means a previous run's clear never completed —
   run `uxc cache-clear`.

@@ -59,9 +59,29 @@ uxc run ctBarSummary --payload documentId=CT_TEST_01 --expect 'score'
 ```
 `--expect` tests the FULL answer (exit 1 on fail). Reusable test inputs:
 `uxc run … --save-fixture smoke-bar`, later `uxc run ctBarSummary --fixture smoke-bar --expect …`.
-Route it: `uxc add ai.goal --goal summarize --prompt ctBarSummary` then `uxc push --changed`;
-smoke the goal with `uxc run summarize --goal --payload …` (goals 400 on unresolved Thymeleaf
-vars — fall back to direct PROMPT runs with a full payload).
+Route it (uxopian-ai ≤ ft4 only — ft5 removed goals): `uxc add ai.goal --goal summarize --prompt ctBarSummary`
+then `uxc push --changed`; smoke the goal with `uxc run summarize --goal --payload …` (goals 400 on
+unresolved Thymeleaf vars — fall back to direct PROMPT runs with a full payload).
+On ft5 each push of the prompt publishes a new VERSION; smoke an older one with
+`uxc run ctBarSummary --prompt-version 1 …`.
+
+## 4b. Agentic plan (uxopian-ai 2026.0.0-ft5+)
+
+```
+uxc add ai.prompt ctBarExtract            # the agent's objective; its [[${var}]] are the plan inputs
+uxc add ai.agent  ctBarExtractor --objective ctBarExtract
+uxc add ai.plan   ctBarPipeline  --agent ctBarExtractor
+# ai/plans/ctBarPipeline.json: declare EVERY variable the first node's prompt reads in
+#   "toolInputParameters": [{"name": "documentId", "description": "…", "required": true}]
+# chain more nodes with "dependencies": ["step1"] — a node reads its dependencies' outputKey
+uxc verify                                # dangling ids + unprovided node variables, offline
+uxc push --changed
+uxc run --plan ctBarPipeline --payload documentId=CT_TEST_01 --expect 'score'
+```
+The report lists each node's status + output; `REJECTED` = the engine refused the plan at submit
+(read the message: usually an undeclared variable). A node `UNSATISFIED` = its agent's
+`successCriteria` was not met. Optional: `uxc add ai.application ctPortal --prompt ctBarExtract`
+scopes provider/model/tools for a calling surface — smoke with `uxc run <prompt> --application ctPortal`.
 
 ## 5. Ship to another instance
 

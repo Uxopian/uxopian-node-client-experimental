@@ -134,14 +134,22 @@ Push order is topological and automatic; you never order writes yourself.
 - Add: `uxc add ai.prompt ctFoo [--fcm] [--quick-prompt]` (`--fcm` = tool-using: sets fcm:true +
   reasoningDisabled:false; `--quick-prompt` = MEANT for the panel: enabled:true + label)
 - Gotcha: `requiresFunctionCallingModel:true` REQUIRES explicit `reasoningDisabled:false`
-  (absent = Java default true = runtime failure; validate refuses). Listing uses the user
-  endpoint (`GET /api/v1/prompts`) — the admin GET 500s, that's normal.
+  (absent = Java default true = runtime failure; validate refuses). Listing uses the admin
+  endpoint when the gateway dialect allows (2026-07+), else the user endpoint (2025-era admin GET 500s).
+- uxopian-ai **2026.0.0-ft5**: a prompt is a VERSION HISTORY. `uxc push` publishes the edit as a new
+  version (open draft → publish) — you never manage versions by hand. If someone left an
+  unpublished draft with OTHER content in the admin UI, push REFUSES (publish/discard it there,
+  or `push --force` to overwrite it). `uxc run ctFoo --prompt-version 2` smokes an older version.
+  A prompt an Application references cannot be deleted (409).
 - Gotcha: a prompt with NO `displaySettings` SHOWS in the FlowerDocs Quick Prompt panel
   (filter is `enabled !== false` — AI learnings §A8). The scaffold defaults to
   `displaySettings:{enabled:false}`; pipeline prompts must keep it, only deliberate quick
   prompts flip it on (usually with `displayConditions` + `label`).
 
-## ai.goal — managed (runtime prompt routing)
+## ai.goal — managed (runtime prompt routing) — REMOVED in uxopian-ai 2026.0.0-ft5
+- On an ft5+ gateway every goal row is reported **`unsupported`** by status/push/pull/verify
+  (skipped, exit code unaffected) and `uxc run --goal` is refused. Do NOT add goals for ft5
+  targets: call the prompt directly, or route with an `ai.plan` / `ai.application`.
 - Storage: ONE file `ai/goals/goals.json`: `[{goalName, promptId, filter, index}]`;
   registry id per row = `<goalName>+<promptId>+<filterHash8>`
 - Add: `uxc add ai.goal --goal <goalName> --prompt ctFoo [--filter expr] [--index n]`
@@ -162,3 +170,39 @@ Push order is topological and automatic; you never order writes yourself.
   `__masked__`; push resolves it from the live server and never overwrites a real key. A FRESH
   install with no live key pushes an EMPTY secret (operator sets it after). `uxc ls ai.llm`;
   also declare provider needs in manifest `requires.llmProviders`.
+
+## ai.agent — managed (uxopian-ai 2026.0.0-ft5+)
+- Storage: `ai/agents/<id>.json` (CRUD `/api/v1/admin/agent/agent-conf`); camel ids `ctFooAgent`
+- Fields: `id, description, objective (the ai.prompt it runs — required), successCriteria,
+  secrets {NAME:{value,description}}, permissions {allowedTools, allowedToolTags, deniedTools,
+  allowedMcpServers, allowedSubPlans, allowAllTools, allowAllMcpServers}`
+- Add: `uxc add ai.agent ctFooAgent --objective ctFoo`
+- Gotcha: the gateway checks NO references (a missing objective prompt saves fine and fails at
+  run time) — `uxc verify`/push warn on dangling ids. Unknown tool names/tags warn at push
+  (`uxc ls ai.tool` lists the real ones). Secrets follow the ai.mcp mask contract. An unmet
+  `successCriteria` makes the plan node UNSATISFIED and the run FAILED.
+- On a pre-ft5 gateway the kind is `unsupported` (skipped).
+
+## ai.plan — managed (uxopian-ai 2026.0.0-ft5+)
+- Storage: `ai/plans/<id>.json` (CRUD `/api/v1/admin/plans`)
+- Fields: `id, description, nodes[{id, name, type AGENT|SUBPLAN|DIRECT_TOOL, agentConfId |
+  subPlanId | toolName+toolArgumentBindings, outputKey, dependencies[], persistOutput, listKey
+  (fan-out, element exposed as `item`), maxParallelElements}], toolInputParameters[{name,
+  description, required}], exposeAsTool, toolDescription`
+- Add: `uxc add ai.plan ctFooPlan --agent ctFooAgent`; smoke: `uxc run --plan ctFooPlan --payload k=v --expect re`
+- Gotcha: **every variable a node's prompt reads must come from a dependency `outputKey`, a
+  `persistOutput:true` node, or `toolInputParameters`** — the payload alone is NOT enough; the run
+  is refused with 400 "Plan is not executable" (verify/push lint it offline). Validate blocks
+  duplicate node ids, dangling dependencies, cycles, and `exposeAsTool` without
+  `toolDescription` / a tool-name-safe id.
+
+## ai.application — managed (uxopian-ai 2026.0.0-ft5+)
+- Storage: `ai/applications/<id>.json` (CRUD `/api/v1/admin/application/application-conf`)
+- Fields: `id = name, description, provider (connection provider, e.g. FlowerDocsProvider),
+  prompt (appended to the base prompt), defaultLlmProvider, defaultLlmModel, maxToolCycles,
+  permissions` (same block as ai.agent)
+- Add: `uxc add ai.application ctPortal [--provider FlowerDocsProvider] [--prompt ctFoo]`;
+  smoke: `uxc run ctFoo --application ctPortal --expect re` (sends `X-Application-Id`)
+- Gotcha: the gateway DERIVES the id from `name` — keep them equal (validate refuses otherwise).
+  The auto-created per-provider apps (`default`, `FlowerDocs`) are shared: adopt as external,
+  never own them. LLM precedence: request override > prompt > application default > system.
