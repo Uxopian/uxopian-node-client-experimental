@@ -1,0 +1,26 @@
+{
+  "defaultLlmModel": "gpt-4o",
+  "defaultLlmProvider": "openai",
+  "description": "Portfolio assistant: searches contracts, runs the portfolio review plan, exports tables. Read-only tools only.",
+  "id": "pfrAssistant",
+  "maxToolCycles": 8,
+  "name": "pfrAssistant",
+  "permissions": {
+    "allowedSubPlans": [
+      "pfrContractsBrief"
+    ],
+    "allowedTools": [
+      "getDataModel",
+      "buildCriterionClass",
+      "buildCriterionString",
+      "buildAndClause",
+      "doSearch",
+      "getDocumentIdsByName",
+      "getDocumentProperties",
+      "writeExcelAndGetLink",
+      "writeCsvAndGetLink",
+      "presentChoices"
+    ]
+  },
+  "provider": "FlowerDocsProvider"
+}

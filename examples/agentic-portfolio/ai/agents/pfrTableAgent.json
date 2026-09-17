@@ -1,0 +1,5 @@
+{
+  "description": "Formats the fact sheets as the portfolio table, one row per contract.",
+  "id": "pfrTableAgent",
+  "objective": "pfrPortfolioTable"
+}

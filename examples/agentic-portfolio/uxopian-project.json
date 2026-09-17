@@ -1,0 +1,38 @@
+{
+  "code": "pfr",
+  "dataSets": [],
+  "description": "Reviews a whole contract portfolio with one uxopian-ai Agentic Plan: parallel per-contract fact sheets, one portfolio brief, callable from chat.",
+  "format": "uxopian-package/1",
+  "idPrefixes": {
+    "camel": "pfr",
+    "kebab": "pfr-",
+    "pascal": "Pfr",
+    "upper": "PFR_"
+  },
+  "name": "Portfolio Review \u2014 agentic plan demo",
+  "products": [
+    "uxopian-ai"
+  ],
+  "registrationOrderBands": {
+    "fd.guiconfig": [
+      30,
+      49
+    ],
+    "fd.handler": [
+      20,
+      29
+    ],
+    "fd.script": [
+      930,
+      949
+    ]
+  },
+  "requires": {},
+  "version": "0.1.0",
+  "minClientVersion": "0.18.0",
+  "supportedVersions": {
+    "uxopianAi": [
+      "*"
+    ]
+  }
+}

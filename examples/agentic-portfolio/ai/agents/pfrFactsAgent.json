@@ -1,0 +1,5 @@
+{
+  "description": "Turns the text of one contract into a JSON fact sheet (type, parties, term, law, liability, risk, red flags).",
+  "id": "pfrFactsAgent",
+  "objective": "pfrContractFacts"
+}
