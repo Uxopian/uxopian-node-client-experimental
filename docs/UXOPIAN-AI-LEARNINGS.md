@@ -491,8 +491,11 @@ plans first; every number below comes from `uxc run --plan` or plan-execution re
 parallel, 219.5 k input / 25 k output tokens; highlights 3.7 s, 19.4 k / 0.4 k. 62 families (catalogue): 63.3 s.
 
 **The archive itself (what mining surfaced before any playbook change):** 16 CtContract documents were 6 distinct
-credit-insurance contracts (V1 ingested three times, annotated copies, a DPA typed CREDIT_INSURANCE, a ZZ test contract);
-17 clause documents of a deleted contract; a re-ingested contract with 186 stored clauses for 63 in its map; one contract
+credit-insurance contracts (V1 ingested three times, annotated copies, a DPA typed CREDIT_INSURANCE, a ZZ-prefixed baseline
+upload of a real customer contract); 17 clause documents of a deleted contract; that large contract has 186 stored clauses
+but only 63 entries in its `CtClauseMap`, because the ingest handler cuts the map at 3,900 characters
+(`ct-ingest.js:674`, the last entry is cut mid-id): anything built on the map (the war-room's family and clause lists)
+silently misses the rest on large contracts, while a per-family search does not; one contract
 whose clause texts were truncated to one character (« L », « U »); a clause map entry holding a clause NAME instead of an
 id (an id-driven fan-out on it would 500); required clauses (effective date, legal notice, complaints) absent from 5 of 6
 contracts — more likely a classification gap at ingestion than missing wording. Mine an archive only after de-duplicating
