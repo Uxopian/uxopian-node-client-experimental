@@ -103,13 +103,18 @@ export function crossReferenceLint(pkg)  // every classid/promptId-looking token
 
 ```js
 export async function runPrompt(ctx, idOrGoal, { payload = {}, goal = false, provider, model,
-  temperature, version = null, application = null, maxChars = 2000, expect = null, onText = null, timeoutMs } = {})
+  temperature, version = null, application = null, images = [], maxChars = 2000, expect = null,
+  onText = null, timeoutMs } = {})
 // conversations POST -> requests/stream POST -> tolerant parse (SSE 'data:' frames OR raw text,
 // accumulate content||text||delta.content||answer, skip [DONE]); error-as-body detection
 // (/timed out|HttpTimeout|Error: java/) with ONE cold-start retry; LLM override via query params.
 // ft5: goal refused when caps.goals === false; version -> content.version after a GET …/versions/{n}
 // existence check; application -> X-Application-Id header; a stream timeout POSTs
-// /conversations/{id}/stop (best-effort) before rethrowing.
+// /conversations/{id}/stop (best-effort) before rethrowing; a socket close is re-dressed as a
+// NetworkError naming the prompt and the §29 isolation step (never printed as an answer, #71).
+// images: data URIs only (`data:<mime>;base64,…`) appended as IMAGE content items — bare base64 is
+// REFUSED client-side (the gateway closes the socket instead of answering 400); gated on
+// caps.inlineImages (ft5+). UXOPIAN-AI-LEARNINGS §A19.
 // -> { answer, elapsedMs, pass: expect ? regex.test(answer) : null, error?: string }
 // lib/commands/versions.mjs (uxc versions <promptId> [--stats], read-only, caps.promptVersioning):
 //   GET …/prompts/{id}/versions (+ …/versions/{n}/statistics, …/{id}/statistics) -> rows
@@ -225,10 +230,22 @@ export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:
 merge of UxcTestsPassedAt/UxcTestsResult (FD tags / AI receipt JSON); never creates receipts,
 never rewrites installedAt. `resolveTarget` exposes `allowTests` (targets.json / UXC_ALLOW_TESTS).
 
+## lib/home.mjs — where uxc keeps its non-package state
+
+```js
+export function uxcHome()                   // UXC_HOME (any platform) else os.homedir()
+export function uxcDir(...parts)            // <home>/.uxopian/<...parts>, resolved PER CALL
+```
+
+`os.homedir()` reads $HOME on posix and %USERPROFILE% on Windows, so `HOME`-based test isolation
+silently did nothing there — the suite overwrote the real `~/.uxopian/targets.json` (#71). Every
+path under `~/.uxopian` goes through `uxcDir()`; tests set `UXC_HOME`.
+
 ## lib/lock.mjs — cross-process target lock (DESIGN §25.1)
 
 ```js
-export const LOCK_ROOT                                    // ~/.uxopian/locks
+export const lockRoot = () => …                           // ~/.uxopian/locks — a FUNCTION: UXC_HOME
+//                                                           must be obeyable after import (#71)
 export async function acquire(key, {mode, cmd, timeoutMs, maxAgeMs, onWait, onSteal})
 //   mode 'write' -> exclusive, waits (throws on timeout); 'read' -> NEVER waits;
 //   'none' -> no-op. Returns {held, mode, contendedBy, release()} — release() is idempotent.
@@ -276,8 +293,11 @@ handler window).
 export function tagclassIndex(pkg)          // id -> {type, values:Set, constrained}
 export function lintTagValues(pkg)          // -> [{where, tag, value, allowed[], message}]  BLOCKING
 export function promptVariables(content)    // Set of bare ${x} (helper calls excluded by shape)
+export function uninterpolatedVariables(content)    // -> [{name, line}] ${x} outside [[ ]] / [( )]
 export function promptCallSites(text, id)   // -> [{line, keys:string[]|null, argText}]
-export function lintPromptVariables(pkg)    // -> [{prompt, kind:'unprovided'|'no-caller', …}]  WARNING
+export function lintPromptVariables(pkg)    // -> [{prompt, kind:'unprovided'|'no-caller'|'not-interpolated', …}]  WARNING
+//   'not-interpolated' (#71): a bare ${x} the gateway never substitutes — the value is dropped at
+//   runtime. Surfaced by BOTH verify and push (unlike 'no-caller', which is informational).
 export function promptProviderOrder(pkg, entries)   // -> [{prompt, before[], why}]
 export function includeOrders(pkg)          // -> [{path, includes[]}] in source order
 export function declaredIncludeOrder(pkg)   // manifest.includeOrder, basenames

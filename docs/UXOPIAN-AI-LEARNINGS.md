@@ -500,3 +500,95 @@ whose clause texts were truncated to one character (« L », « U »); a clause 
 id (an id-driven fan-out on it would 500); required clauses (effective date, legal notice, complaints) absent from 5 of 6
 contracts — more likely a classification gap at ingestion than missing wording. Mine an archive only after de-duplicating
 it, and report data issues next to the findings.
+
+## §A19 — Inline IMAGE content, the gateway path on fd.demo, and `[[${x}]]` vs `${x}` (verified by Romain Monte on fd.demo/default, Core 2026.0.0 build 260612-142837, dialect `ai-2026-ft5`, uxc 0.18.0, 2026-09-22 — issue #71)
+
+Three mechanics from a first run of uxc on a fresh scope, on Windows 11 / Node v22.20.0. Each was
+proven on a throwaway, not inferred.
+
+### A19.1 — Only the Thymeleaf INLINE forms are interpolated; a bare `${x}` is silently dropped
+
+The gateway interpolates `[[${x}]]` (HTML-escaped) and `[(${x})]` (raw, §A16). A **bare `${x}`
+deploys clean, lints clean on older uxc, and the value never arrives.** Same prompt, same payload:
+
+| prompt content | result |
+|---|---|
+| `${ingredients}` | *"Pour créer une liste de courses organisée par rayon, veuillez fournir les ingrédients."* |
+| `[[${ingredients}]]` | the correct shopping list, grouped by aisle, quantities summed, 4.4 s |
+
+The expensive part is not the wasted run. **§29 prescribes a bean-free control prompt to isolate a
+connector failure, and a control prompt broken this way sends the diagnosis the wrong way** — it
+looks like the payload never arrived, when in fact the prompt never asked for it.
+
+**Correction to an earlier claim.** uxc's lint said an unsubstituted variable makes the gateway
+*hang until timeout*. On ft5 it does **not** hang: it answers promptly with the variable simply
+gone, which is harder to notice. Older gateways do hang. Neither produces an error code.
+
+`uxc verify` / `uxc push` now warn (`not-interpolated`) on a bare `${x}` in a prompt content and
+print the fix. Deliberately narrow: only a bare *identifier* is flagged. A helper call
+(`${svc.fn(x)}`) is left alone — its bare form is unverified either way.
+
+### A19.2 — On fd.demo the gateway is NOT on the per-scope plugin path
+
+| path | API, with JWT | admin console, authenticated |
+|---|---|---|
+| `/gui/plugins/<scope>/gateway/uxopian-ai` | **500** | **500** |
+| `/gui/gateway/uxopian-ai` | **200** | **200** |
+
+Tried with several plugin segments (the scope, its uppercase form, `default`, `xopia`): all 500.
+§A1 lists the no-plugin form as an alternative that "also routes"; **on this host it is the only
+one that works.**
+
+**Measurement trap.** Unauthenticated, the plugin path answers `302` to the signin page and the
+no-plugin path answers `401` — which suggests exactly the opposite conclusion. **The verdict only
+appears once a token is attached.** Never rank gateway paths by their anonymous status codes.
+
+### A19.3 — NEW: an image can ride INSIDE the request, no connector needed
+
+§A12 notes that `Content.type` became `text|prompt|image`. The `image` member is undocumented, and
+it turns out to be **the way around a dead connector**: the client sends the bytes instead of asking
+the gateway to fetch them.
+
+```
+POST /api/v1/requests/stream?conversation=<id>&model=gpt-4o
+{"conversation":"<id>",
+ "inputs":[{"role":"USER","content":[
+   {"type":"TEXT","value":"Describe this image in one sentence."},
+   {"type":"IMAGE","value":"data:image/png;base64,<b64>"}]}]}
+```
+
+Verified end to end: a real 344 KiB PNG went in and gpt-4o described it correctly. Five shapes tried:
+
+| shape | result |
+|---|---|
+| `PROMPT` + `IMAGE`, bare base64 | **socket closed** |
+| `PROMPT` + `IMAGE`, `data:<mime>;base64,` prefix | 200, reaches OpenAI |
+| `TEXT` alone, no deployed prompt | 200, answers |
+| `TEXT` + `IMAGE` (data URI), no deployed prompt | 200, reaches OpenAI |
+| `PROMPT` alone, multimodal prompt | 200, *"I cannot see images"* |
+
+1. **The `data:<mime>;base64,` prefix is MANDATORY.** Bare base64 does not answer 400 — it closes
+   the socket, so the caller gets §A19.4's transport error and no clue why. uxc refuses it
+   client-side, before the request.
+2. **A `TEXT` content item works with no deployed prompt at all**, which makes a one-shot call a
+   legitimate client pattern.
+3. **An invalid image is reported properly** by the provider (`image_parse_error` from OpenAI, HTTP
+   200 with an error envelope). Only the malformed-transport case is silent.
+
+Shipped as `uxc run <promptId> --image <path>` (repeatable; png/jpg/jpeg/gif/webp; gated on the
+`inlineImages` capability, ft5+). **This is the only route to a multimodal prompt on a deployment
+whose connector beans are not wired** — which, per §29, is a state a package author cannot fix.
+
+### A19.4 — §29's signature, on a streamed run, is a closed socket
+
+FLOWERDOCS-LEARNINGS §29 records the missing-connector failure as `500 {"code":"INTERNAL_ERROR"}`.
+Through `/api/v1/requests/stream` **there is no status code to read**: the socket is closed
+mid-stream. Node's fetch rejects with `TypeError: terminated` (`cause: SocketError: other side
+closed`, `UND_ERR_SOCKET`).
+
+§29's discrimination test held perfectly otherwise: the heavy `extractTextualContent` and the light
+`getARenderIdFromFlowerDocsId` fail **identically**, and so does the stock `summarizeDocumentText`
+on the same document — which is what proves the fault is bean-level, not per-document.
+
+uxc now reports this as a transport failure naming the prompt, never as an answer
+(`uxc explain UND_ERR_SOCKET`).

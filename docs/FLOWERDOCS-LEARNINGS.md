@@ -786,3 +786,36 @@ go through these buttons at all, so hiding them removes no path.
 - **Duplicate `RegistrationOrder` = one script may never execute, with no error anywhere.** A newly created Script document (`po-widgets-assistant`, order **935**) was pushed successfully, the GUI caches were cleared twice, and the document was present in `uxc ls fd.script` and byte-identical to local — yet **none of its top-level `window.*` exports existed in the page** after a full reload, and the console was clean. Cause: `po-plan` already carried order **935**. Two Script docs at the same rank have no defined order between them and the server picks; the loser is simply absent. Changing the newcomer to **936** made it load on the next push. Nothing in the platform warns about this, so **assert uniqueness in your own test suite** — the gerflor package now does (`tests/293`). Symptom to recognise: a satellite script that "deploys fine" but whose functions are `undefined` in the browser, with no console error.
 - **After updating an existing Script, `location.reload()` can still run the OLD code.** Same session, same push: the brand-new document loaded fresh (nothing cached), while an **updated** one (`po-widgets-admin`) kept serving the browser's cached copy — its newly added bridge object was `undefined` even though `uxc diff` reported server and local identical. A **hard reload that bypasses the HTTP cache** (Cmd+Shift+R / Ctrl+Shift+R) picked up the new content immediately. Clearing `/gui/rest/caches` fixes the SERVER side only; it does nothing to the browser.
 - **Practical consequence for verifying a deploy in a browser:** `uxc diff <id>` returning *identical* proves the server is right and nothing more. To judge the client, hard-reload, then assert on something the new version introduces (a new export, a new marker). A per-script load marker (`window.__po_<name>_loaded`) makes this a one-line check and is worth adding to every script you split out.
+
+## §44 — Through a STREAM, §29's missing-connector failure has no status code: the socket just closes (verified by Romain Monte on fd.demo/default, Core 2026.0.0 build 260612-142837, 2026-09-22 — issue #71)
+
+§29 records the `flowerDocsService.*` missing-connector failure as `500 {"code":"INTERNAL_ERROR"}`.
+That is what a **non-streamed** call shows. Any prompt whose content calls the FlowerDocs/ARender
+connector bean, run through `POST /api/v1/requests/stream`, gets **no status code at all** — the
+gateway closes the TCP socket mid-stream:
+
+```
+TypeError: terminated
+  cause: SocketError: other side closed   (UND_ERR_SOCKET)
+```
+
+- **§29's discrimination test still holds.** The heavy `extractTextualContent` and the light
+  `getARenderIdFromFlowerDocsId` fail **identically**, and so does the stock
+  `summarizeDocumentText` on the same document. Identical failure across a heavy and a light bean,
+  on a document that reads fine, is what proves the fault is **bean-level, not per-document** —
+  i.e. server configuration, which a package author cannot fix.
+- **Isolate with a bean-free control prompt** — but make sure the control prompt is not itself
+  broken: a bare `${x}` is never interpolated (UXOPIAN-AI-LEARNINGS §A19.1), and a control prompt
+  that silently loses its payload sends the diagnosis the wrong way entirely. `uxc verify` now
+  warns on this.
+- **A closed socket is not the only cause.** A malformed streamed body does the same — notably an
+  `IMAGE` content item without its `data:<mime>;base64,` prefix (§A19.3). Both surface as
+  `UND_ERR_SOCKET`, so read the socket close as *"the server refused this request without being
+  able to say so"*, then discriminate.
+- uxc reports this as a transport failure naming the prompt, never as an answer:
+  `uxc explain UND_ERR_SOCKET`, and `uxc run` prints `transport failure running ai.prompt/<id>`.
+
+**The generalisable rule:** on a streaming endpoint, a server-side exception is a dead socket, not
+an HTTP error. Never read a transport failure as content — `terminated` printed where an answer
+goes reads like an answer, and the field report reasoned from it as a gateway response body before
+opening a socket-level trace.

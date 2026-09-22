@@ -25,6 +25,7 @@ uxc add <kind> <Name> [flags]     # scaffold with verified mechanics baked in (s
 uxc push --changed [--settle]     # validated, ordered, resumable; --settle waits out the handler window
 uxc verify                        # post-deploy assertions + cross-reference lint
 uxc run <promptId> --payload k=v --expect 'regex'        # smoke a prompt (--prompt-version n, --application id on ft5)
+uxc run <promptId> --image shot.png                     # inline image, ft5+ (works when the ARender connector is dead)
 uxc run --plan <planId> --payload k=v --expect 'regex'   # smoke an ai.plan (uxopian-ai ft5+)
 uxc doc create <classId> --file f && uxc watch <docId> --until 'Tag=V'   # smoke a handler
 ```
