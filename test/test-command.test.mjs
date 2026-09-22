@@ -135,7 +135,7 @@ test('safety gate: refuses without allowTests/--yes (subprocess: exit 2, message
     execFileSync(process.execPath, [uxc, 'test', '--dir', dir], {
       env: {
         ...process.env,
-        HOME: dir, // hermetic: never read the developer's real ~/.uxopian/targets.json
+        UXC_HOME: dir, HOME: dir, USERPROFILE: dir, // hermetic on every platform (#71)
         UXC_URL: 'http://127.0.0.1:1', UXC_SCOPE: 'S', UXC_USER: 'u', UXC_PASSWORD: 'p',
         UXC_ALLOW_TESTS: '', UXC_TARGET: '',
       },
