@@ -8,6 +8,7 @@ import { join, dirname } from 'node:path';
 import { openPackage } from '../lib/registry.mjs';
 import {
   lintTagValues, tagclassIndex, promptVariables, promptCallSites, lintPromptVariables,
+  uninterpolatedVariables,
   promptProviderOrder, lintIncludeOrder, includeOrders, declaredIncludeOrder,
   resourceSizes, sizeWarnings, HARD_LIMIT_BYTES,
 } from '../lib/lint.mjs';
@@ -153,7 +154,7 @@ test('a variable no caller mentions is reported — the ${openObligations} outag
   assert.equal(findings.length, 1);
   assert.equal(findings[0].kind, 'unprovided');
   assert.deepEqual(findings[0].variables, ['openObligations']);
-  assert.match(findings[0].message, /hang until timeout/);
+  assert.match(findings[0].message, /older gateways hang until timeout, ft5 answers promptly/);
   assert.match(findings[0].message, /fd\/handlers\/PoCase_onUpdate\/handler\.js:1/);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -335,5 +336,63 @@ test('composedSources ignores json-layout kinds (nothing to flatten there)', asy
     files: { 'fd/tagclasses/T.json': { id: 'T', type: 'STRING' } },
   });
   assert.deepEqual(composedSources(pkg, pkg.entry('fd.tagclass', 'T')), []);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// #7b — a variable written in a form the gateway never interpolates (#71)
+// ---------------------------------------------------------------------------
+
+test('uninterpolatedVariables: only the Thymeleaf inline forms count as interpolated', () => {
+  assert.deepEqual(uninterpolatedVariables('[[${a}]] and [(${b})]').map((v) => v.name), []);
+  assert.deepEqual(uninterpolatedVariables('[[ ${a} ]]').map((v) => v.name), [], 'whitespace inside the wrapper is fine');
+  assert.deepEqual(uninterpolatedVariables('${a}').map((v) => v.name), ['a']);
+  assert.deepEqual(uninterpolatedVariables('[${a}]').map((v) => v.name), ['a'], 'a single bracket is not the inline form');
+  assert.deepEqual(uninterpolatedVariables('[[${a}] and ${b}').map((v) => v.name), ['a', 'b'], 'an unclosed wrapper is broken too');
+  // the exact pair measured on fd.demo: same prompt, same payload, two outcomes
+  assert.deepEqual(uninterpolatedVariables('Ingredients: ${ingredients}').map((v) => v.name), ['ingredients']);
+  assert.deepEqual(uninterpolatedVariables('Ingredients: [[${ingredients}]]').map((v) => v.name), []);
+});
+
+test('uninterpolatedVariables: a server-side helper call is left alone (unverified either way)', () => {
+  assert.deepEqual(uninterpolatedVariables('${flowerDocsService.extractTextualContent(documentId)}'), []);
+  assert.deepEqual(uninterpolatedVariables('${tv(task, "CtTaskNature")}'), []);
+});
+
+test('uninterpolatedVariables: each name once, with the line it first appears on', () => {
+  const found = uninterpolatedVariables('intro\n${who} said\nagain ${who}\nand ${what}');
+  assert.deepEqual(found, [{ name: 'who', line: 2 }, { name: 'what', line: 4 }]);
+});
+
+test('a bare ${x} in a prompt is reported even when a caller provides it — the value is dropped anyway', () => {
+  const { pkg, dir } = pkgOf({
+    resources: [{ kind: 'ai.prompt', id: 'poBare', path: 'ai/prompts/poBare.json' }],
+    files: {
+      'ai/prompts/poBare.json': { id: 'poBare' },
+      'ai/prompts/poBare.content.md': 'Shopping list for ${ingredients}',
+      'fd/handlers/H/handler.js': "callPrompt(token, 'poBare', { ingredients: list }, 60);",
+    },
+  });
+  const findings = lintPromptVariables(pkg);
+  const bare = findings.find((f) => f.kind === 'not-interpolated');
+  assert.ok(bare, `expected a not-interpolated finding, got ${JSON.stringify(findings.map((f) => f.kind))}`);
+  assert.deepEqual(bare.variables, ['ingredients']);
+  assert.match(bare.message, /will NOT be interpolated/);
+  assert.match(bare.message, /\[\[\$\{ingredients\}\]\]/, 'it must show the fix, not just the fault');
+  assert.match(bare.message, /ai\/prompts\/poBare\.content\.md/, 'it must name the file to edit');
+  assert.match(bare.message, /line 1/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('a correctly wrapped prompt raises no interpolation finding', () => {
+  const { pkg, dir } = pkgOf({
+    resources: [{ kind: 'ai.prompt', id: 'poOk', path: 'ai/prompts/poOk.json' }],
+    files: {
+      'ai/prompts/poOk.json': { id: 'poOk' },
+      'ai/prompts/poOk.content.md': 'Shopping list for [[${ingredients}]] and [(${notes})]',
+      'fd/handlers/H/handler.js': "callPrompt(token, 'poOk', { ingredients: list, notes: n }, 60);",
+    },
+  });
+  assert.deepEqual(lintPromptVariables(pkg).filter((f) => f.kind === 'not-interpolated'), []);
   rmSync(dir, { recursive: true, force: true });
 });
