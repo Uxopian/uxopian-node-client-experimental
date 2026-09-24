@@ -64,7 +64,7 @@ DELETE /core/rest/files/tmp/{id}
 ## 5. Scripts = JS plugins = `Script`-class documents ✅
 
 - A FlowerDocs "script" (JSAPI plugin) is a **document of class `Script`**. The GUI serves it client-side at **`GET /gui/rest/scripts/{id}`** (read-only; POST/PUT/DELETE there → 405).
-- **It loads in the client when it carries a `RegistrationOrder` integer tag** (lower = loaded earlier; `CustomActions`=1). No `RegistrationOrder` ⇒ stored but not loaded.
+- **`RegistrationOrder` orders the load, it does not gate it** (lower = loaded earlier; `CustomActions`=1). A document without the tag is still loaded, after the ones that carry it. See § *`RegistrationOrder` does not keep a script out of the browser* below: the older reading ("no `RegistrationOrder` ⇒ stored but not loaded") is **false** on build `2026.0.0-260612_142837` and cost a real defect.
 - **Deploy recipe** (no server access; just the Core JWT): upload JS to `/rest/files/tmp` → `POST /rest/documents` with `classId:"Script"`, friendly `id`, `files:[{id:tmpId}]`, tag `RegistrationOrder`. ✅ (deployed `ContractIntelligenceCockpit` this way.)
 - ✅ **VERIFIED END-TO-END — full API deploy works (no server, no admin UI):**
   1. Auth `/core` with **`scope:"IRIS"`** (the token's scope = the scope the doc lands in — using `FD` would put it on the wrong scope).
@@ -457,7 +457,7 @@ With the boot-once guard, there is only one listener, so this companion fix is o
   exist on the target scope (`uxc ls ai.prompt`).
 - Review sweep that found them: dump all Script docs (id + `RegistrationOrder` + content) and
   grep for `createChat|openUxopianAiChat|/gateway`; anything assistant-related OUTSIDE the
-  930–941 band is suspect. `RegistrationOrder: null` = stored but never loaded (dead weight).
+  930–941 band is suspect. `RegistrationOrder: null` does NOT mean never loaded: see the section at the end of this file. It only means loaded last.
 - Cleanup 2026-07-10 on IRIS: 12 ported scripts deleted (originals + restore recipe in
   `~/projects/iris-script-archive/2026-07-10-assistant-cleanup/`), 1 fixed in place
   (`49bdc430…` contextual "discuss selected documents" → `UXO_AI_ENDPOINT`). Script changes
@@ -820,6 +820,60 @@ an HTTP error. Never read a transport failure as content — `terminated` printe
 goes reads like an answer, and the field report reasoned from it as a gateway response body before
 opening a socket-level trace.
 
+---
+
+## `RegistrationOrder` does not keep a script out of the browser
+
+**Measured 2026-09-23** on `fd.demo.uxopian.com`, scope `default`, GUI build
+`2026.0.0-260612_142837`, from the authenticated page.
+
+**The client does not choose. It loads every `Script` document of the scope.** Counted both ways,
+and the two lists match id for id: `document.querySelectorAll('script:not([src])')` then the
+`//# sourceURL=` of each gives **28** entries `/gui/rest/scripts/<id>`, and `uxc ls fd.script`
+gives **28** documents. The ones without `RegistrationOrder` are there, last and grouped.
+
+So the tag orders the load, it never gates it. The injection is `addExtraScript(url, script)` in
+the public bundle `/gui/scripts/flower.js` l. 152: it inlines the text in a `<script>` tag suffixed
+with `//# sourceURL=`, which is why the console names a source for which no request was ever made.
+
+**What this breaks.** A package that splits server-side code into `Script` documents meant only for
+handler bootstrap (uxc writes them with no tags at all, `lib/kinds/fd-script.mjs` l. 51,
+`tags: isServerOnly(obj) ? [] : [...]`) ships that code to every browser session. Each document is
+then evaluated ALONE, in a fresh scope, with none of its siblings. Any top-level statement that
+touches a namespace declared in another document throws on every full page load. On the Gerflor
+package this was `ReferenceError: PoCase is not defined`, from `po-lib-admin`, whose
+`fd/handlers/_shared/po-admin.js` l. 25 opens with `PoCase.compactJournal = function (...)`.
+Dated to the refactor that created those documents, it had been firing on every reload for 8 days.
+
+**There is no package-side fix.** `registrationOrder: null` is already the most restrictive setting
+uxc can write. The only remaining levers are outside the package: an ACL hiding the document from
+the UI profile, which would also hide it from the bootstrap that reads it over REST and so break
+the handlers, or a platform fix.
+
+**The fix that works: make a server library harmless when evaluated alone.** A library should only
+DEFINE. Put a guard in the host file, before the includes, for any namespace the document completes
+without declaring:
+
+```js
+if (typeof PoCase === 'undefined') { this.PoCase = {}; }
+```
+
+Three things matter in that line. It **declares nothing**, so a reachability check that forbids two
+files defining the same name stays armed (`var PoCase = ...` trips it, and disarming that check to
+pass would be the wrong trade). It uses `this` rather than `globalThis` because these packages are
+ES5 for Graal. And under the real bootstrap it never runs at all: each document is loaded by its
+own `load()` in library order, so `typeof PoCase` is already `'object'` and the branch is dead.
+
+**The trap the guard opens, and how to close it.** Loaded in the WRONG order, the guard builds an
+empty namespace, the members land in it, and the real library then overwrites the lot in silence.
+So the order of each handler library list has to be checked by a test, not assumed.
+
+**Audit the whole set, not the one that shouts.** Evaluate each composed document alone in an empty
+context, and separately compare the namespaces each one completes at top level against those it
+declares. On Gerflor, four of the five libraries were closed on themselves and only one completed a
+foreign namespace: the silent four needed no guard, but the test covers all five, because a library
+that is quiet today is a trap tomorrow.
+
 ## §45 — Standing up a GUI-created scope on fd.demo + the handler AI-gateway URL trap (`seminaire`, po-mailroom 0.1.1, verified 2026-09-23)
 - **A scope created from the admin GUI already carries the base layer** (14 documentclasses, 52 tagclasses, acl-readonly…) — `doctor --ready` L0.platform green, **no CLM run needed**. Only a REST `--blank` scope is naked (§23).
 - **Per-scope accounts:** `aescaffre` does NOT exist in a new scope (F00324) — use the account the scope was created with (email-style logins like `x@y.com` work fine). Every uxc call retries auth, so a single `doctor --ready` with wrong creds **locks the account in that scope** (F00331, temporary; other scopes unaffected). Test creds with ONE `uxc scope get <id>` first.
@@ -833,3 +887,10 @@ opening a socket-level trace.
 - **Deterministic steps beat prompt instructions for demo-critical tasks:** the prompt asked for a « Clôturer la commande » task when all issues clear, and the model skipped it — the handler now adds it when an email clears the LAST activity; the SAV task is likewise created by the handler, not the AI. Answer-handler rule: DONE on an internal task must not end a WAITING_EXTERNAL wait (keep status + next action).
 - **`uxc data pull <dataset>` sweeps EVERY doc of the dataset's class:** po's `PoConfig` dataset is keyed on class `PoEmail`, so a pull after emails exist adds them as rows — strip them before any `data push` (they would be re-created). Better package design: give the config singleton its own class.
 - **uxc gotchas seen:** `uxc get <X>_vN` resolves to the LIVE registration for ANY N — use `core.getDoc(id)` to test whether a specific `_vN` exists. After `rm --server` + `push --revive`, the rotation re-used `_v1` (doc version 3) instead of minting `_v2`; an unchanged handler is skipped by `push --force` ("unchanged") — a content change is what forces a fresh `_vN`. `uxc watch` reads the search index and can miss a change a direct `uxc get` shows.
+
+## §46 — ARender's supported-format matrix has NO `json`, `csv` or `markdown` row: a generated "document" must ship a `.txt`, and it must be FIRST (measured 2026-09-24, Gerflor po-mailroom)
+- **The defect, in the field:** a `PoDocument` whose whole body lived in a tag (`PoDocText`, 20 655 chars, `PoDocSource: GENERATION`) and carried **no file** → ARender pane **blank and silent** (no error, no code). §31 already says "The doc MUST have a file"; the field observation adds that the failure can be *mute*, which reads as a broken viewer and sends you hunting in the wrong place.
+- **The format matrix, read at the source** (`https://doc.uxopian.com/docs/arender/overview/supported-formats/`): the **Text** category has exactly **two rows** — `Plain text` `.txt` `text/plain` and `vCard` `.vcf` `text/vcard`, both converted by **PDFBox**. **There is no `json`, no `csv` and no `markdown` row anywhere on that page.** `.eml` (`message/rfc822`) is there, under Email, via wkhtmltopdf (matches §31's verified .eml rendering).
+- **Consequences for any generated document:** (a) dump the body as **`.txt` / `text/plain`**, never `.json`; (b) **ARender opens the FIRST file of the document** — if you attach both, the `.txt` must come before the `.json`, otherwise the viewer opens something it cannot render; (c) pretty-print a JSON body (`JSON.stringify(x, null, 2)`) or, better, render it as one readable line per record: a 20 kB single-line JSON renders but is unreadable.
+- **Mirror, not migration, when readers already read the tag.** Keep the tag AND add the file when the readers pull the body out of a **search result row** (FlowerDocs serves the tag value with the row, 100 rows per call). Moving those readers to the file costs one `GET /rest/documents/{id}/files/{fid}/content` **per row** — unusable inside a handler bounded at 55 s. What keeps a mirror honest: build both from the SAME variable in the SAME call, funnel every write through one or two functions, and have a test refuse any new write site outside them.
+- **Backfilling old fileless docs is loss-free only while they have zero files.** With `versioningMode` absent (= `NONE`, §16) a `files[]` replace **purges the previous blob** — harmless when there is none, but the same update path later purges the `.txt` it replaces. Say so before someone discovers it.
