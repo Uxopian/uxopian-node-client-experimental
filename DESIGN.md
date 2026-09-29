@@ -728,7 +728,7 @@ browser/GUI assertions, CI orchestration beyond `--json`.
 
 ## 25. Several agents on one instance
 
-Three weeks of driving uxc through coding agents on one shared FlowerDocs instance (the Gerflor
+Three weeks of driving uxc through coding agents on one shared FlowerDocs instance (a customer
 POC, `docs/BACKLOG-AGENTIC.md`) produced a class of failure the single-operator design never had
 to answer: two writers with no arbiter, a checkout with no opinion about which instance it belongs
 to, and briefs full of "never do X" that get skimmed. The answer is the same in all three cases —
