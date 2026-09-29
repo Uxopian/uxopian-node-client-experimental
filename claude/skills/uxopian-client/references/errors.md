@@ -30,6 +30,9 @@ explanation. This table mirrors `lib/explain.mjs` — if you learn a new one, ad
 | `Agent configuration already exists` / `Agent plan already exists` (400) | Create on an existing id — agents/plans answer 400, not 409. uxc push falls back to PUT. |
 | `Prompt 'x' is referenced by application(s)` (409) | An ai.application uses the prompt. Delete/repoint the application first; right after deleting it the reference lingers ~2 s (uxc retries). |
 | `contains an illegal character` | uxopian-ai ids may not hold whitespace, control characters, `/` or `\`. |
+| `UND_ERR_SOCKET` / `terminated` | **Transport, not content.** The server closed the TCP socket instead of answering — a SERVER-side crash. On a prompt run it is §29's missing-connector signature seen through `/requests/stream`, where there is no status code: a helper bean (`flowerDocsService.*`/ARender) is not wired. Isolate with a prompt calling NO bean; if that answers, only the server team can fix it. Also produced by a malformed streamed body — e.g. an `IMAGE` item without its `data:<mime>;base64,` prefix. |
+| `ECONNREFUSED` | Nothing is listening there. Check the target URLs (`uxc target ls`) and that the instance is up (`uxc doctor --ready`). |
+| `ENOTFOUND` | Hostname did not resolve — a typo in the target, or DNS/VPN down. `uxc target ls`. |
 
 ## Gateway stream quirks (uxc run handles all of these — know them for diagnosis)
 

@@ -64,7 +64,7 @@ DELETE /core/rest/files/tmp/{id}
 ## 5. Scripts = JS plugins = `Script`-class documents ✅
 
 - A FlowerDocs "script" (JSAPI plugin) is a **document of class `Script`**. The GUI serves it client-side at **`GET /gui/rest/scripts/{id}`** (read-only; POST/PUT/DELETE there → 405).
-- **It loads in the client when it carries a `RegistrationOrder` integer tag** (lower = loaded earlier; `CustomActions`=1). No `RegistrationOrder` ⇒ stored but not loaded.
+- **`RegistrationOrder` orders the load, it does not gate it** (lower = loaded earlier; `CustomActions`=1). A document without the tag is still loaded, after the ones that carry it. See § *`RegistrationOrder` does not keep a script out of the browser* below: the older reading ("no `RegistrationOrder` ⇒ stored but not loaded") is **false** on build `2026.0.0-260612_142837` and cost a real defect.
 - **Deploy recipe** (no server access; just the Core JWT): upload JS to `/rest/files/tmp` → `POST /rest/documents` with `classId:"Script"`, friendly `id`, `files:[{id:tmpId}]`, tag `RegistrationOrder`. ✅ (deployed `ContractIntelligenceCockpit` this way.)
 - ✅ **VERIFIED END-TO-END — full API deploy works (no server, no admin UI):**
   1. Auth `/core` with **`scope:"IRIS"`** (the token's scope = the scope the doc lands in — using `FD` would put it on the wrong scope).
@@ -457,7 +457,7 @@ With the boot-once guard, there is only one listener, so this companion fix is o
   exist on the target scope (`uxc ls ai.prompt`).
 - Review sweep that found them: dump all Script docs (id + `RegistrationOrder` + content) and
   grep for `createChat|openUxopianAiChat|/gateway`; anything assistant-related OUTSIDE the
-  930–941 band is suspect. `RegistrationOrder: null` = stored but never loaded (dead weight).
+  930–941 band is suspect. `RegistrationOrder: null` does NOT mean never loaded: see the section at the end of this file. It only means loaded last.
 - Cleanup 2026-07-10 on IRIS: 12 ported scripts deleted (originals + restore recipe in
   `~/projects/iris-script-archive/2026-07-10-assistant-cleanup/`), 1 fixed in place
   (`49bdc430…` contextual "discuss selected documents" → `UXO_AI_ENDPOINT`). Script changes
@@ -786,3 +786,111 @@ go through these buttons at all, so hiding them removes no path.
 - **Duplicate `RegistrationOrder` = one script may never execute, with no error anywhere.** A newly created Script document (`po-widgets-assistant`, order **935**) was pushed successfully, the GUI caches were cleared twice, and the document was present in `uxc ls fd.script` and byte-identical to local — yet **none of its top-level `window.*` exports existed in the page** after a full reload, and the console was clean. Cause: `po-plan` already carried order **935**. Two Script docs at the same rank have no defined order between them and the server picks; the loser is simply absent. Changing the newcomer to **936** made it load on the next push. Nothing in the platform warns about this, so **assert uniqueness in your own test suite** — the customer package now does (`tests/293`). Symptom to recognise: a satellite script that "deploys fine" but whose functions are `undefined` in the browser, with no console error.
 - **After updating an existing Script, `location.reload()` can still run the OLD code.** Same session, same push: the brand-new document loaded fresh (nothing cached), while an **updated** one (`po-widgets-admin`) kept serving the browser's cached copy — its newly added bridge object was `undefined` even though `uxc diff` reported server and local identical. A **hard reload that bypasses the HTTP cache** (Cmd+Shift+R / Ctrl+Shift+R) picked up the new content immediately. Clearing `/gui/rest/caches` fixes the SERVER side only; it does nothing to the browser.
 - **Practical consequence for verifying a deploy in a browser:** `uxc diff <id>` returning *identical* proves the server is right and nothing more. To judge the client, hard-reload, then assert on something the new version introduces (a new export, a new marker). A per-script load marker (`window.__po_<name>_loaded`) makes this a one-line check and is worth adding to every script you split out.
+
+## §44 — Through a STREAM, §29's missing-connector failure has no status code: the socket just closes (verified by Romain Monte on fd.demo/default, Core 2026.0.0 build 260612-142837, 2026-09-22 — issue #71)
+
+§29 records the `flowerDocsService.*` missing-connector failure as `500 {"code":"INTERNAL_ERROR"}`.
+That is what a **non-streamed** call shows. Any prompt whose content calls the FlowerDocs/ARender
+connector bean, run through `POST /api/v1/requests/stream`, gets **no status code at all** — the
+gateway closes the TCP socket mid-stream:
+
+```
+TypeError: terminated
+  cause: SocketError: other side closed   (UND_ERR_SOCKET)
+```
+
+- **§29's discrimination test still holds.** The heavy `extractTextualContent` and the light
+  `getARenderIdFromFlowerDocsId` fail **identically**, and so does the stock
+  `summarizeDocumentText` on the same document. Identical failure across a heavy and a light bean,
+  on a document that reads fine, is what proves the fault is **bean-level, not per-document** —
+  i.e. server configuration, which a package author cannot fix.
+- **Isolate with a bean-free control prompt** — but make sure the control prompt is not itself
+  broken: a bare `${x}` is never interpolated (UXOPIAN-AI-LEARNINGS §A19.1), and a control prompt
+  that silently loses its payload sends the diagnosis the wrong way entirely. `uxc verify` now
+  warns on this.
+- **A closed socket is not the only cause.** A malformed streamed body does the same — notably an
+  `IMAGE` content item without its `data:<mime>;base64,` prefix (§A19.3). Both surface as
+  `UND_ERR_SOCKET`, so read the socket close as *"the server refused this request without being
+  able to say so"*, then discriminate.
+- uxc reports this as a transport failure naming the prompt, never as an answer:
+  `uxc explain UND_ERR_SOCKET`, and `uxc run` prints `transport failure running ai.prompt/<id>`.
+
+**The generalisable rule:** on a streaming endpoint, a server-side exception is a dead socket, not
+an HTTP error. Never read a transport failure as content — `terminated` printed where an answer
+goes reads like an answer, and the field report reasoned from it as a gateway response body before
+opening a socket-level trace.
+
+---
+
+## `RegistrationOrder` does not keep a script out of the browser
+
+**Measured 2026-09-23** on `fd.demo.uxopian.com`, scope `default`, GUI build
+`2026.0.0-260612_142837`, from the authenticated page.
+
+**The client does not choose. It loads every `Script` document of the scope.** Counted both ways,
+and the two lists match id for id: `document.querySelectorAll('script:not([src])')` then the
+`//# sourceURL=` of each gives **28** entries `/gui/rest/scripts/<id>`, and `uxc ls fd.script`
+gives **28** documents. The ones without `RegistrationOrder` are there, last and grouped.
+
+So the tag orders the load, it never gates it. The injection is `addExtraScript(url, script)` in
+the public bundle `/gui/scripts/flower.js` l. 152: it inlines the text in a `<script>` tag suffixed
+with `//# sourceURL=`, which is why the console names a source for which no request was ever made.
+
+**What this breaks.** A package that splits server-side code into `Script` documents meant only for
+handler bootstrap (uxc writes them with no tags at all, `lib/kinds/fd-script.mjs` l. 51,
+`tags: isServerOnly(obj) ? [] : [...]`) ships that code to every browser session. Each document is
+then evaluated ALONE, in a fresh scope, with none of its siblings. Any top-level statement that
+touches a namespace declared in another document throws on every full page load. On a customer
+package this was `ReferenceError: PoCase is not defined`, from `po-lib-admin`, whose
+`fd/handlers/_shared/po-admin.js` l. 25 opens with `PoCase.compactJournal = function (...)`.
+Dated to the refactor that created those documents, it had been firing on every reload for 8 days.
+
+**There is no package-side fix.** `registrationOrder: null` is already the most restrictive setting
+uxc can write. The only remaining levers are outside the package: an ACL hiding the document from
+the UI profile, which would also hide it from the bootstrap that reads it over REST and so break
+the handlers, or a platform fix.
+
+**The fix that works: make a server library harmless when evaluated alone.** A library should only
+DEFINE. Put a guard in the host file, before the includes, for any namespace the document completes
+without declaring:
+
+```js
+if (typeof PoCase === 'undefined') { this.PoCase = {}; }
+```
+
+Three things matter in that line. It **declares nothing**, so a reachability check that forbids two
+files defining the same name stays armed (`var PoCase = ...` trips it, and disarming that check to
+pass would be the wrong trade). It uses `this` rather than `globalThis` because these packages are
+ES5 for Graal. And under the real bootstrap it never runs at all: each document is loaded by its
+own `load()` in library order, so `typeof PoCase` is already `'object'` and the branch is dead.
+
+**The trap the guard opens, and how to close it.** Loaded in the WRONG order, the guard builds an
+empty namespace, the members land in it, and the real library then overwrites the lot in silence.
+So the order of each handler library list has to be checked by a test, not assumed.
+
+**Audit the whole set, not the one that shouts.** Evaluate each composed document alone in an empty
+context, and separately compare the namespaces each one completes at top level against those it
+declares. On that package, four of the five libraries were closed on themselves and only one completed a
+foreign namespace: the silent four needed no guard, but the test covers all five, because a library
+that is quiet today is a trap tomorrow.
+
+## §45 — Standing up a GUI-created scope on fd.demo + the handler AI-gateway URL trap (`seminaire`, po-mailroom 0.1.1, verified 2026-09-23)
+- **A scope created from the admin GUI already carries the base layer** (14 documentclasses, 52 tagclasses, acl-readonly…) — `doctor --ready` L0.platform green, **no CLM run needed**. Only a REST `--blank` scope is naked (§23).
+- **Per-scope accounts:** `aescaffre` does NOT exist in a new scope (F00324) — use the account the scope was created with (email-style logins like `x@y.com` work fine). Every uxc call retries auth, so a single `doctor --ready` with wrong creds **locks the account in that scope** (F00331, temporary; other scopes unaffected). Test creds with ONE `uxc scope get <id>` first.
+- **AI layer on a new fd.demo scope, in order:** (1) `uxopian-ai-default-providers-set` (providers arrive KEYLESS — set `globalConf.apiSecret` per instance, e.g. from the keychain `uxai-iris-openai` / account `IRIS`, via GET→PUT `/api/v1/admin/llm/provider-conf/openai`); (2) `uxoai-flowerdocs-fddemo`; (3) **the `Gateway` Route doc** (README step 2 — a new scope has NONE). Before (3), `/gui/plugins/<scope>/gateway/uxopian-ai` answers **500**; after (3) it answers **200**.
+- **⚠️ THE TRAP — the AI gateway URL a HANDLER calls must be the per-scope PLUGIN path `https://<host>/gui/plugins/<scope>/gateway/uxopian-ai`** (it rides the scope's `Gateway` Route). I first configured po-mailroom's `PO_CONFIG.g` with `/gui/gateway/uxopian-ai` (the path UXOPIAN-AI §A19.2 found working from a *client*) → from inside the handler the AI calls hung instead of failing, and because the handler is **synchronous with weak exception handling**, every PoEmail create stalled the handler chain until timeout: no `PoIngestStatus`, no visible error, `doctor --sandbox` NOT_FIRING. (One early test email WAS eventually processed — the order folder turned up later with `new=false` — i.e. slow timeouts, not a dead engine.) Switching `g` to `/gui/plugins/seminaire/gateway/uxopian-ai` (as `default`'s `PO_CONFIG` has, with `default`) → the next email went `DONE` end to end (ref, customer, French AI summary, order VF, task). Fix path: edit the row in `data/PoConfig.jsonl` → `uxc data push PoConfig --force`. **Diagnose by comparing the working scope's config doc** (`uxc get PO_CONFIG --raw-tag PoEmailSummary | jq 'del(.s)'`) — never print the secret.
+- **Red herrings ruled out on the way (don't re-chase):** account type (`testromain` uses an email login and fires), missing Route doc on the *handler* side (`testromain` has none — its handlers make no AI calls), rights / `system` user / `acl-readonly` (identical), scope definition, sync-vs-async, same-id stale registration.
+- **Residual 0.1.1 defect — FIXED on seminaire by a class guard:** its `PoEmail_onCreate` has `filter: null` and **no class guard** → it ran on EVERY document create (AI triage on any upload, and the sandbox probe NOT_FIRING while it was registered). Fix = at the top of the handler IIFE, return unless the component's class is `PoEmail` (read via `RuleUtil.getClassId(c)` / `c.getData().getClassId()`, unwrap `.getValue()`) and skip the `PO_CONFIG` singleton (itself a PoEmail doc). After `_v3`: probe SANDBOX_OK in 6 s AND emails still ingest. Port the guard into the package before the next publish.
+- **The ingest handler only parses the email BODY when the document NAME ends in `.eml`** (`/\.eml$/i.test(subject)`) — true for a GUI drop of an `.eml` file (name = filename). A doc named without `.eml` gets triaged on the SUBJECT ONLY → the AI can invert the meaning (a "blocage crédit" email was read as "credit block lifted"). When smoke-testing, name the doc `….eml`. Verified flows on seminaire: new order (order VF + customer VF + "Traiter la nouvelle commande" task, team routing), follow-up (IN_PROCESS → WAITING_EXTERNAL/Client/CREDIT_HOLD), task answer NEED_INFO (→ WAITING_EXTERNAL within 30 s, task leaves OPEN views). Ingest is synchronous: an email create takes ~10–16 s.
+- **po-mailroom 0.1.1 packaging gaps (fix before the next publish):** (a) the `poAiGateway` variable must default/document the plugin path `/gui/plugins/<scope>/gateway/uxopian-ai`; (b) surfacing references 4 VF *instances* (`PoAllOrdersFolder`, `PoCockpitFolder`, `PoMyTasksFolder`, `PoTeamBacklogFolder`) the package does not ship → `uxc verify` "unresolved reference" (added on seminaire via `uxc add fd.vfinstance …`, names copied from `default`); (c) install collides on `ai.llm/*` (masked vs empty secret) and empty `surfacing` → benign, `--force`.
+- **Activity detection needs a checklist field + gpt-4.1, not gpt-4o** (seminaire, 2026-09-23). Rules "article without coloris → COLORIS / without m² → SPECIFICATION": gpt-4o (temp 0) named the wrong article, missed one, and once returned none with an invented reason. Fix: make the JSON start with `articleCheck:[{article, coloris|'MANQUANT', superficie|'MANQUANT'}]` and derive `activitiesAdd` from it (state that a range name is not a coloris and a location is not a quantity) + switch the prompt's `defaultLlmModel` to `gpt-4.1` → exact on both scenario formats, repeatable, ~10 s per email. Test prompts directly with `uxc run <prompt> --payload …` before replaying through the handler.
+- **Deterministic steps beat prompt instructions for demo-critical tasks:** the prompt asked for a « Clôturer la commande » task when all issues clear, and the model skipped it — the handler now adds it when an email clears the LAST activity; the SAV task is likewise created by the handler, not the AI. Answer-handler rule: DONE on an internal task must not end a WAITING_EXTERNAL wait (keep status + next action).
+- **`uxc data pull <dataset>` sweeps EVERY doc of the dataset's class:** po's `PoConfig` dataset is keyed on class `PoEmail`, so a pull after emails exist adds them as rows — strip them before any `data push` (they would be re-created). Better package design: give the config singleton its own class.
+- **uxc gotchas seen:** `uxc get <X>_vN` resolves to the LIVE registration for ANY N — use `core.getDoc(id)` to test whether a specific `_vN` exists. After `rm --server` + `push --revive`, the rotation re-used `_v1` (doc version 3) instead of minting `_v2`; an unchanged handler is skipped by `push --force` ("unchanged") — a content change is what forces a fresh `_vN`. `uxc watch` reads the search index and can miss a change a direct `uxc get` shows.
+
+## §46 — ARender's supported-format matrix has NO `json`, `csv` or `markdown` row: a generated "document" must ship a `.txt`, and it must be FIRST (measured 2026-09-24, a customer po-mailroom package)
+- **The defect, in the field:** a `PoDocument` whose whole body lived in a tag (`PoDocText`, 20 655 chars, `PoDocSource: GENERATION`) and carried **no file** → ARender pane **blank and silent** (no error, no code). §31 already says "The doc MUST have a file"; the field observation adds that the failure can be *mute*, which reads as a broken viewer and sends you hunting in the wrong place.
+- **The format matrix, read at the source** (`https://doc.uxopian.com/docs/arender/overview/supported-formats/`): the **Text** category has exactly **two rows** — `Plain text` `.txt` `text/plain` and `vCard` `.vcf` `text/vcard`, both converted by **PDFBox**. **There is no `json`, no `csv` and no `markdown` row anywhere on that page.** `.eml` (`message/rfc822`) is there, under Email, via wkhtmltopdf (matches §31's verified .eml rendering).
+- **Consequences for any generated document:** (a) dump the body as **`.txt` / `text/plain`**, never `.json`; (b) **ARender opens the FIRST file of the document** — if you attach both, the `.txt` must come before the `.json`, otherwise the viewer opens something it cannot render; (c) pretty-print a JSON body (`JSON.stringify(x, null, 2)`) or, better, render it as one readable line per record: a 20 kB single-line JSON renders but is unreadable.
+- **Mirror, not migration, when readers already read the tag.** Keep the tag AND add the file when the readers pull the body out of a **search result row** (FlowerDocs serves the tag value with the row, 100 rows per call). Moving those readers to the file costs one `GET /rest/documents/{id}/files/{fid}/content` **per row** — unusable inside a handler bounded at 55 s. What keeps a mirror honest: build both from the SAME variable in the SAME call, funnel every write through one or two functions, and have a test refuse any new write site outside them.
+- **Backfilling old fileless docs is loss-free only while they have zero files.** With `versioningMode` absent (= `NONE`, §16) a `files[]` replace **purges the previous blob** — harmless when there is none, but the same update path later purges the `.txt` it replaces. Say so before someone discovers it.

@@ -44,6 +44,13 @@ Modules with handlers read a singleton config doc (e.g. `CT_CONFIG`) with a `<Co
 packages). Check: `uxc get doc <CONFIG_ID>` shows the doc and the JSON parses. In-JVM read gotcha:
 component services key on **`Id` objects, not strings** (§21) — a string silently returns nothing.
 
+**The `aiGateway` value is the #1 silent killer on a new scope** (FLOWERDOCS-LEARNINGS §45): a
+handler must call the **per-scope plugin path** `https://<host>/gui/plugins/<scope>/gateway/uxopian-ai`
+(which needs the Layer 1 `Gateway` Route doc on THAT scope) — not `/gui/gateway/uxopian-ai`, which
+is fine for uxc/client calls but hung from inside a handler. A synchronous handler whose AI call
+hangs stalls the whole chain: nothing fires, no error anywhere. Check it against a scope where the
+module works: `uxc get <CONFIG_ID> --raw-tag <Tag> | jq 'del(.s, .jwtSecret)'` on both targets.
+
 ## Layer 3+4 — module install + seed data
 
 ```bash
@@ -67,6 +74,7 @@ waits it out; events during the window are LOST.
 |---|---|
 | "wizard stuck on first step" / AI call hangs | `uxc doctor --ready` (L0.llm) then `--ai-smoke` |
 | handlers "do nothing", no errors anywhere | `uxc doctor --sandbox` |
+| sandbox OK on an empty scope, NOT_FIRING once a module is installed | the module's handler is stalling the chain — compare its config doc's gateway/core URLs with a working scope (Layer 2; §45) |
 | duplicated links / objects in the GUI | `uxc doctor --dups` (§25/§26) |
 | pushes fail F00206/F00205/F00208 | `uxc doctor --ready` (blank scope, §23) |
 | "what's installed here?" | `uxc installed` |
