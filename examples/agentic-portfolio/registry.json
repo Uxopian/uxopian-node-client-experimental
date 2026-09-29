@@ -1,0 +1,101 @@
+{
+  "resources": [
+    {
+      "id": "pfrActNowAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrActNowAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrBriefAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrBriefAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrFactsAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrFactsAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrFinderAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrFinderAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrTableAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrTableAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrWatchAgent",
+      "kind": "ai.agent",
+      "path": "ai/agents/pfrWatchAgent.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrAssistant",
+      "kind": "ai.application",
+      "path": "ai/applications/pfrAssistant.json",
+      "policy": "managed",
+      "title": "pfrAssistant"
+    },
+    {
+      "id": "pfrContractsBrief",
+      "kind": "ai.plan",
+      "path": "ai/plans/pfrContractsBrief.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrPortfolioReview",
+      "kind": "ai.plan",
+      "path": "ai/plans/pfrPortfolioReview.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrReviewOne",
+      "kind": "ai.plan",
+      "path": "ai/plans/pfrReviewOne.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrActNow",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrActNow.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrContractFacts",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrContractFacts.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrFindDocuments",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrFindDocuments.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrPortfolioBrief",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrPortfolioBrief.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrPortfolioTable",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrPortfolioTable.json",
+      "policy": "managed"
+    },
+    {
+      "id": "pfrWatchList",
+      "kind": "ai.prompt",
+      "path": "ai/prompts/pfrWatchList.json",
+      "policy": "managed"
+    }
+  ]
+}

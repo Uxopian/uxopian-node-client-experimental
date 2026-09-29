@@ -1,0 +1,30 @@
+{
+  "description": "A whole document class: find the contracts, then run pfrContractsBrief on them (plan inside a plan).",
+  "id": "pfrPortfolioReview",
+  "nodes": [
+    {
+      "agentConfId": "pfrFinderAgent",
+      "id": "find",
+      "name": "find the contracts",
+      "outputKey": "docIds",
+      "type": "AGENT"
+    },
+    {
+      "dependencies": [
+        "find"
+      ],
+      "id": "review",
+      "name": "review and brief",
+      "outputKey": "portfolio",
+      "subPlanId": "pfrContractsBrief",
+      "type": "SUBPLAN"
+    }
+  ],
+  "toolInputParameters": [
+    {
+      "description": "FlowerDocs document class to review, e.g. CtContract",
+      "name": "classId",
+      "required": true
+    }
+  ]
+}

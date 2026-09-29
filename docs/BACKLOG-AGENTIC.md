@@ -1,6 +1,6 @@
 # uxc backlog: running several coding agents against one instance
 
-Written 2026-09-05 from three weeks of driving `uxc` through Claude agents on the Gerflor POC
+Written 2026-09-05 from three weeks of driving `uxc` through Claude agents on a customer POC
 (package `po`, scope `default`, up to two agents in parallel, one shared FlowerDocs instance).
 Everything below was hit for real; the "why" line says how it bit us. Ordered by pain.
 
@@ -128,7 +128,7 @@ DESIGN §25, the contracts are `lib/CONTRACTS.md`, and every item below carries 
 
 ## Added 2026-09-10
 
-From one afternoon session on the Gerflor POC (customer profile, D63): a new `_shared` library, a
+From one afternoon session on a customer POC (customer profile, D63): a new `_shared` library, a
 new admin command, two datasets, a new GUI part, a prompt, a test book, deployed to `gfdefault`.
 One agent this time, no concurrency: everything below is plain single-agent friction.
 
