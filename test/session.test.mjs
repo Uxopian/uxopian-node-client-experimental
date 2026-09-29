@@ -25,7 +25,7 @@ function inPkg(manifest, args, { env = {}, files = {} } = {}) {
     const r = spawnSync(process.execPath, [UXC, ...args], {
       cwd: dir,
       env: {
-        ...process.env, HOME: home,
+        ...process.env, UXC_HOME: home, HOME: home, USERPROFILE: home,
         UXC_URL: 'http://127.0.0.1:1', UXC_SCOPE: 'S', UXC_USER: 'u', UXC_PASSWORD: 'p',
         UXC_TARGET: 'ambient',
         ...env,
@@ -146,7 +146,7 @@ test('uxc test --offline runs the offline tier with no target and no lock', () =
     // NO target env at all: an offline run must not need one
     const r = spawnSync(process.execPath, [UXC, 'test', '--offline'], {
       cwd: dir,
-      env: { ...process.env, HOME: home, UXC_TARGET: '', UXC_URL: '', UXC_SCOPE: '', UXC_USER: '', UXC_PASSWORD: '' },
+      env: { ...process.env, UXC_HOME: home, HOME: home, USERPROFILE: home, UXC_TARGET: '', UXC_URL: '', UXC_SCOPE: '', UXC_USER: '', UXC_PASSWORD: '' },
       encoding: 'utf8', timeout: 60_000,
     });
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
