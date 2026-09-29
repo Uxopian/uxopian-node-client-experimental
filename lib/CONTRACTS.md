@@ -155,7 +155,10 @@ export * as util from './util.mjs'
 - **fd-script / fd-guiconfig**: dir layout `<dir>/<id>/meta.json + <id>.js|.xml`. meta:
   `{ name, acl, registrationOrder, contentFile }`. push via pushContentDoc (classId Script /
   GUIConfiguration, RegistrationOrder tag). fd-script only: `registrationOrder: null` SPELLED OUT =
-  server-only library document (no tag, never loaded by the GUI, fetched + load()ed by handlers). readServer: getDoc + getContent. guiconfig.validate:
+  server-only library document (no tag, fetched + load()ed by handlers). The GUI still loads every
+  Script-class doc, so (0.19) such a library may add `classId: '<OtherClass>'`: pushed under that
+  class, echoed by readServer only when != Script; validate refuses it on a browser script or when
+  spelled 'Script'. readServer: getDoc + getContent. guiconfig.validate:
   XML well-formedness (cheap paren/quote/tag balance — no XML lib), bean-id uniqueness within
   package, refusal of singleton bean ids (componentProperties, componentActivityConfigurations).
 - **fd-surfacing**: single registry entry id `surfacing` (path fd/surfacing.json). File =

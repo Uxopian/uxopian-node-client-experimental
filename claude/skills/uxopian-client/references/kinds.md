@@ -75,10 +75,15 @@ Push order is topological and automatic; you never order writes yourself.
 
 ## fd.script — managed, cache-affecting
 - Storage: `fd/scripts/<id>/meta.json + <id>.js` (a Script-class document; kebab ids `ct-foo`)
-- Meta: `name, acl, registrationOrder (STRING), contentFile`
+- Meta: `name, acl, registrationOrder (STRING), contentFile` (+ optional `classId`, see below)
 - Add: `uxc add fd.script ct-foo` (RegistrationOrder auto-allocated from the manifest band)
-- Gotcha: without a RegistrationOrder tag the script is stored but NEVER loaded by the GUI.
-  Every change needs the cache clear (uxc does it) + a full browser page reload.
+- Gotcha: the GUI loads EVERY Script-class document of the scope; RegistrationOrder only ORDERS
+  the load (a document without it still loads, last). Every change needs the cache clear (uxc does
+  it) + a full browser page reload.
+- Server-only library (a handler fetches it by id and `load()`s it): `"registrationOrder": null`
+  spelled out, AND (0.19+) `"classId": "<CtServerLibrary>"` naming a package document class —
+  only a non-Script class keeps it out of the browser. `classId` is refused on a browser script
+  and must not be spelled `Script`.
 
 ## fd.guiconfig — managed, cache-affecting
 - Storage: `fd/guiconfig/<id>/meta.json + <id>.xml` (GUIConfiguration-class doc, Spring-bean XML)

@@ -56,3 +56,57 @@ test('round trip: the server echo of a tag-less document hashes like the local n
   assert.equal(server.obj.registrationOrder, null);
   assert.equal(hashResource('fd.script', server.obj, Object.values(server.contents)), hashResource('fd.script', local, [bytes]));
 });
+
+// 0.19 — a server-only library stored under ANOTHER class: the GUI loads every Script-class document
+// of the scope whatever its tags (FLOWERDOCS-LEARNINGS § "RegistrationOrder does not keep a script
+// out of the browser"); the class is the documented gate.
+test('classId: a server-only library is pushed under its declared class, a plain script stays Script', async () => {
+  const lib = recordingCtx();
+  await script.create(lib.ctx, { id: 'po-lib-a', obj: { name: 'Po Lib A', registrationOrder: null, classId: 'PoServerLibrary', contentFile: 'po-lib-a.js' }, contents: { 'po-lib-a.js': bytes } });
+  assert.equal(lib.pushed[0].doc.data.classId, 'PoServerLibrary');
+  assert.deepEqual(lib.pushed[0].doc.tags, []);
+  const gui = recordingCtx();
+  await script.create(gui.ctx, { id: 'po-widgets', obj: { name: 'Po Widgets', registrationOrder: '932', contentFile: 'po-widgets.js' }, contents: { 'po-widgets.js': bytes } });
+  assert.equal(gui.pushed[0].doc.data.classId, 'Script');
+});
+
+test('classId: validate refuses Script spelled out, an empty value, and a browser script under another class', () => {
+  const mk = (o) => ({ obj: { name: 'X', contentFile: 'po-lib-a.js', ...o }, contents: { 'po-lib-a.js': bytes } });
+  assert.deepEqual(script.validate({}, entry, mk({ registrationOrder: null, classId: 'PoServerLibrary' })), []);
+  assert.match(script.validate({}, entry, mk({ registrationOrder: null, classId: 'Script' })).join('\n'), /other than Script/);
+  assert.match(script.validate({}, entry, mk({ registrationOrder: null, classId: '' })).join('\n'), /other than Script/);
+  assert.match(script.validate({}, entry, mk({ registrationOrder: '930', classId: 'PoServerLibrary' })).join('\n'), /only for a server-only library/);
+});
+
+test('classId: the echo of a library under another class hashes like the local meta; a Script echo drifts', async () => {
+  const local = { name: 'Po Lib A', acl: 'acl-readonly', registrationOrder: null, classId: 'PoServerLibrary', contentFile: 'po-lib-a.js' };
+  const echo = (classId) => ({ clients: { core: {
+    getDoc: async () => ({ id: 'po-lib-a', name: 'Po Lib A', data: { ACL: 'acl-readonly', classId }, tags: [], files: [{ id: 'f1' }] }),
+    getContent: async () => bytes,
+  } } });
+  const moved = await script.readServer(echo('PoServerLibrary'), 'po-lib-a');
+  assert.equal(moved.obj.classId, 'PoServerLibrary');
+  assert.equal(hashResource('fd.script', moved.obj, Object.values(moved.contents)), hashResource('fd.script', local, [bytes]));
+  // still a Script on the server (not migrated yet): it must DRIFT from the local meta, so `push --changed` moves it
+  const stale = await script.readServer(echo('Script'), 'po-lib-a');
+  assert.equal(Object.prototype.hasOwnProperty.call(stale.obj, 'classId'), false);
+  assert.notEqual(hashResource('fd.script', stale.obj, Object.values(stale.contents)), hashResource('fd.script', local, [bytes]));
+});
+
+test('classId: an update whose class change the server did not apply fails loudly instead of erasing classId', async () => {
+  const local = { obj: { name: 'Po Lib A', registrationOrder: null, classId: 'PoServerLibrary', contentFile: 'po-lib-a.js' }, contents: { 'po-lib-a.js': bytes } };
+  const ctxWith = (serverClass) => {
+    const lib = recordingCtx();
+    lib.ctx.clients.core.getDoc = async () => ({ id: 'po-lib-a', data: { classId: serverClass } });
+    return lib;
+  };
+  const moved = ctxWith('PoServerLibrary');
+  await script.update(moved.ctx, 'po-lib-a', local);
+  assert.equal(moved.pushed[0].doc.data.classId, 'PoServerLibrary');
+  await assert.rejects(script.update(ctxWith('Script').ctx, 'po-lib-a', local), /server kept Script/);
+  // and back: removing classId locally must really return the document to Script
+  const back = { obj: { ...local.obj }, contents: local.contents };
+  delete back.obj.classId;
+  await script.update(ctxWith('Script').ctx, 'po-lib-a', back);
+  await assert.rejects(script.update(ctxWith('PoServerLibrary').ctx, 'po-lib-a', back), /pushed as class Script but the server kept PoServerLibrary/);
+});
