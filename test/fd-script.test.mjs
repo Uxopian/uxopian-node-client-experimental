@@ -92,3 +92,21 @@ test('classId: the echo of a library under another class hashes like the local m
   assert.equal(Object.prototype.hasOwnProperty.call(stale.obj, 'classId'), false);
   assert.notEqual(hashResource('fd.script', stale.obj, Object.values(stale.contents)), hashResource('fd.script', local, [bytes]));
 });
+
+test('classId: an update whose class change the server did not apply fails loudly instead of erasing classId', async () => {
+  const local = { obj: { name: 'Po Lib A', registrationOrder: null, classId: 'PoServerLibrary', contentFile: 'po-lib-a.js' }, contents: { 'po-lib-a.js': bytes } };
+  const ctxWith = (serverClass) => {
+    const lib = recordingCtx();
+    lib.ctx.clients.core.getDoc = async () => ({ id: 'po-lib-a', data: { classId: serverClass } });
+    return lib;
+  };
+  const moved = ctxWith('PoServerLibrary');
+  await script.update(moved.ctx, 'po-lib-a', local);
+  assert.equal(moved.pushed[0].doc.data.classId, 'PoServerLibrary');
+  await assert.rejects(script.update(ctxWith('Script').ctx, 'po-lib-a', local), /server kept Script/);
+  // and back: removing classId locally must really return the document to Script
+  const back = { obj: { ...local.obj }, contents: local.contents };
+  delete back.obj.classId;
+  await script.update(ctxWith('Script').ctx, 'po-lib-a', back);
+  await assert.rejects(script.update(ctxWith('PoServerLibrary').ctx, 'po-lib-a', back), /pushed as class Script but the server kept PoServerLibrary/);
+});
