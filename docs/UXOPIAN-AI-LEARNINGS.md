@@ -543,6 +543,21 @@ one that works.**
 no-plugin path answers `401` — which suggests exactly the opposite conclusion. **The verdict only
 appears once a token is attached.** Never rank gateway paths by their anonymous status codes.
 
+**⚠️ Correction (2026-09-23, fd.demo/`seminaire` — FLOWERDOCS-LEARNINGS §45): the plugin-path 500
+means "this scope has no `Gateway` Route doc", not "the plugin path is broken on fd.demo".** On a
+fresh scope `/gui/plugins/seminaire/gateway/uxopian-ai` was 500; after creating the Route doc
+(`uxc doc create Route --id Gateway … --tag 'Path=/gateway/**' --tag 'URL=http://gateway-service.iris.svc.cluster.local:8085'`)
+it answered 200 with the same token. And `default` — which has the Route — runs its handlers against
+`/gui/plugins/default/gateway/uxopian-ai`.
+
+**Which path for what:**
+- **uxc target / client-side calls:** `/gui/gateway/uxopian-ai` works (above) — fine for `--ai`.
+- **SERVER-SIDE handler calls (a config doc's gateway URL, e.g. po-mailroom `PO_CONFIG.g` / the
+  `poAiGateway` install var): use the PLUGIN path `/gui/plugins/<scope>/gateway/uxopian-ai`, and make
+  sure the scope's `Gateway` Route doc exists.** With `/gui/gateway/uxopian-ai` the handler's AI calls
+  hung instead of failing; a synchronous handler then stalled the whole handler chain until timeout
+  (no status tag, no error, `doctor --sandbox` NOT_FIRING). Switching only this URL fixed ingestion.
+
 ### A19.3 — NEW: an image can ride INSIDE the request, no connector needed
 
 §A12 notes that `Content.type` became `text|prompt|image`. The `image` member is undocumented, and
