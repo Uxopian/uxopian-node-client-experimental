@@ -40,7 +40,7 @@ const row = (id, tags) => JSON.stringify({
 // ---------------------------------------------------------------------------
 
 test('a CHOICELIST value outside allowedValues is caught, with the admitted values named', () => {
-  // the exact Gerflor failure: PoRuleSet=PoProfileRules, absent from PoRuleSet's allowedValues
+  // the exact customer-POC failure: PoRuleSet=PoProfileRules, absent from PoRuleSet's allowedValues
   const { pkg, dir } = pkgOf({
     manifest: { dataSets: [{ name: 'rules', classId: 'PoRule', path: 'data/rules.jsonl' }] },
     resources: [tagclass('PoRuleSet'), { kind: 'fd.dataset', id: 'rules', path: 'data/rules.jsonl' }],
