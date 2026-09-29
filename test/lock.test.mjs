@@ -1,21 +1,30 @@
 // Offline unit tests for lib/lock.mjs — the cross-process target lock (BACKLOG-AGENTIC #2/#4).
-// HOME is redirected per test so the developer's real ~/.uxopian/locks is never touched.
+// The uxc home is redirected per test so the developer's real ~/.uxopian/locks is never touched.
+//
+// This used to redirect process.env.HOME, which silently did NOTHING on Windows: os.homedir()
+// reads USERPROFILE there, so the suite wrote fixture locks — and, via the CLI tests, a fixture
+// targets.json — into the developer's real home (#71). UXC_HOME is the platform-independent knob;
+// HOME and USERPROFILE are set alongside it so anything else reading the OS home is caught too.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { join } from 'node:path';
 
-/** Fresh HOME + a fresh module instance (LOCK_ROOT is computed at import time). */
+/** Fresh uxc home + a fresh module instance. */
 async function withHome(fn) {
   const home = mkdtempSync(join(tmpdir(), 'uxc-lock-'));
-  const prev = process.env.HOME;
+  const prev = { UXC_HOME: process.env.UXC_HOME, HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.UXC_HOME = home;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   try {
     const mod = await import(`../lib/lock.mjs?home=${encodeURIComponent(home)}`);
     return await fn(mod, home);
   } finally {
-    process.env.HOME = prev;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
     rmSync(home, { recursive: true, force: true });
   }
 }

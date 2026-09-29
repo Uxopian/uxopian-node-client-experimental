@@ -1,0 +1,6 @@
+{
+  "description": "Assembles the specialists' sections into the executive portfolio brief.",
+  "id": "pfrBriefAgent",
+  "objective": "pfrPortfolioBrief",
+  "successCriteria": "The brief has the headings At a glance, Act now, Watch list and Portfolio table, and reproduces the escalation bullets and the table rows it was given."
+}

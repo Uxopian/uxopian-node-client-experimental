@@ -152,6 +152,11 @@ Push order is topological and automatic; you never order writes yourself.
   `displaySettings:{enabled:false}`; pipeline prompts must keep it, only deliberate quick
   prompts flip it on (usually with `displayConditions` + `label`).
 
+- **Variables: `[[${x}]]` (escaped) or `[(${x})]` (raw) — NEVER a bare `${x}`.** The gateway only
+  interpolates the Thymeleaf inline forms; a bare `${x}` deploys clean and the value is silently
+  DROPPED at runtime (ft5 answers promptly without it; older gateways hang). `uxc verify` / `uxc push`
+  warn (`not-interpolated`) and print the fix. AI learnings §A19.1.
+
 ## ai.goal — managed (runtime prompt routing) — REMOVED in uxopian-ai 2026.0.0-ft5
 - On an ft5+ gateway every goal row is reported **`unsupported`** by status/push/pull/verify
   (skipped, exit code unaffected) and `uxc run --goal` is refused. Do NOT add goals for ft5
@@ -190,6 +195,7 @@ Push order is topological and automatic; you never order writes yourself.
 - On a pre-ft5 gateway the kind is `unsupported` (skipped).
 
 ## ai.plan — managed (uxopian-ai 2026.0.0-ft5+)
+- Before designing one: `references/agentic-plans.md` (the traps that cost the most time).
 - Storage: `ai/plans/<id>.json` (CRUD `/api/v1/admin/plans`)
 - Fields: `id, description, nodes[{id, name, type AGENT|SUBPLAN|DIRECT_TOOL, agentConfId |
   subPlanId | toolName+toolArgumentBindings, outputKey, dependencies[], persistOutput, listKey

@@ -1,0 +1,5 @@
+{
+  "description": "Keeps only the HIGH-risk fact sheets and proposes the next action for each.",
+  "id": "pfrActNowAgent",
+  "objective": "pfrActNow"
+}

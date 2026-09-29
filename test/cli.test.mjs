@@ -22,7 +22,10 @@ function uxc(args, { env = {} } = {}) {
       cwd: dir,
       env: {
         ...process.env,
-        HOME: dir, // never read the developer's real ~/.uxopian/targets.json
+        // Hermetic: never read or WRITE the developer's real ~/.uxopian/targets.json. HOME alone
+        // is not enough — os.homedir() ignores it on Windows and reads USERPROFILE (#71), so the
+        // isolation goes through UXC_HOME, which uxc honours on every platform.
+        UXC_HOME: dir, HOME: dir, USERPROFILE: dir,
         UXC_TARGET: '', UXC_URL: '', UXC_CORE_URL: '', UXC_AI_URL: '', UXC_GUI_URL: '',
         UXC_SCOPE: '', UXC_USER: '', UXC_PASSWORD: '',
         ...env,
