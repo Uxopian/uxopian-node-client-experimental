@@ -840,7 +840,7 @@ with `//# sourceURL=`, which is why the console names a source for which no requ
 handler bootstrap (uxc writes them with no tags at all, `lib/kinds/fd-script.mjs` l. 51,
 `tags: isServerOnly(obj) ? [] : [...]`) ships that code to every browser session. Each document is
 then evaluated ALONE, in a fresh scope, with none of its siblings. Any top-level statement that
-touches a namespace declared in another document throws on every full page load. On the Gerflor
+touches a namespace declared in another document throws on every full page load. On a customer
 package this was `ReferenceError: PoCase is not defined`, from `po-lib-admin`, whose
 `fd/handlers/_shared/po-admin.js` l. 25 opens with `PoCase.compactJournal = function (...)`.
 Dated to the refactor that created those documents, it had been firing on every reload for 8 days.
@@ -870,7 +870,7 @@ So the order of each handler library list has to be checked by a test, not assum
 
 **Audit the whole set, not the one that shouts.** Evaluate each composed document alone in an empty
 context, and separately compare the namespaces each one completes at top level against those it
-declares. On Gerflor, four of the five libraries were closed on themselves and only one completed a
+declares. On that package, four of the five libraries were closed on themselves and only one completed a
 foreign namespace: the silent four needed no guard, but the test covers all five, because a library
 that is quiet today is a trap tomorrow.
 
@@ -888,7 +888,7 @@ that is quiet today is a trap tomorrow.
 - **`uxc data pull <dataset>` sweeps EVERY doc of the dataset's class:** po's `PoConfig` dataset is keyed on class `PoEmail`, so a pull after emails exist adds them as rows — strip them before any `data push` (they would be re-created). Better package design: give the config singleton its own class.
 - **uxc gotchas seen:** `uxc get <X>_vN` resolves to the LIVE registration for ANY N — use `core.getDoc(id)` to test whether a specific `_vN` exists. After `rm --server` + `push --revive`, the rotation re-used `_v1` (doc version 3) instead of minting `_v2`; an unchanged handler is skipped by `push --force` ("unchanged") — a content change is what forces a fresh `_vN`. `uxc watch` reads the search index and can miss a change a direct `uxc get` shows.
 
-## §46 — ARender's supported-format matrix has NO `json`, `csv` or `markdown` row: a generated "document" must ship a `.txt`, and it must be FIRST (measured 2026-09-24, Gerflor po-mailroom)
+## §46 — ARender's supported-format matrix has NO `json`, `csv` or `markdown` row: a generated "document" must ship a `.txt`, and it must be FIRST (measured 2026-09-24, a customer po-mailroom package)
 - **The defect, in the field:** a `PoDocument` whose whole body lived in a tag (`PoDocText`, 20 655 chars, `PoDocSource: GENERATION`) and carried **no file** → ARender pane **blank and silent** (no error, no code). §31 already says "The doc MUST have a file"; the field observation adds that the failure can be *mute*, which reads as a broken viewer and sends you hunting in the wrong place.
 - **The format matrix, read at the source** (`https://doc.uxopian.com/docs/arender/overview/supported-formats/`): the **Text** category has exactly **two rows** — `Plain text` `.txt` `text/plain` and `vCard` `.vcf` `text/vcard`, both converted by **PDFBox**. **There is no `json`, no `csv` and no `markdown` row anywhere on that page.** `.eml` (`message/rfc822`) is there, under Email, via wkhtmltopdf (matches §31's verified .eml rendering).
 - **Consequences for any generated document:** (a) dump the body as **`.txt` / `text/plain`**, never `.json`; (b) **ARender opens the FIRST file of the document** — if you attach both, the `.txt` must come before the `.json`, otherwise the viewer opens something it cannot render; (c) pretty-print a JSON body (`JSON.stringify(x, null, 2)`) or, better, render it as one readable line per record: a 20 kB single-line JSON renders but is unreadable.
