@@ -354,6 +354,14 @@ test('uninterpolatedVariables: only the Thymeleaf inline forms count as interpol
   assert.deepEqual(uninterpolatedVariables('Ingredients: [[${ingredients}]]').map((v) => v.name), []);
 });
 
+test('uninterpolatedVariables: a variable anywhere inside a Thymeleaf expression span is wrapped', () => {
+  assert.deepEqual(uninterpolatedVariables("[[${a} ?: 'n/a']]"), []);
+  assert.deepEqual(uninterpolatedVariables("[(${a} + ' ' + ${b})]"), []);
+  assert.deepEqual(uninterpolatedVariables('[# th:each="i : ${items}"][[${i}]][/]'), []);
+  assert.deepEqual(uninterpolatedVariables('[# th:if="${flag}"]yes[/] but ${c}').map((v) => v.name), ['c']);
+  assert.deepEqual(uninterpolatedVariables('<p th:text="${d}">x</p>'), []);
+});
+
 test('uninterpolatedVariables: a server-side helper call is left alone (unverified either way)', () => {
   assert.deepEqual(uninterpolatedVariables('${flowerDocsService.extractTextualContent(documentId)}'), []);
   assert.deepEqual(uninterpolatedVariables('${tv(task, "CtTaskNature")}'), []);
