@@ -153,3 +153,31 @@ test('checkRequires caps: resolved from the pinned dialect, mismatches skip', as
   assert.equal(bad.ok, false);
   assert.match(bad.reason, /neverSuchCap/);
 });
+
+test('checkRequires: a transient read error is retried; a persistent one says "could not check", never "not deployed"', async () => {
+  const pkg = { registry: { resources: [{ kind: 'fd.tagclass', id: 'TpX' }] } };
+  // 1) two 429s then success -> ok
+  const flaky = mockCtx({ docs: { TpX: { id: 'TpX' } } });
+  flaky.requiresBackoffMs = [1, 1];
+  const real = flaky.clients.core.getOne;
+  let n = 0;
+  flaky.clients.core.getOne = async (p) => { if (++n <= 2) throw new Error('HTTP 429 slow down'); return real(p); };
+  assert.equal((await checkRequires(flaky, pkg, { resources: ['fd.tagclass/TpX'] })).ok, true);
+  assert.equal(n, 3);
+  // 2) always failing -> honest reason
+  const down = mockCtx({ docs: { TpX: { id: 'TpX' } } });
+  down.requiresBackoffMs = [1, 1];
+  down.target = { name: 'gfdefault' };
+  let m = 0;
+  down.clients.core.getOne = async () => { m++; throw new Error('HTTP 503'); };
+  const r = await checkRequires(down, pkg, { resources: ['fd.tagclass/TpX'] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /could not check fd\.tagclass\/TpX on gfdefault: .*503/);
+  assert.doesNotMatch(r.reason, /not deployed/);
+  assert.equal(m, 3);
+  // 3) same for required documents
+  const d = mockCtx();
+  d.requiresBackoffMs = [1];
+  d.clients.core.getDoc = async () => { throw new Error('timeout'); };
+  assert.match((await checkRequires(d, {}, { docs: ['CT_CONFIG'] })).reason, /could not check document CT_CONFIG/);
+});

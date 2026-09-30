@@ -451,7 +451,7 @@ uxc install-claude
 - **`run`**: streams capped at `--max-chars` (default 2000) with elapsed time; `--expect` prints
   PASS/FAIL + first 400 chars, exit 0/1;
 - errors: one line + learned explanation + suggested next command. Exit codes: 0 ok, 1 drift or
-  expectation failed, 2 error.
+  expectation failed, 2 error, 3 an upgrade `--report` found a `breaks` line (§26).
 
 ## 13. Error knowledge base (`uxc explain`, auto-appended to failures)
 
@@ -586,7 +586,7 @@ checkout — can ask "what is installed here, at which version?" (`lib/receipt.m
 - **FlowerDocs**: a document of the uxc-owned class `UxcPackage` (created on demand with five
   `Uxc*` STRING tagclasses), id **`UXC_PKG_<CODE>`** — deterministic, so per-package checks are a
   DIRECT GET (lag-proof, §25/LEARNINGS). Tags: `UxcPackageCode/Version/ClientVersion/InstalledAt/
-  ArtifactSha`.
+  ArtifactSha`, plus `UxcCompat` (§26: the package's `dependencies` and `compat.requires`, JSON).
 - **uxopian-ai**: a SYSTEM prompt **`uxcPkg<Code>`** whose content is the receipt JSON
   (`uxc-package-receipt/1`). Inert (no goal references it); visible in the admin UI by design.
 
@@ -755,7 +755,8 @@ like two agents in one clone. `mkdir()` is the atomic test-and-set; the owner fi
   next handler-touching write waits it out (`waitHandlerWindow`) instead of opening a second,
   overlapping one. `--settle` already sat through it under the lock, so it records nothing.
 - Modes are declared in `lib/cli-meta.mjs` (`LOCK_MODES`), one audited place; a command may export
-  its own `lock`, including a function of its flags — `uxc test --offline` takes none.
+  its own `lock`, including a function of its flags — `uxc test --offline` takes none; a
+  `LOCK_MODES` value may be such a function too (`import`/`mp-install --report` are reads, §26).
 - Escape hatches: `--no-lock`, `--lock-timeout <s>`.
 
 ### 25.2 The package's operating policy (`lib/agent.mjs`)
@@ -825,6 +826,49 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
 - Category-aware reads: `search --category VIRTUAL_FOLDER|FOLDER|TASK`, `ls fd.vfinstance` really
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
+
+## 26. Upgrade report and compatibility (`compat.json`, `--report`)
+
+Before a new version of a product lands, say for each installed extension that depends on it:
+**holds**, **review** or **breaks**, with the reason and the remedy (`lib/compat.mjs`, pure).
+uxc stays generic: it compares SETS declared in a file, and never learns what a family or an id
+means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat` = a path, default
+`compat.json`, or the inline object):
+
+```json
+{ "kind": "uxc-compat/1",
+  "provides": { "<family>": { "contract": "v1", "ids": ["a"] | { "a": { "params": ["p"] } } } },
+  "requires": { "<depCode>": { "versions": "^1.2", "families": { "<family>": { "contract": "v1", "ids": [...] } } } },
+  "renames":  { "<family>": { "<oldId>": "<newId>" } } }
+```
+
+- **`requires.<dep>.versions`** is a range (`satisfiesRange`, `lib/version.mjs`), a superset of
+  the §18 pattern language: `set ( || set )*`, a set = space-separated comparators AND-ed, a
+  comparator = `*` | `x` | `[op]partial` with op `>= <= > < = ^ ~`. `1.2.3`/`=1.2` exact (missing
+  parts = 0, as in §18); `1.x`/`1.2.*` wildcard; `^1.2` = `>=1.2.0 <2.0.0` (`^0.2.3` =
+  `>=0.2.3 <0.3.0`); `~1.2` = `>=1.2.0 <1.3.0`; `>=1.0 <2.0`; `^1 || ^3`. Prereleases order by
+  semver precedence; the upper bound of `^ ~ x` excludes the next version's prereleases. A string
+  array is OR. An unparseable range fails `validateCompat` (so `mp publish` refuses it).
+  `versionSupported` (server + dependency gates) is unchanged.
+- **Receipts** keep what an installed package needs (§19): `dependencies` (normalized manifest
+  block) and `requires` (= `compat.requires`), FD tag `UxcCompat`, AI receipt JSON fields. Absent
+  when undeclared, so receipts of packages without either are byte-identical to before — and the
+  `UxcCompat` tagclass / `UxcPackage` class reference is ensured only when that tag is written.
+- **Judgement** (`judgeUpgrade(receipts, manifest, compat, {collisions})`): breaks = new version
+  outside the range the extension declares (`requires.<dep>.versions`, else `dependencies`), a
+  required id absent (remedy: its new name from `renames`, else "no replacement declared"), a
+  family `contract` changed. Review = a required id lost parameters the extension names, or product
+  resources edited on the instance (the pre-flight collision table, read only). Holds otherwise.
+- **`uxc import <pkg|dir> --report`** and **`uxc mp install <slug>[@v] --report`**: read-only (the
+  mp variant downloads and hash-verifies, then judges; an archive is unpacked to a scratch dir, a
+  checkout is never rendered in place). Prints the table, one `remedy:` line per reason, `--json`
+  gets `upgrade.rows`; **exit code 3** when a `breaks` line exists (2 stays "uxc failed").
+  Takes the target lock in READ mode (`LOCK_MODES` is a function of `--report`): never queues
+  behind a writer, never waits out a handler window. The scratch copy is removed on every path.
+- **Install gate**: without `--report`, the same judgement REFUSES the install before any write
+  when a `breaks` line exists; `--force` installs anyway with a warning. Only packages shipping a
+  compat declaration are judged; everything else behaves exactly as before.
+- `mp publish` validates the declaration and inlines it into the marketplace-stored manifest.
 
 ## 27. Extension packages: `uxc init --extension` and the prefix control
 

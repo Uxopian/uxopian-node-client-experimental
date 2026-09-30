@@ -89,6 +89,26 @@ export async function importPackage(ctx, src, { remap = null, force = false, ign
 //   pushResources in PUSH_ORDER -> verify summary.
 ```
 
+## lib/compat.mjs — upgrade report (DESIGN §26)
+
+```js
+export async function readCompat(dirOrUxpkg)          // -> compat object | null; throws on invalid file
+export async function readCompatLenient(dir, out)     // same, warns + null (receipt stamping never blocks)
+export function validateCompat(c)                     // -> [problem]
+export function receiptDeps(manifest, compat)         // -> { dependencies|null, requires|null } for receipts
+export function judgeUpgrade(receipts, manifest, compat, { collisions })  // pure -> [{code,version,verdict,reasons[]}]
+export function printUpgradeReport(out, product, version, rows); export const hasBreaks
+// importPackage(..., { report:true }) -> { report:true, upgrade, collisions, written:false }, writes nothing;
+//   process.exitCode = EXIT_BREAKS (3) when a row breaks
+export const EXIT_BREAKS = 3
+```
+
+```js
+// lib/version.mjs — compat ranges (DESIGN §26); versionSupported (§18 patterns) is unchanged
+export function parseVersionRange(range)    // string | [string] -> [[ [op, version] ]] (OR of ANDs) | null
+export function satisfiesRange(version, range)  // '^1.2' '~1.2' '1.x' '>=1.0 <2.0' '^1 || ^3' exact; unparseable -> false
+```
+
 ## lib/refs.mjs
 
 ```js
@@ -321,9 +341,11 @@ doctor, install-claude, context, size, help.
 
 `lock` is optional: `'write' | 'read' | 'none'`, or a function of the flags
 (`lock: (flags) => flags.offline ? 'none' : 'write'`). Absent, the mode comes from
-`LOCK_MODES` in lib/cli-meta.mjs — the audited default per command.
+`LOCK_MODES` in lib/cli-meta.mjs — the audited default per command (a value there may also be a
+function of the flags: `import` / `mp-install` are `'read'` under `--report`).
 
 Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bare id); honor
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use
-process.exitCode = 1 for drift/expectation-failed, fail() for errors); `--json` via
+process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upgrade `--report`
+found a `breaks` line, DESIGN §26); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
