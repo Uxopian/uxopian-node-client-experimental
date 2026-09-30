@@ -120,6 +120,7 @@ function uxc(args, { base, stdin, cwd, env = {} }) {
         UXC_TARGET: '', UXC_URL: '',
         UXC_CORE_URL: `${base}/core`, UXC_AI_URL: `${base}/uxopian-ai`, UXC_GUI_URL: `${base}/gui`,
         UXC_SCOPE: 'S', UXC_USER: 'u', UXC_PASSWORD: 'p', UXC_MAX_RPS: '0',
+        UXC_AGENT: '0', // these tests read the human output; agent mode is covered below
         ...env,
       },
     });
@@ -236,4 +237,17 @@ test('a pinned package refuses an api WRITE on a differing ambient target, like 
     assert.doesNotMatch(g.stderr, /refused/);
     assert.match(g.stderr, /using the pinned target "gfdefault"/);
   } finally { await fi.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test('agent mode (UXC_AGENT=1): one compact JSON line carrying the status, never the token', async () => {
+  const fi = await fakeInstance();
+  try {
+    const r = await uxc(['api', 'GET', '/gui/rest/text'], { base: fi.base, env: { UXC_AGENT: '1' } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim().split('\n').length, 1);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.status, 200);
+    assert.equal(j.body, 'plain words');
+    assert.ok(!r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN));
+  } finally { await fi.close(); }
 });

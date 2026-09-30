@@ -14,7 +14,7 @@ const tmp = () => { const d = mkdtempSync(join(os.tmpdir(), 'uxc-agents-')); mad
 test.after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 function uxc(args, { cwd } = {}) {
   try {
-    return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
+    return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, UXC_AGENT: '0' } }) };
   } catch (e) { return { code: e.status, out: String(e.stdout ?? '') + String(e.stderr ?? '') }; }
 }
 const read = (dir, f) => readFileSync(join(dir, f), 'utf8');
