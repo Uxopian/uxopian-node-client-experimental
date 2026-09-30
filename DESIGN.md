@@ -869,3 +869,85 @@ means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat`
   when a `breaks` line exists; `--force` installs anyway with a warning. Only packages shipping a
   compat declaration are judged; everything else behaves exactly as before.
 - `mp publish` validates the declaration and inlines it into the marketplace-stored manifest.
+
+## 27. Extension packages: `uxc init --extension` and the prefix control
+
+A package that EXTENDS another (declares it in `dependencies`, §22) is a partner's package: its own
+code, its own id prefixes, deployed beside the product it extends. Two tools keep that honest.
+Both stay generic: uxc compares prefixes and reads manifests; it never knows what the depended-on
+package is. Everything package-specific comes from the depended-on package itself (its kit) or from
+the generic built-ins.
+
+### 27.1 `uxc init --extension <code> --depends-on <slug>@<range>`
+
+`uxc init --extension acme --depends-on case-management@">=0.3" [--name …] [--dep-code cm]
+[--kinds a,b] [--product-dir <checkout>] [dir]` (`--extension --code acme` is the same).
+
+- Writes the manifest of a NEW package (`code`, four prefix forms, `dependencies: { <depCode>:
+  { versions, slug } }`, `extension: { of: <depCode> }`, `registrationOrderBands.fd.script` =
+  `[950, 959]` so it never collides with a product band), registry, state, README, CLAUDE.md
+  (a stanza saying the package extends X and is held to its prefixes), and the examples.
+- **Dependencies are keyed by package code** (§22), the slug is the marketplace hint. The code comes
+  from `--product-dir`'s manifest, else `--dep-code`, else the slug when it is itself a valid code;
+  otherwise the command refuses and says so. Refusals: bad extension code, a code equal to the
+  dependency's, a range outside the §22 grammar, an existing manifest, `--depends-on`/`--kinds`/
+  `--product-dir`/`--dep-code` without `--extension`, an unknown kind.
+- **Examples, one per extension kind, each with an offline test (`tests/NN-*.test.mjs`, green under
+  `uxc test --offline`).** Where they come from is a decision:
+  1. **The depended-on package's kit** (preferred). A package that wants to be extended ships an
+     `extension-kit/` directory (relocatable with `"extensionKit": "<path>"` in its manifest) with a
+     `kit.json` (`format: "uxc-extension-kit/1"`): `manifest` (deep-merged into the new manifest:
+     `extension.library`, `extension.rowKeyTags`, bands…), `claude` (lines for CLAUDE.md), and
+     `examples.<kind> = { summary, files: { dest: kit-relative source }, registry: [...], dataSets: [...] }`.
+     Destinations and file contents are rendered with `{{code}} {{pascal}} {{camel}} {{kebab}}
+     {{upper}} {{name}} {{dep.code}} {{dep.slug}} {{dep.range}} {{dep.version}}` (text files only;
+     an unknown placeholder is an error, not a blank). A product therefore generates its kit from its
+     proven bench (fixture with the names replaced by placeholders), never edits it apart. The kit
+     is read from `--product-dir` (a checkout or an unpacked `.uxpkg`); uxc does not fetch it from
+     a server or the marketplace yet. Kit paths must stay inside the kit and the package: every
+     rendered destination, `registry[].path` and `dataSets[].path` is refused when absolute, when it
+     climbs out with `..`, or when a segment is not a portable file name (Windows `<>:"|?*`, a
+     trailing dot or space, a reserved name) — so `{{name}}`/`{{dep.range}}` never belong in a path.
+     `manifest` is rendered value by value (keys included), never as JSON text: a quote in `--name`
+     is data, not syntax.
+  2. **Generic built-ins** when there is no `--product-dir` or the dependency ships no kit: kinds
+     `script` (a browser script from the `fd.script` template, in the band), `prompt` (an `ai.prompt`),
+     `dataset` (a document class, a dataset bound to it and one row). They are built through the same
+     kind adapters as `uxc add`, so the mechanics are the tool's. Their tests are self-contained (no
+     import from uxc): the resource is registered, its id carries the package's prefix and not the
+     dependency's, its files parse.
+- `--kinds` selects examples (`--families` is an accepted alias). The package is assembled in a
+  staging directory and copied in only when everything rendered: a kit that fails half-way never
+  leaves a manifest that blocks the retry. The staging directory is removed on every exit path.
+  A file the kit would write that already exists in the target is refused (listed) unless
+  `--force`; an existing `CLAUDE.md` is kept and gets the stanza appended.
+- No version bump: `init` writes `version: 0.1.0` for the partner's package; uxc's own version is
+  left to the release.
+
+### 27.2 The prefix control (`lib/extension.mjs`, run by `verify`, `push` and `mp publish`)
+
+`lintExtension(pkg)` is pure and offline; findings are blocking (`push --ignore-lint` overrides).
+Two tiers, so a package that merely depends on another (for instance on a provider bundle) is not
+broken by a rule it never opted into:
+
+| Tier | Code | Refuses |
+|---|---|---|
+| any declared dependency | `EXT_PRODUCT_RESOURCE` | a non-external registry resource whose id carries a dependency's prefix |
+| | `EXT_PRODUCT_ROW` | a dataset row (or tombstone `_id`) carrying a dependency's prefix |
+| manifest `extension` block | `EXT_PRODUCT_CODE` | the package's code equals a dependency's (without the block it is the tolerated self-reference the dependency check ignores, `lib/dependencies.mjs`) |
+| | `EXT_NO_DEPENDENCY` | `extension` declared, no dependency |
+| | `EXT_FOREIGN_RESOURCE` | a non-external resource outside the package's own prefixes |
+| | `EXT_ROW_PREFIX` | a dataset row outside the package's own prefixes |
+| | `EXT_ROW_KEY` | a row whose logical key tag (`extension.rowKeyTags.<classId>` or `*`) does not end, after its last `. / : > \|`, with the package's UPPER prefix |
+| | `EXT_LIBRARY` | a server-only `fd.script` (`registrationOrder: null`) without `extension.library.classId` or whose last non-blank line is not `extension.library.endMarker` (`{id}` = the script id) |
+
+Decisions: a resource is "ours" when the conventional id for its kind under our prefix is the id
+itself (§`naming.mjs`, so handlers/scripts/prompts follow their kind's form); `ai.llm`, `ai.goal` and
+`fd.surfacing` ids are exempt (global or routing names); `policy: external` resources (referenced,
+not owned) are exempt, which is how an extension names a dependency's class. "Carries a prefix" is
+strict about word boundaries (`Cmd` and `cmdFoo` are not `Cm`/`cm` ids). The package's own
+prefixes are its manifest `idPrefixes` when set (custom forms), else those derived from its code. Own-prefix wins over a
+dependency's when they overlap. The registration check of the product's capability registry
+(the spec's `EXT_REGISTRATION`) is NOT here: it needs the product's code and stays product-side
+until the product publishes a machine-readable capability file; uxc will then compare sets, as the
+compatibility report does. `uxc explain <CODE>` documents each finding.
