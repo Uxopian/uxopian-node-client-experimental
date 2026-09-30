@@ -350,6 +350,17 @@ process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upg
 found a `breaks` line, DESIGN §26); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
 
+## lib/agents-md.mjs — AGENTS.md + CLAUDE.md pointer (DESIGN §27.3)
+
+```js
+export const BEGIN, END                          // '<!-- uxc:begin -->' / '<!-- uxc:end -->'
+export function renderAgentsSection(manifest)    // -> fenced block, deterministic, manifest facts only
+export function renderClaudeSection(manifest)    // -> fenced pointer block (AGENTS.md + skill/slash commands)
+export function upsertSection(existing|null, section, header?)  // replace the block or append it; CRLF kept
+```
+
+Used by `init` (both forms) and `context --agents-md [--write]`. Pure; no I/O.
+
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
     removeOwnValues(serverValues, names, {prefix})     -> {values, removed}

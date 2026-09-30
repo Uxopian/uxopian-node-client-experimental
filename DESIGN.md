@@ -885,8 +885,9 @@ the generic built-ins.
 
 - Writes the manifest of a NEW package (`code`, four prefix forms, `dependencies: { <depCode>:
   { versions, slug } }`, `extension: { of: <depCode> }`, `registrationOrderBands.fd.script` =
-  `[950, 959]` so it never collides with a product band), registry, state, README, CLAUDE.md
-  (a stanza saying the package extends X and is held to its prefixes), and the examples.
+  `[950, 959]` so it never collides with a product band), registry, state, README, AGENTS.md +
+  the CLAUDE.md pointer (§27.3; AGENTS.md says the package extends X and is held to its
+  prefixes), and the examples.
 - **Dependencies are keyed by package code** (§22), the slug is the marketplace hint. The code comes
   from `--product-dir`'s manifest, else `--dep-code`, else the slug when it is itself a valid code;
   otherwise the command refuses and says so. Refusals: bad extension code, a code equal to the
@@ -897,7 +898,8 @@ the generic built-ins.
   1. **The depended-on package's kit** (preferred). A package that wants to be extended ships an
      `extension-kit/` directory (relocatable with `"extensionKit": "<path>"` in its manifest) with a
      `kit.json` (`format: "uxc-extension-kit/1"`): `manifest` (deep-merged into the new manifest:
-     `extension.library`, `extension.rowKeyTags`, bands…), `claude` (lines for CLAUDE.md), and
+     `extension.library`, `extension.rowKeyTags`, bands…), `claude` (package notes, written to AGENTS.md
+     after the uxc block — the field keeps its historical name), and
      `examples.<kind> = { summary, files: { dest: kit-relative source }, registry: [...], dataSets: [...] }`.
      Destinations and file contents are rendered with `{{code}} {{pascal}} {{camel}} {{kebab}}
      {{upper}} {{name}} {{dep.code}} {{dep.slug}} {{dep.range}} {{dep.version}}` (text files only;
@@ -920,7 +922,7 @@ the generic built-ins.
   staging directory and copied in only when everything rendered: a kit that fails half-way never
   leaves a manifest that blocks the retry. The staging directory is removed on every exit path.
   A file the kit would write that already exists in the target is refused (listed) unless
-  `--force`; an existing `CLAUDE.md` is kept and gets the stanza appended.
+  `--force`; an existing `CLAUDE.md` / `AGENTS.md` is kept and gets the uxc block (§27.3).
 - No version bump: `init` writes `version: 0.1.0` for the partner's package; uxc's own version is
   left to the release.
 
@@ -951,6 +953,28 @@ dependency's when they overlap. The registration check of the product's capabili
 (the spec's `EXT_REGISTRATION`) is NOT here: it needs the product's code and stays product-side
 until the product publishes a machine-readable capability file; uxc will then compare sets, as the
 compatibility report does. `uxc explain <CODE>` documents each finding.
+
+### 27.3 AGENTS.md and the CLAUDE.md pointer (`lib/agents-md.mjs`, #98)
+
+Partners may run Codex or Cursor rather than Claude, so the agent context is tool-neutral.
+Both `init` forms write `AGENTS.md`: what the package is (code, name, version, owned prefixes,
+EXTENDS/depends-on), the operating rules (uxc for all server work; `uxc context` first; `uxc
+verify` before push; own prefixes only — and never the dependency's; never guess an API shape,
+find the learnings with `uxc help --search`; one pinned target), the day-to-day cheat-sheet and the
+test commands — ≤ 80 lines. CLAUDE.md gets only a pointer to it plus the Claude-only bits (the
+skill and the `/ux-*` slash commands).
+
+- **One uxc-owned block per file**, between `<!-- uxc:begin -->` and `<!-- uxc:end -->`. Text
+  outside the markers is the author's: an existing file is kept and the block appended; a file
+  that has the block gets only the block replaced. CRLF files stay CRLF. Neither file ever counts
+  as a `--force` collision.
+- **Rendered from the manifest only**, so it is deterministic. The pin shown is `agent.target`;
+  the per-checkout `.uxc/target` is NOT read (AGENTS.md is tracked and must not differ per clone).
+  A kit's `claude` notes go AFTER the block, since a refresh has no kit to re-read.
+- **Refresh**: `init` refuses an existing manifest, so re-rendering is `uxc context --agents-md`
+  (prints the block) `--write` (upserts AGENTS.md, creating it if absent, and the pointer block of
+  an existing CLAUDE.md; reports "already up to date" when nothing changed). An older package's
+  unmarked CLAUDE.md stanza is left in place — delete it by hand.
 
 ## 28. Tag-class deltas (`fd.tagclass-delta`)
 
