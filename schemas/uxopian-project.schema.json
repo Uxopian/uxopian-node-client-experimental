@@ -66,7 +66,7 @@
       "description": "Products the package customizes: \"flowerdocs\", \"uxopian-ai\", \"fast2\"."
     },
     "minClientVersion": {
-      "$ref": "#/$defs/semver",
+      "$ref": "#/$defs/minClientVersion",
       "x-uxc-severity": "error",
       "description": "Minimum uxc client able to deploy every resource of this package. import, mp install and push refuse with an older client (DESIGN §8). Must be valid semver."
     },
@@ -75,7 +75,7 @@
       "description": "Declared runtime requirements (checked by doctor/preflight and testkit, informational elsewhere).",
       "properties": {
         "uxc": {
-          "$ref": "#/$defs/semver",
+          "$ref": "#/$defs/minClientVersion",
           "x-uxc-severity": "error",
           "description": "Alias of minClientVersion (read when minClientVersion is absent)."
         },
@@ -369,6 +369,22 @@
         }
       ],
       "description": "A version pattern ('*', '1.1.*', '>=1.1', '1.2.3') or a list of them (OR)."
+    },
+    "minClientVersion": {
+      "description": "What uxc itself accepts as a minimum client (lib/version.mjs parseSemver + assertClientSupports): empty/null means none; otherwise 1-3 numeric parts, optional leading v, optional -prerelease and +build, surrounding spaces tolerated. Anything else is refused at import/push, hence an error here.",
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^\\s*(?:[vV]?[0-9]+(?:\\.[0-9]+){0,2}(?:-[^+]*)?(?:\\+.*)?)?\\s*$"
+        }
+      ]
     }
   }
 }

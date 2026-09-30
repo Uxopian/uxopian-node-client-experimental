@@ -135,3 +135,14 @@ test('an empty protection list blocks nothing', () => {
   assert.deepEqual(partitionProtected([], entries).allowed.length, 1);
   assert.deepEqual(partitionProtected(undefined, entries).blocked.length, 0);
 });
+
+test('forbid patterns written with an alias spelling still match (#99): scope rm, list, --limit', () => {
+  const p = { forbid: ['scope rm', 'list', 'search --limit', 'target list'] };
+  const hit = (command, args, flags) => forbiddenBy(p, { command, args, flags }).length;
+  assert.equal(hit('scope delete', ['S1'], {}), 1);      // typed `scope delete` or `scope rm` → canonical
+  assert.equal(hit('ls', ['ai.prompt'], {}), 1);         // `list` = `ls`
+  assert.equal(hit('search', [], { max: 5 }), 1);        // --limit folds into --max before the check
+  assert.equal(hit('search', [], {}), 0);
+  assert.equal(hit('target ls', [], {}), 1);
+  assert.equal(hit('scope get', ['S1'], {}), 0);
+});

@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
 import {
-  resolveSurface, withQuery, parseHeaders, redactHeaders, readRequestBody, explainResponse,
+  resolveSurface, withQuery, parseHeaders, redactHeaders, readRequestBody, readStdinGuarded, explainResponse,
   apiLockMode, isReadMethod, isReadCall, responseHeaderSubset,
 } from '../lib/commands/api.mjs';
 import { LOCK_MODES, COMMANDS } from '../lib/cli-meta.mjs';
@@ -77,15 +77,15 @@ test('query and header pairs; credentials are redacted in anything printable', (
   assert.deepEqual(responseHeaderSubset(h), { 'content-type': 'application/json', location: '/y' });
 });
 
-test('request body: --data, --body <file>, --body - (stdin); JSON is detected', () => {
+test('request body: --data, --body <file>, --body - (stdin); JSON is detected', async () => {
   const dir = mkdtempSync(join(os.tmpdir(), 'uxc-api-body-'));
   try {
     writeFileSync(join(dir, 'b.json'), '[{"id":"X"}]');
-    assert.deepEqual(readRequestBody({ data: '{"a":1}' }), { text: '{"a":1}', json: true });
-    assert.deepEqual(readRequestBody({ body: join(dir, 'b.json') }), { text: '[{"id":"X"}]', json: true });
-    assert.deepEqual(readRequestBody({ body: '-' }, { readStdin: () => '<xml/>' }), { text: '<xml/>', json: false });
-    assert.equal(readRequestBody({}), null);
-    assert.throws(() => readRequestBody({ data: '{}', body: 'f' }), /not both/);
+    assert.deepEqual(await readRequestBody({ data: '{"a":1}' }), { text: '{"a":1}', json: true });
+    assert.deepEqual(await readRequestBody({ body: join(dir, 'b.json') }), { text: '[{"id":"X"}]', json: true });
+    assert.deepEqual(await readRequestBody({ body: '-' }, { readStdin: async () => '<xml/>' }), { text: '<xml/>', json: false });
+    assert.equal(await readRequestBody({}), null);
+    await assert.rejects(readRequestBody({ data: '{}', body: 'f' }), /not both/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -262,4 +262,16 @@ test('agent mode (UXC_AGENT=1): one compact JSON line carrying the status, never
     assert.equal(j.body, 'plain words');
     assert.ok(!r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN));
   } finally { await fi.close(); }
+});
+
+test('--body - never hangs holding the lock: a terminal is refused, a silent pipe times out', async () => {
+  const { PassThrough } = await import('node:stream');
+  const tty = Object.assign(new PassThrough(), { isTTY: true });
+  await assert.rejects(readStdinGuarded({ stdin: tty }), /stdin is a terminal/);
+  const silent = new PassThrough();
+  await assert.rejects(readStdinGuarded({ stdin: silent, firstByteMs: 30 }), /nothing arrived on stdin/);
+  const slow = new PassThrough();
+  const p = readStdinGuarded({ stdin: slow, firstByteMs: 30 });
+  slow.write('[{"id"'); setTimeout(() => slow.end(':"X"}]'), 60); // slower than firstByteMs once started
+  assert.equal(await p, '[{"id":"X"}]');
 });

@@ -331,3 +331,10 @@ test('uxc verify: schema errors fail, schema warnings only warn (offline)', asyn
   assert.equal(r.code, 1);
   assert.ok(r.failures.some((f) => /^uxopian-project\.json: minClientVersion: "soon" does not match/.test(f)), r.failures.join('\n'));
 });
+
+test('minClientVersion: error only where uxc refuses — lenient forms uxc accepts are clean (0.23.0 review)', async () => {
+  const { validateAgainst } = await import('../lib/schemas.mjs');
+  const errs = (m) => validateAgainst('uxopian-project', { code: 'xy', name: 'X', ...m }).filter((f) => f.severity === 'error').map((f) => f.path);
+  for (const v of [null, '', 0.2, ' 1.2.0 ', '1.2.0-', 'v1.2', '1.2.3+build']) assert.deepEqual(errs({ minClientVersion: v }), [], JSON.stringify(v));
+  for (const v of ['soon', '1.x', '1.2.3.4']) assert.equal(errs({ minClientVersion: v }).length, 1, v);
+});

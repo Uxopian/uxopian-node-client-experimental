@@ -114,3 +114,14 @@ test('renderAgentsSection is deterministic and lists non-extension dependencies'
   assert.equal(renderAgentsSection(m), renderAgentsSection(structuredClone(m)));
   assert.match(renderAgentsSection(m), /depends on: `aa` `\*`, `zz` \(zeta\) `1\.\*`/);
 });
+
+test('damaged markers are refused, never used to cut the user text (0.23.0 review)', () => {
+  const block = '<!-- uxc:begin -->\nNEW\n<!-- uxc:end -->';
+  const orphanBegin = 'mine\n<!-- uxc:begin -->\nold block\nmy notes after\n';
+  assert.throws(() => upsertSection(orphanBegin, block), /markers are damaged/);
+  const dup = `${block}\nmine\n${block}\n`;
+  assert.throws(() => upsertSection(dup, block), /markers are damaged/);
+  const reversed = 'a\n<!-- uxc:end -->\nb\n<!-- uxc:begin -->\n';
+  assert.throws(() => upsertSection(reversed, block), /markers are damaged/);
+  assert.equal(upsertSection('x\n<!-- uxc:begin -->\nold\n<!-- uxc:end -->\ny\n', block), `x\n${block}\ny\n`);
+});
