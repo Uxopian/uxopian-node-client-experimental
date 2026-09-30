@@ -350,6 +350,69 @@ process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upg
 found a `breaks` line, DESIGN §26); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
 
+## CLI verbs and flags (#99) — the canonical table; `test/cli-consistency.test.mjs` lints it
+
+Data lives in lib/cli-meta.mjs (`VERBS`, `VERB_EXCEPTIONS`, `COMMAND_ALIASES`,
+`SUBCOMMAND_ALIASES`, `FLAG_ALIASES`, `LEGACY_FLAG_ALIASES`, `DESTRUCTIVE`); this table explains
+it. **Aliases, never renames**: the old spelling keeps working identically. The dispatcher
+resolves an alias to the canonical module before the session opens, so lock modes and
+`agent.forbid` patterns see one name (`forbid: ["scope delete"]` also blocks `scope rm`).
+
+Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXCEPTIONS with a reason):
+
+| verb | means | in use | alias spellings |
+|---|---|---|---|
+| `ls` | list many, read-only | `ls`, `target ls`, `task ls`, `f2 ls`, `mp ls` | `list` everywhere (`uxc list`, `mp list`, …) |
+| `get` | read one, read-only | `get`, `scope get` | `mp get` = `mp show` |
+| `create` | make a new server object | `doc create`, `scope create` | — |
+| `add` | register or scaffold locally | `add`, `target add` | — |
+| `rm` | delete (gated, see below) | `rm`, `doc rm`, `mp rm` (archive) | `scope rm` = `scope delete` |
+| `push` / `pull` | local -> server / server -> local | `push`, `pull`, `data push`, `data pull`, `mp pull` | — |
+| `run` | execute/start on the server | `run`, `f2 run` | — |
+
+Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories` — reasons in
+`VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
+of a family and are not linted for verb choice.
+
+Flag semantics:
+
+| flag | means | notes |
+|---|---|---|
+| `--yes` | confirm a destructive/irreversible action non-interactively | `scope delete`, `mp rm`, `data push --prune`, `adopt --scan` (write), `test` (on a target without allowTests); `push --yes-removals` is the removal-specific form |
+| `--confirm <code>` | typed confirmation, stronger than `--yes` | `destroy` only (the whole package goes) |
+| `--force` | override a safety check or a collision | `rm`/`destroy` (createOnly gate), `push`/`pull`/`import` (conflict/collision), `init`/`mp init` (overwrite) — never "skip the confirmation" |
+| `--dry-run` | print what would happen, write nothing | `destroy`, `mp publish`; `import`/`mp install --report` is the upgrade-report form |
+| `--json` | machine output via `ctx.out.result()` | global |
+| `--target <name>` | which instance | global; checked against the package pin (DESIGN §25) |
+| `--dir <path>` | which package | global |
+| `--kind k1,k2` / `--prefix P` | filters on a package sweep | `status`, `adopt --scan`; `ls` takes the kind positionally |
+| `--max n` | at most n items back | `search`, `recent`, `task ls`; `--limit` is an alias |
+| `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
+| `--fields a,b` | project columns | `ls`, `get`, `search`, `watch` |
+| `--full` | no truncation / include informational lines | `diff`, `get`, `context`, `verify` |
+| `--version v` | an ADDON version | `mp *`; the CLI version is `uxc --version` |
+| `-o <file>` | output file | `export`, `mp pull` (`--output` legacy) |
+
+`FLAG_ALIASES` (applied by the dispatcher; giving both spellings with different values is an
+error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`.
+`LEGACY_FLAG_ALIASES` records older in-module spellings (`--page-size`, `--fd`/`--uxai` ->
+`--compat` on `mp ls`, `--notes`, `--output`, `--classId`, `--families`); do not add more.
+
+Destructive gates (`DESTRUCTIVE`; the lint requires every `rm`/`delete`/`destroy` module to be
+listed and its gate flags to be in its help and read by its code):
+`rm` — a side (`--local|--server|--both`), `--force` for createOnly/external · `destroy` —
+`--confirm <code>` or `--dry-run` · `doc rm` — explicit ids only · `scope delete` / `mp rm` —
+`--yes` · `data push` — row deletes only with `--prune --yes`.
+
+Lint rules (test/cli-consistency.test.mjs): every module exports `name`/`summary`/`help`/`run`
+and its name matches its file; every two-word subcommand verb is in `VERBS` or
+`VERB_EXCEPTIONS`; an exception that means a canonical verb has that alias registered; every
+alias resolves to a real module and shadows none; every flag a module reads (`flags.x`,
+`flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
+`--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
+every alias.
+
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
     removeOwnValues(serverValues, names, {prefix})     -> {values, removed}

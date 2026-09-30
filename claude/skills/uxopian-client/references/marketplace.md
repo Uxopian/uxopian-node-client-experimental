@@ -56,6 +56,7 @@ Overrides: `--audience --account --category --changelog --fd 5.6 --uxai 1.10 --t
 ```
 uxc mp ls [--category --audience --account --product --fd --uxai --q --tag --sort]
 uxc mp show <slug> [--version v] [--catalog]      # detail + version history (+ object catalog)
+# aliases: mp get = mp show, mp list = mp ls, --max = --limit (verb/flag table: lib/CONTRACTS.md)
 uxc mp versions <slug>
 uxc mp pull <slug> [--version v] [-o f.uxpkg]     # download (defaults to latest), sha256-checked
 uxc import f.uxpkg --target <name>                # then install it on an instance

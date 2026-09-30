@@ -7,7 +7,9 @@ import { createClients } from '../lib/http.mjs';
 import { findPackageDir } from '../lib/config.mjs';
 import { openPackage } from '../lib/registry.mjs';
 import { out, fail } from '../lib/output.mjs';
-import { COMMANDS, TWO_WORD as TWO_WORD_LIST } from '../lib/cli-meta.mjs';
+import {
+  COMMANDS, TWO_WORD as TWO_WORD_LIST, resolveAliases, applyFlagAliases, aliasesOf,
+} from '../lib/cli-meta.mjs';
 import { openSession } from '../lib/session.mjs';
 
 const TWO_WORD = new Set(TWO_WORD_LIST);
@@ -28,7 +30,14 @@ function parseArgv(argv) {
 }
 
 async function main() {
-  const [, , cmd, ...rest] = process.argv;
+  const [, , typed, ...typedRest] = process.argv;
+  // verb aliases (#99: `list` = `ls`, `mp get` = `mp show`, `scope rm` = `scope delete`) resolve
+  // to the canonical spelling HERE, before anything else sees the name (lock mode, agent.forbid)
+  const { cmd } = resolveAliases(typed);
+  const rest = [...typedRest];
+  if (TWO_WORD.has(cmd) && rest[0] !== undefined && !rest[0].startsWith('-')) {
+    rest[0] = resolveAliases(cmd, rest[0]).sub;
+  }
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     const { default: help } = await import('../lib/commands/help.mjs');
     return help.run(makeCtx(parseArgv(rest)));
@@ -50,6 +59,7 @@ async function main() {
     argv = rest.slice(1);
   }
   const parsed = parseArgv(argv);
+  applyFlagAliases(modName, parsed.flags); // --limit = --max where both mean "at most N" (#99)
   let mod;
   try {
     mod = (await import(`../lib/commands/${modName}.mjs`)).default;
@@ -59,7 +69,9 @@ async function main() {
   }
   // per-command help NEVER runs the command — it must work outside a package/target
   if (parsed.flags.help !== undefined || parsed.args.includes('-h')) {
-    return console.log(`${mod.summary}\nusage: ${mod.help}`);
+    const al = aliasesOf(modName);
+    const aliasLine = [...al.commands.map((c) => `uxc ${c}`), ...al.flags].join(', ');
+    return console.log(`${mod.summary}\nusage: ${mod.help}${aliasLine ? `\naliases: ${aliasLine}` : ''}`);
   }
   const ctx = makeCtx(parsed);
   // Package policy + cross-process lock (DESIGN §25): which instance this checkout may talk to,

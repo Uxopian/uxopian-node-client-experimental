@@ -2,6 +2,7 @@
 import "./agent.test.mjs";
 import "./canonical.test.mjs";
 import "./cli.test.mjs";
+import "./cli-consistency.test.mjs";
 import "./completion.test.mjs";
 import "./compat.test.mjs";
 import "./config.test.mjs";
