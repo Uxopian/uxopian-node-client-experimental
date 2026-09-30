@@ -23,7 +23,7 @@ test('registered with the fd.taskclass shape: createOnly + inPlaceUpdate, pushed
   assert.equal(adapter.defaultPolicy, 'createOnly'); // deletion is gated: campaigns can block it
   assert.equal(adapter.inPlaceUpdate, true);         // but updates are safe
   // a map references FD classes and AI prompts, so it deploys after everything it points at
-  assert.equal(PUSH_ORDER.at(-1), 'f2.map');
+  assert.equal(PUSH_ORDER.at(-2), 'f2.map'); // only the tag-class deltas (DESIGN §28) come after it
 });
 
 test('dialect: fast2 resolves 2026.0.0-rc4 -> f2-2026 with the verified caps (§F2)', () => {

@@ -349,3 +349,17 @@ DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — u
 process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upgrade `--report`
 found a `breaks` line, DESIGN §26); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
+
+## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
+    mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
+    removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
+    sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)
+    checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
+    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN
+    valuePrefix(manifest) -> 'ACME_'
+    onlyMissing(deltaValues, serverValues) -> bool   (server differs only by absent values)
+Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:
+    mergeOnPush=true + onlyMissing(local, server) -> bool   skip collision/conflict refusals ONLY when true
+    baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
+    orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
+    presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
