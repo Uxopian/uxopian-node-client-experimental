@@ -2,7 +2,7 @@
 
 `uxc` = the `uxc` CLI on your PATH. All commands run from
 inside the package directory (or pass `--dir`). Add `--target <name>` to aim anywhere but the
-default. Add `--json` when parsing.
+default. Output is compact JSON when an agent drives uxc (CLAUDECODE=1 / UXC_AGENT=1); `--human` for text.
 
 ## 1. Start a new package
 

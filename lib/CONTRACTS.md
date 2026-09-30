@@ -348,7 +348,102 @@ Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bar
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use
 process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upgrade `--report`
 found a `breaks` line, DESIGN §26); `--json` via
-ctx.out.result(). `help` prints the command list with summaries (one line each).
+ctx.out.result() — every command ends in exactly one result() on every non-error path (see
+lib/output.mjs below for the per-command shape). `help` prints the command list with summaries
+(one line each).
+
+## lib/output.mjs — output modes and the per-command result contract (#95)
+    agentDetected(env) -> bool        UXC_AGENT set+non-empty wins ('0'/'false'/'no'/'off' = no);
+                                      else CLAUDECODE === '1'
+    outputMode(flags, env) -> {json, compact, agent}
+    setOutputMode(mode) / getOutputMode()   process-wide, set by the dispatcher before anything runs
+    out(flags, mode?) -> {json, compact, result, line, note, warn, table, diff}
+    errorEnvelope(err, exitCode) -> {ok:false, error, code, explanation, exitCode}
+    reportError(err, exitCode) / fail(msg, code=2)
+
+| invocation                         | agent detected | stdout                       |
+|------------------------------------|----------------|------------------------------|
+| (no flag)                          | no             | human text                   |
+| (no flag)                          | yes            | compact JSON (one line)      |
+| `--json`                           | no             | pretty JSON (2-space indent) |
+| `--json`                           | yes            | compact JSON                 |
+| `--human` (wins over `--json`)     | either         | human text                   |
+
+Rules:
+- A non-TTY stdout NEVER switches to JSON on its own (humans pipe to grep).
+- JSON mode: `line`/`note`/`table`/`diff` are suppressed; progress and warnings go to stderr
+  (`warn`); stdout carries ONLY the result() line(s). Nothing prompts (prune's y/N is skipped —
+  `--yes-removals` / `--keep-removed` decide).
+- Errors: the human text (`msg` + `↳ explanation`) goes to stderr ALWAYS; in JSON mode the
+  envelope `{"ok":false,"error","code","explanation","exitCode"}` is ALSO printed on stdout. Exit
+  codes are unchanged. `code` is the error's string/number code (HTTP/transport/marketplace)
+  or null. A command that already printed its result and then fails prints a second line.
+- `out(flags)` without a mode (library callers, e.g. packageio's fallback) keeps the legacy
+  behaviour: JSON iff `flags.json`, pretty — detection is a CLI concern.
+- Exempt (always plain text): `uxc help`, `uxc --version`/`-v`, `uxc <cmd> --help`,
+  `uxc completion bash|zsh` (the script IS the output; `--install` has a result), and
+  `get <docId> --raw-tag X`, which asked for verbatim bytes: it stays raw in agent mode and is
+  wrapped as `{id, tag, value}` only under an explicit `--json`.
+- Tests that parse human output spawn with `UXC_AGENT: '0'` (the suite runs inside Claude Code
+  with CLAUDECODE=1).
+
+Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/server object as-is):
+
+| command            | result                                                                  |
+|--------------------|-------------------------------------------------------------------------|
+| status             | `{rows:[{kind,id,state,detail?}], untracked:[key], orphans:[…], pendingCacheClear}` |
+| diff               | `{id, meta:[…], content:{…}, localMissing?, serverMissing?}`           |
+| pull / push        | `[{kind,id,action,…}]` (sync actions; `[]` when nothing to do)          |
+| add                | `{kind, id, path, files, order, dataSet?}`                              |
+| adopt              | candidates `[…]` (dry) · adopted `[…]` (--yes) · `{kind,id,path,policy}` (one id) |
+| rm                 | `{id, local, server, retired}`                                          |
+| destroy            | steps `[…]` (dry run) · `{steps, failures, kept}`                       |
+| export             | `{file, …}` (packageio result)                                          |
+| import             | packageio result · `{src, report:true, written:false, upgrade, collisions}` (--report) |
+| verify             | `{resources, checks, failures:[string]}`                                |
+| data pull / push   | row actions `[…]` or `{dataset}`                                        |
+| refs               | `[hit]`                                                                 |
+| enable / disable   | `{id, disabled}`                                                        |
+| ls                 | `[projected row]` (per-kind projection, or `--fields`)                  |
+| get                | resource `{kind,id,obj,contents}` · doc `{id,category,classId,status,version,name,tags,…}` · `--tag` `{id,tag,value}` |
+| schema             | `{classId, category, tagCategories, rows}` · `--tag` `{classId,tagclass,reference,category}` |
+| search             | `{found, category, rows, elsewhere}`                                    |
+| recent / task ls   | `{found, rows}`                                                         |
+| doc create         | `{id, classId, name}`                                                   |
+| doc rm             | `{ok:[id], failed:[…]}`                                                 |
+| task answer        | `{taskId, answerId, answered:true}`                                     |
+| watch              | `{docId, elapsedSeconds, changes, untilMet, gone}`                      |
+| run                | lib/run.mjs runPrompt / runPlan result (`{status?, answer, pass?, error?, elapsedMs, …}`) |
+| test               | `{target, offline, runId, tests:[…], passed, failed, skipped, stamped}` · `--list` `{tests}` |
+| versions           | `{id, served, versions:[…], statistics?}`                               |
+| size               | `{limitBytes, warnAtBytes, rows, warnings}` (`[]` when empty)           |
+| cache-clear        | `[status]`                                                              |
+| explain            | `[{signature, explanation}]` or `{query, match:null, knownSignatures}`  |
+| doctor             | `{checks, failures, report:[{check, ok, detail}]}`                      |
+| context            | `{package, client, minClientVersion, kinds, retired, targets, policy, includeOrder, sizes, gotchas}` |
+| vars               | `{variables, resolved, missing, unknown, invalid}`                      |
+| installed          | `[receipt]`                                                             |
+| install-claude     | `[{dest, src}]`                                                         |
+| completion --install | `{installed, shell}`                                                  |
+| version            | `{version}`                                                             |
+| init               | `{dir, manifest, created, extension?}`                                  |
+| target add         | `{name, core, ai, gui, f2, scope, default}`                             |
+| target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
+| target use         | `{default}`                                                             |
+| scope get          | scope object · `{id, exists:false}` (exit 1)                            |
+| scope create       | `{action:'created'|'updated', scope}`                                   |
+| scope delete       | `{id, deleted:true}`                                                    |
+| f2 ls              | `{maps, campaigns}`                                                     |
+| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, steps?, waited?}` |
+| mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
+| mp show            | addon detail, or the version detail with `@version`                     |
+| mp init            | `{path, marketplace, errors, warnings}`                                 |
+| mp login           | `{url, maintainer, whoami}`                                             |
+| mp pull            | `{slug, version, file, bytes, sha256, sha256_ok}`                       |
+| mp publish         | `{slug, version, updated, listing, published, catalog}` · `{dryRun:true,…}` |
+| mp install         | `{slug, version, sha256, verified, target, pushed, collisions, upgrade?}` · `--report` variant |
+
+test/output-mode.test.mjs lints that every command module except help calls `.result(`.
 
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}

@@ -16,7 +16,8 @@ const tmp = (p = 'uxc-ext-') => { const d = mkdtempSync(join(os.tmpdir(), p)); m
 test.after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 // the child's os.tmpdir() — where `init --extension` stages — is private, so a test can see leftovers
 const STAGE = tmp('uxc-stage-');
-const childEnv = { ...process.env, TMPDIR: STAGE, TEMP: STAGE, TMP: STAGE };
+// UXC_AGENT=0: these assertions read HUMAN output — pin it even when the suite runs inside an agent (#95)
+const childEnv = { ...process.env, UXC_AGENT: '0', TMPDIR: STAGE, TEMP: STAGE, TMP: STAGE };
 function uxc(args, { cwd } = {}) {
   try {
     return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, env: childEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };

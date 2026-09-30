@@ -22,6 +22,7 @@ import "./lock.test.mjs";
 import "./marketplace.test.mjs";
 import "./naming.test.mjs";
 import "./output.test.mjs";
+import "./output-mode.test.mjs";
 import "./prune.test.mjs";
 import "./receipt.test.mjs";
 import "./registry.test.mjs";

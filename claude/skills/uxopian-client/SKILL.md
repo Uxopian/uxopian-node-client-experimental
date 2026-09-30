@@ -102,7 +102,8 @@ Full rationale + more rules: `references/policies.md`.
 - `uxc explain <CODE|text>` BEFORE debugging any error; failures auto-append the explanation.
 - Never `--full` unless the capped output truly lacks what you need; `get --content` writes
   bytes to a file instead of dumping them.
-- `--json` everywhere when you will parse the output.
+- Inside Claude Code (CLAUDECODE=1) every command already answers in compact one-line JSON,
+  errors included (`{"ok":false,"error",…}`); add `--human` when you want the text view.
 - `uxc get <docId> --raw-tag PoCaseLog` prints ONE tag verbatim (pipe it to jq) — never regex a
   tag value out of the table.
 - `uxc status --kind fd.handler --prefix Po` narrows a big package; the summary prints FIRST.
