@@ -348,7 +348,18 @@ Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bar
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use
 process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upgrade `--report`
 found a `breaks` line, DESIGN §26); `--json` via
-ctx.out.result(). `help` prints the command list with summaries (one line each).
+ctx.out.result(). `help` prints the command list with summaries (one line each);
+`help --search|-s "<text>" [--limit N] [--json]` ranks commands + knowledge refs (lib/helpsearch.mjs).
+
+## lib/helpsearch.mjs (#94) — offline, zero-dep, deterministic
+    helpSearch(query, {limit=8, root=UXC_ROOT, helpText}) -> {query, commands:[{name, usage, summary, score}],
+        refs:[{type:'learning'|'kind'|'explain', ref, title, file?, line?, path?, section?, source?, command?, score}]}
+    formatHelpSearch(result) -> lines (≤ limit + 2)
+    buildCorpus / rank / tokenize / stem / parseHeading / markdownSections   (building blocks)
+Corpus, built per call (no cache): command modules (a broken one drops out), the explain KB,
+references/kinds.md sections, `##`/`###` sections of docs/{FLOWERDOCS,UXOPIAN-AI,FAST2}-LEARNINGS.md
++ DIAGNOSTICS.md — a missing file is skipped. BM25 + light stemming + query-side synonyms;
+commands get at most a third of `limit`.
 
 ## CLI verbs and flags (#99) — the canonical table; `test/cli-consistency.test.mjs` lints it
 
