@@ -18,7 +18,7 @@ Env overrides: `UXC_MARKETPLACE_URL`, `UXC_MARKETPLACE_BROWSE_URL`, `UXC_MARKETP
 `UXC_MARKETPLACE_TOKEN`. The key is never committed/exported. Publishes are attributed to the key's
 owner (the server resolves identity from the key, not from `marketplace.json`).
 
-## marketplace.json (in the package; `uxc mp init` scaffolds it)
+## marketplace.json (in the package; `uxc mp init` scaffolds it, with a `$schema` line for editors)
 ```json
 {
   "format": "uxopian-marketplace/1",
@@ -56,6 +56,7 @@ Overrides: `--audience --account --category --changelog --fd 5.6 --uxai 1.10 --t
 ```
 uxc mp ls [--category --audience --account --product --fd --uxai --q --tag --sort]
 uxc mp show <slug> [--version v] [--catalog]      # detail + version history (+ object catalog)
+# aliases: mp get = mp show, mp list = mp ls, --max = --limit (verb/flag table: lib/CONTRACTS.md)
 uxc mp versions <slug>
 uxc mp pull <slug> [--version v] [-o f.uxpkg]     # download (defaults to latest), sha256-checked
 uxc import f.uxpkg --target <name>                # then install it on an instance

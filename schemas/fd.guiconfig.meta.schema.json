@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/fd.guiconfig.meta.schema.json",
+  "title": "uxc fd.guiconfig meta (fd/guiconfig/<id>/meta.json)",
+  "description": "A GUIConfiguration document (Spring-bean XML next to this meta, fd.guiconfig). Only name, acl, registrationOrder and contentFile are read; other keys are ignored by push but show as drift.",
+  "type": "object",
+  "x-uxc-severity": "error",
+  "required": [
+    "registrationOrder"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it (never hashed, never pushed)."
+    },
+    "name": {
+      "type": "string",
+      "description": "Document name (default: the id)."
+    },
+    "acl": {
+      "type": "string",
+      "examples": [
+        "acl-admin"
+      ],
+      "description": "ACL id of the document (default \"acl-admin\")."
+    },
+    "registrationOrder": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "pattern": "^[0-9]+$",
+      "x-uxc-severity": "error",
+      "description": "RegistrationOrder tag as an integer STRING, inside the manifest band: bean-id collision precedence.",
+      "minimum": 0
+    },
+    "contentFile": {
+      "type": "string",
+      "description": "File name of the XML next to meta.json (default \"<id>.xml\")."
+    }
+  }
+}

@@ -337,10 +337,11 @@ findings are warnings BY DESIGN — a prompt may be called from outside the pack
 Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
 search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
-doctor, install-claude, context, size, help.
+doctor, install-claude, context, size, api, help.
 
 `lock` is optional: `'write' | 'read' | 'none'`, or a function of the flags
-(`lock: (flags) => flags.offline ? 'none' : 'write'`). Absent, the mode comes from
+(`lock: (flags) => flags.offline ? 'none' : 'write'`), and receives the positionals as a second
+argument (`(flags, args)`). Absent, the mode comes from
 `LOCK_MODES` in lib/cli-meta.mjs — the audited default per command (a value there may also be a
 function of the flags: `import` / `mp-install` are `'read'` under `--report`).
 
@@ -348,7 +349,211 @@ Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bar
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use
 process.exitCode = 1 for drift/expectation-failed, fail() for errors; 3 = an upgrade `--report`
 found a `breaks` line, DESIGN §26); `--json` via
-ctx.out.result(). `help` prints the command list with summaries (one line each).
+ctx.out.result() — every command ends in exactly one result() on every non-error path (see
+lib/output.mjs below for the per-command shape). `help` prints the command list with summaries
+(one line each);
+`help --search|-s "<text>" [--limit N] [--json]` ranks commands + knowledge refs (lib/helpsearch.mjs).
+
+## lib/helpsearch.mjs (#94) — offline, zero-dep, deterministic
+    helpSearch(query, {limit=8, root=UXC_ROOT, helpText}) -> {query, commands:[{name, usage, summary, score}],
+        refs:[{type:'learning'|'kind'|'explain', ref, title, file?, line?, path?, section?, source?, command?, score}]}
+    formatHelpSearch(result) -> lines (≤ limit + 2)
+    buildCorpus / rank / tokenize / stem / parseHeading / markdownSections   (building blocks)
+Corpus, built per call (no cache): command modules (a broken one drops out), the explain KB,
+references/kinds.md sections, `##`/`###` sections of docs/{FLOWERDOCS,UXOPIAN-AI,FAST2}-LEARNINGS.md
++ DIAGNOSTICS.md — a missing file is skipped. BM25 + light stemming + query-side synonyms;
+commands get at most a third of `limit`.
+
+## CLI verbs and flags (#99) — the canonical table; `test/cli-consistency.test.mjs` lints it
+
+Data lives in lib/cli-meta.mjs (`VERBS`, `VERB_EXCEPTIONS`, `COMMAND_ALIASES`,
+`SUBCOMMAND_ALIASES`, `FLAG_ALIASES`, `LEGACY_FLAG_ALIASES`, `DESTRUCTIVE`); this table explains
+it. **Aliases, never renames**: the old spelling keeps working identically. The dispatcher
+resolves an alias to the canonical module before the session opens, so lock modes and
+`agent.forbid` patterns see one name (`forbid: ["scope delete"]` also blocks `scope rm`).
+
+Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXCEPTIONS with a reason):
+
+| verb | means | in use | alias spellings |
+|---|---|---|---|
+| `ls` | list many, read-only | `ls`, `target ls`, `task ls`, `f2 ls`, `mp ls` | `list` everywhere (`uxc list`, `mp list`, …) |
+| `get` | read one, read-only | `get`, `scope get` | `mp get` = `mp show` |
+| `create` | make a new server object | `doc create`, `scope create` | — |
+| `add` | register or scaffold locally | `add`, `target add` | — |
+| `rm` | delete (gated, see below) | `rm`, `doc rm`, `mp rm` (archive) | `scope rm` = `scope delete` |
+| `push` / `pull` | local -> server / server -> local | `push`, `pull`, `data push`, `data pull`, `mp pull` | — |
+| `run` | execute/start on the server | `run`, `f2 run` | — |
+
+Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories` — reasons in
+`VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
+of a family and are not linted for verb choice.
+
+Flag semantics:
+
+| flag | means | notes |
+|---|---|---|
+| `--yes` | confirm a destructive/irreversible action non-interactively | `scope delete`, `mp rm`, `data push --prune`, `adopt --scan` (write), `test` (on a target without allowTests); `push --yes-removals` is the removal-specific form |
+| `--confirm <code>` | typed confirmation, stronger than `--yes` | `destroy` only (the whole package goes) |
+| `--force` | override a safety check or a collision | `rm`/`destroy` (createOnly gate), `push`/`pull`/`import` (conflict/collision), `init`/`mp init` (overwrite) — never "skip the confirmation" |
+| `--dry-run` | print what would happen, write nothing | `destroy`, `mp publish`; `import`/`mp install --report` is the upgrade-report form |
+| `--json` | machine output via `ctx.out.result()` | global |
+| `--target <name>` | which instance | global; checked against the package pin (DESIGN §25) |
+| `--dir <path>` | which package | global |
+| `--kind k1,k2` / `--prefix P` | filters on a package sweep | `status`, `adopt --scan`; `ls` takes the kind positionally |
+| `--max n` | at most n items back | `search`, `recent`, `task ls`; `--limit` is an alias |
+| `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
+| `--fields a,b` | project columns | `ls`, `get`, `search`, `watch` |
+| `--full` | no truncation / include informational lines | `diff`, `get`, `context`, `verify` |
+| `--version v` | an ADDON version | `mp *`; the CLI version is `uxc --version` |
+| `-o <file>` | output file | `export`, `mp pull` (`--output` legacy) |
+
+`FLAG_ALIASES` (applied by the dispatcher; giving both spellings with different values is an
+error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`.
+`LEGACY_FLAG_ALIASES` records older in-module spellings (`--page-size`, `--fd`/`--uxai` ->
+`--compat` on `mp ls`, `--notes`, `--output`, `--classId`, `--families`); do not add more.
+
+Destructive gates (`DESTRUCTIVE`; the lint requires every `rm`/`delete`/`destroy` module to be
+listed and its gate flags to be in its help and read by its code):
+`rm` — a side (`--local|--server|--both`), `--force` for createOnly/external · `destroy` —
+`--confirm <code>` or `--dry-run` · `doc rm` — explicit ids only · `scope delete` / `mp rm` —
+`--yes` · `data push` — row deletes only with `--prune --yes`.
+
+Lint rules (test/cli-consistency.test.mjs): every module exports `name`/`summary`/`help`/`run`
+and its name matches its file; every two-word subcommand verb is in `VERBS` or
+`VERB_EXCEPTIONS`; an exception that means a canonical verb has that alias registered; every
+alias resolves to a real module and shadows none; every flag a module reads (`flags.x`,
+`flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
+`--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
+every alias.
+
+## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
+
+```js
+export function resolveSurface(path, {surface, target})   // -> {surface, path, inferred}
+//   --surface wins (a matching /core, /gui, …/uxopian-ai prefix is stripped); else a full URL under
+//   a target base -> that surface; …/uxopian-ai/… -> ai; /core/… -> core; /gui/… -> gui;
+//   /api/v1/… -> ai; /api/… -> f2; anything else -> core. Paths are relative to the client base.
+export function withQuery(path, pairs)          // --query k=v (repeatable), keeps an existing ?…
+export function parseHeaders(pairs)             // --header k=v | "K: v" (repeatable) -> {}
+export function redactHeaders(headers)          // authorization/token/cookie… -> '<redacted>'
+export function responseHeaderSubset(headers)   // content-type, length, location, retry-after, etag…
+export function readRequestBody(flags, {readStdin})  // --data | --body <file|-> -> {text, json} | null
+export function explainResponse(status, json, text)  // body.code first, then the whole body
+export { isReadMethod, apiLockMode }            // from lib/cli-meta.mjs
+```
+
+`uxc api <METHOD> <path>` goes through the target's own clients (`raw()`), so auth (Core JWT /
+fast2 Bearer), pacing, 429 retry and timeouts are the verified ones. Lock: GET/HEAD/OPTIONS are
+`'read'`; any other method is refused without `--yes` (and takes no lock), with `--yes` it is
+`'write'` — serialised on the target and under the write rule of the target pin. Output: the status
+line on stderr; the body on stdout (pretty JSON; raw text for `--raw` or a non-JSON content type);
+`--json` -> `{status, surface, method, path, headers, body, explanation?}`. A status >= 400 prints a
+2,000-char body excerpt + the `explain` match on stderr and exits 1. Tokens are never printed.
+
+## lib/agents-md.mjs — AGENTS.md + CLAUDE.md pointer (DESIGN §27.3)
+
+```js
+export const BEGIN, END                          // '<!-- uxc:begin -->' / '<!-- uxc:end -->'
+export function renderAgentsSection(manifest)    // -> fenced block, deterministic, manifest facts only
+export function renderClaudeSection(manifest)    // -> fenced pointer block (AGENTS.md + skill/slash commands)
+export function upsertSection(existing|null, section, header?)  // replace the block or append it; CRLF kept
+```
+
+Used by `init` (both forms) and `context --agents-md [--write]`. Pure; no I/O.
+
+## lib/output.mjs — output modes and the per-command result contract (#95)
+    agentDetected(env) -> bool        UXC_AGENT set+non-empty wins ('0'/'false'/'no'/'off' = no);
+                                      else CLAUDECODE === '1'
+    outputMode(flags, env) -> {json, compact, agent}
+    setOutputMode(mode) / getOutputMode()   process-wide, set by the dispatcher before anything runs
+    out(flags, mode?) -> {json, compact, result, line, note, warn, table, diff}
+    errorEnvelope(err, exitCode) -> {ok:false, error, code, explanation, exitCode}
+    reportError(err, exitCode) / fail(msg, code=2)
+
+| invocation                         | agent detected | stdout                       |
+|------------------------------------|----------------|------------------------------|
+| (no flag)                          | no             | human text                   |
+| (no flag)                          | yes            | compact JSON (one line)      |
+| `--json`                           | no             | pretty JSON (2-space indent) |
+| `--json`                           | yes            | compact JSON                 |
+| `--human` (wins over `--json`)     | either         | human text                   |
+
+Rules:
+- A non-TTY stdout NEVER switches to JSON on its own (humans pipe to grep).
+- JSON mode: `line`/`note`/`table`/`diff` are suppressed; progress and warnings go to stderr
+  (`warn`); stdout carries ONLY the result() line(s). Nothing prompts (prune's y/N is skipped —
+  `--yes-removals` / `--keep-removed` decide).
+- Errors: the human text (`msg` + `↳ explanation`) goes to stderr ALWAYS; in JSON mode the
+  envelope `{"ok":false,"error","code","explanation","exitCode"}` is ALSO printed on stdout. Exit
+  codes are unchanged. `code` is the error's string/number code (HTTP/transport/marketplace)
+  or null. A command that already printed its result and then fails prints a second line.
+- `out(flags)` without a mode (library callers, e.g. packageio's fallback) keeps the legacy
+  behaviour: JSON iff `flags.json`, pretty — detection is a CLI concern.
+- Exempt (always plain text): `uxc help`, `uxc --version`/`-v`, `uxc <cmd> --help`,
+  `uxc completion bash|zsh` (the script IS the output; `--install` has a result), and
+  `get <docId> --raw-tag X`, which asked for verbatim bytes: it stays raw in agent mode and is
+  wrapped as `{id, tag, value}` only under an explicit `--json`.
+- Tests that parse human output spawn with `UXC_AGENT: '0'` (the suite runs inside Claude Code
+  with CLAUDECODE=1).
+
+Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/server object as-is):
+
+| command            | result                                                                  |
+|--------------------|-------------------------------------------------------------------------|
+| status             | `{rows:[{kind,id,state,detail?}], untracked:[key], orphans:[…], pendingCacheClear}` |
+| diff               | `{id, meta:[…], content:{…}, localMissing?, serverMissing?}`           |
+| pull / push        | `[{kind,id,action,…}]` (sync actions; `[]` when nothing to do)          |
+| add                | `{kind, id, path, files, order, dataSet?}`                              |
+| adopt              | candidates `[…]` (dry) · adopted `[…]` (--yes) · `{kind,id,path,policy}` (one id) |
+| rm                 | `{id, local, server, retired}`                                          |
+| destroy            | steps `[…]` (dry run) · `{steps, failures, kept}`                       |
+| export             | `{file, …}` (packageio result)                                          |
+| import             | packageio result · `{src, report:true, written:false, upgrade, collisions}` (--report) |
+| verify             | `{resources, checks, failures:[string]}`                                |
+| data pull / push   | row actions `[…]` or `{dataset}`                                        |
+| refs               | `[hit]`                                                                 |
+| enable / disable   | `{id, disabled}`                                                        |
+| ls                 | `[projected row]` (per-kind projection, or `--fields`)                  |
+| get                | resource `{kind,id,obj,contents}` · doc `{id,category,classId,status,version,name,tags,…}` · `--tag` `{id,tag,value}` |
+| schema             | `{classId, category, tagCategories, rows}` · `--tag` `{classId,tagclass,reference,category}` |
+| search             | `{found, category, rows, elsewhere}`                                    |
+| recent / task ls   | `{found, rows}`                                                         |
+| doc create         | `{id, classId, name}`                                                   |
+| doc rm             | `{ok:[id], failed:[…]}`                                                 |
+| task answer        | `{taskId, answerId, answered:true}`                                     |
+| watch              | `{docId, elapsedSeconds, changes, untilMet, gone}`                      |
+| run                | lib/run.mjs runPrompt / runPlan result (`{status?, answer, pass?, error?, elapsedMs, …}`) |
+| test               | `{target, offline, runId, tests:[…], passed, failed, skipped, stamped}` · `--list` `{tests}` |
+| versions           | `{id, served, versions:[…], statistics?}`                               |
+| size               | `{limitBytes, warnAtBytes, rows, warnings}` (`[]` when empty)           |
+| cache-clear        | `[status]`                                                              |
+| explain            | `[{signature, explanation}]` or `{query, match:null, knownSignatures}`  |
+| doctor             | `{checks, failures, report:[{check, ok, detail}]}`                      |
+| context            | `{package, client, minClientVersion, kinds, retired, targets, policy, includeOrder, sizes, gotchas}` |
+| vars               | `{variables, resolved, missing, unknown, invalid}`                      |
+| installed          | `[receipt]`                                                             |
+| install-claude     | `[{dest, src}]`                                                         |
+| completion --install | `{installed, shell}`                                                  |
+| version            | `{version}`                                                             |
+| init               | `{dir, manifest, created, extension?}`                                  |
+| target add         | `{name, core, ai, gui, f2, scope, default}`                             |
+| target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
+| target use         | `{default}`                                                             |
+| scope get          | scope object · `{id, exists:false}` (exit 1)                            |
+| scope create       | `{action:'created'|'updated', scope}`                                   |
+| scope delete       | `{id, deleted:true}`                                                    |
+| f2 ls              | `{maps, campaigns}`                                                     |
+| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, steps?, waited?}` |
+| mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
+| mp show            | addon detail, or the version detail with `@version`                     |
+| mp init            | `{path, marketplace, errors, warnings}`                                 |
+| mp login           | `{url, maintainer, whoami}`                                             |
+| mp pull            | `{slug, version, file, bytes, sha256, sha256_ok}`                       |
+| mp publish         | `{slug, version, updated, listing, published, catalog}` · `{dryRun:true,…}` |
+| mp install         | `{slug, version, sha256, verified, target, pushed, collisions, upgrade?}` · `--report` variant |
+
+test/output-mode.test.mjs lints that every command module except help calls `.result(`.
 
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
@@ -363,3 +568,14 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
     presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
+
+## lib/jsonschema.mjs + lib/schemas.mjs (DESIGN §29) — JSON Schemas of the package files
+    validateSchema(schema, value, {registry: Map($id -> schema)}) -> [{path, message, keyword, severity}]
+      subset: SUPPORTED_KEYWORDS; severity 'error' only where the failing node says "x-uxc-severity": "error"
+    SCHEMA_BASE / schemaUrl(name) -> the $id (= the $schema scaffolds write); schemas read from schemas/
+    SCHEMA_NAMES {manifest, registry, marketplace, compat} · KIND_SCHEMAS {kind -> name} · schemaForKind(kind)
+    loadSchemas() -> {byName, byId} · validateAgainst(name, value) -> findings
+    lintSchemas(pkg) -> [{file, path, message, severity, where}]   verify: error = FAIL, warning = warn
+    stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
+    keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
+Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).

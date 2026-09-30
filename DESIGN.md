@@ -377,6 +377,8 @@ reconciled. Plus a **cross-reference pass** (same token scanner as `refs`): clas
 `request.xml`/VF searches/GUIConfig criteria exist; prompt ids mentioned in handler.js/scripts
 exist in the package or live; surfacing values resolve to owned bean/instance ids. This is what
 catches the "renamed the taskclass, forgot the filter XML" class of silent breakage.
+The package files are also checked against the JSON Schemas (§29): an error only where uxc already
+refuses, a warning otherwise.
 
 ## 12. CLI surface
 
@@ -885,8 +887,9 @@ the generic built-ins.
 
 - Writes the manifest of a NEW package (`code`, four prefix forms, `dependencies: { <depCode>:
   { versions, slug } }`, `extension: { of: <depCode> }`, `registrationOrderBands.fd.script` =
-  `[950, 959]` so it never collides with a product band), registry, state, README, CLAUDE.md
-  (a stanza saying the package extends X and is held to its prefixes), and the examples.
+  `[950, 959]` so it never collides with a product band), registry, state, README, AGENTS.md +
+  the CLAUDE.md pointer (§27.3; AGENTS.md says the package extends X and is held to its
+  prefixes), and the examples.
 - **Dependencies are keyed by package code** (§22), the slug is the marketplace hint. The code comes
   from `--product-dir`'s manifest, else `--dep-code`, else the slug when it is itself a valid code;
   otherwise the command refuses and says so. Refusals: bad extension code, a code equal to the
@@ -897,7 +900,8 @@ the generic built-ins.
   1. **The depended-on package's kit** (preferred). A package that wants to be extended ships an
      `extension-kit/` directory (relocatable with `"extensionKit": "<path>"` in its manifest) with a
      `kit.json` (`format: "uxc-extension-kit/1"`): `manifest` (deep-merged into the new manifest:
-     `extension.library`, `extension.rowKeyTags`, bands…), `claude` (lines for CLAUDE.md), and
+     `extension.library`, `extension.rowKeyTags`, bands…), `claude` (package notes, written to AGENTS.md
+     after the uxc block — the field keeps its historical name), and
      `examples.<kind> = { summary, files: { dest: kit-relative source }, registry: [...], dataSets: [...] }`.
      Destinations and file contents are rendered with `{{code}} {{pascal}} {{camel}} {{kebab}}
      {{upper}} {{name}} {{dep.code}} {{dep.slug}} {{dep.range}} {{dep.version}}` (text files only;
@@ -920,7 +924,7 @@ the generic built-ins.
   staging directory and copied in only when everything rendered: a kit that fails half-way never
   leaves a manifest that blocks the retry. The staging directory is removed on every exit path.
   A file the kit would write that already exists in the target is refused (listed) unless
-  `--force`; an existing `CLAUDE.md` is kept and gets the stanza appended.
+  `--force`; an existing `CLAUDE.md` / `AGENTS.md` is kept and gets the uxc block (§27.3).
 - No version bump: `init` writes `version: 0.1.0` for the partner's package; uxc's own version is
   left to the release.
 
@@ -951,6 +955,28 @@ dependency's when they overlap. The registration check of the product's capabili
 (the spec's `EXT_REGISTRATION`) is NOT here: it needs the product's code and stays product-side
 until the product publishes a machine-readable capability file; uxc will then compare sets, as the
 compatibility report does. `uxc explain <CODE>` documents each finding.
+
+### 27.3 AGENTS.md and the CLAUDE.md pointer (`lib/agents-md.mjs`, #98)
+
+Partners may run Codex or Cursor rather than Claude, so the agent context is tool-neutral.
+Both `init` forms write `AGENTS.md`: what the package is (code, name, version, owned prefixes,
+EXTENDS/depends-on), the operating rules (uxc for all server work; `uxc context` first; `uxc
+verify` before push; own prefixes only — and never the dependency's; never guess an API shape,
+find the learnings with `uxc help --search`; one pinned target), the day-to-day cheat-sheet and the
+test commands — ≤ 80 lines. CLAUDE.md gets only a pointer to it plus the Claude-only bits (the
+skill and the `/ux-*` slash commands).
+
+- **One uxc-owned block per file**, between `<!-- uxc:begin -->` and `<!-- uxc:end -->`. Text
+  outside the markers is the author's: an existing file is kept and the block appended; a file
+  that has the block gets only the block replaced. CRLF files stay CRLF. Neither file ever counts
+  as a `--force` collision.
+- **Rendered from the manifest only**, so it is deterministic. The pin shown is `agent.target`;
+  the per-checkout `.uxc/target` is NOT read (AGENTS.md is tracked and must not differ per clone).
+  A kit's `claude` notes go AFTER the block, since a refresh has no kit to re-read.
+- **Refresh**: `init` refuses an existing manifest, so re-rendering is `uxc context --agents-md`
+  (prints the block) `--write` (upserts AGENTS.md, creating it if absent, and the pointer block of
+  an existing CLAUDE.md; reports "already up to date" when nothing changed). An older package's
+  unmarked CLAUDE.md stanza is left in place — delete it by hand.
 
 ## 28. Tag-class deltas (`fd.tagclass-delta`)
 
@@ -1010,3 +1036,57 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
   file in common with #87; once #87 merges, its extension verify can call `lintTagDeltas` too.
 - Not done on purpose: no cache clear (tag classes are read live), no version bump, no GUI refresh hook —
   the product regenerates its own label catalogue after a delta (`CAPABILITIES`).
+
+## 29. JSON Schemas for the package files (`schemas/`, `$schema`, `verify`)
+
+The package files stay declarative JSON; uxc ships a JSON Schema (draft 2020-12) for each, so an
+editor (and an agent through its LSP) completes and checks them while typing, and `uxc verify`
+checks them with the same files (#97, BACKLOG-AGENTIC §27.4).
+
+| File | Schema |
+|---|---|
+| `uxopian-project.json` | `uxopian-project.schema.json` (an inline `compat` object refers to the compat schema) |
+| `registry.json` | `registry.schema.json` (the `kind` enum = `Object.keys(KINDS)`, held by a test) |
+| `marketplace.json` | `marketplace.schema.json` |
+| `compat.json` (or the manifest's `compat` path) | `compat.schema.json` |
+| `fd/tagclass-deltas/<Tag>.delta.json` | `tagclass-delta.schema.json` |
+| `fd/scripts/<id>/meta.json` · `fd/guiconfig/<id>/meta.json` · `fd/handlers/<L>/meta.json` | `fd.script.meta` · `fd.guiconfig.meta` · `fd.handler.meta` |
+
+Schemas are derived from what the code reads (adapters' readLocal/validate, `validateCompat`,
+`validateMarketplace`, the manifest readers) and are **open**: unknown keys are allowed everywhere,
+so no package that works today is rejected by an editor or by verify. The other resource files
+(class JSON, prompts, plans…) mirror server DTOs and have no schema yet.
+
+- **`$id` and `$schema` (decision).** Each schema's `$id` is the raw GitHub URL of the file on main,
+  `https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/<name>.schema.json`
+  (`SCHEMA_BASE`, `lib/schemas.mjs`), and scaffolds write exactly that as `$schema`. Rejected: a
+  relative path to the installed uxc (machine-specific, breaks for every other clone and in an exported
+  `.uxpkg`); copies of the schemas inside each package (stale as soon as uxc changes, and exported
+  noise); a `.vscode/settings.json` mapping (editor-specific). The URL is the same on every machine, an
+  editor that downloads schemas (VS Code does by default) resolves it once the file is on main, and an
+  offline editor only loses the hints. `uxc verify` never goes to the network: it reads the copies shipped
+  under `schemas/` and resolves `$ref`s by `$id`. If the repository moves, change `SCHEMA_BASE` and the
+  `$id`s together; existing `$schema` values stay harmless (an editor hint, never read by uxc).
+- **Who writes `$schema`.** `uxc init` (manifest, registry), `init --extension` (the same, plus the generic
+  script example's meta.json; a kit's own files are the kit's business), `uxc add` for the kinds above
+  (meta.json, `*.delta.json`), `uxc mp init` (marketplace.json). There is no compat.json scaffold: its
+  author adds the `$schema` line by hand.
+- **`$schema` is never content.** `canonicalize()` deletes a top-level `$schema` for every kind, so it
+  changes no hash (no server echo carries one: existing hashes are unchanged, tested per kind and per
+  example resource). The class-kind create/update body drops it; script/guiconfig/handler/delta pushes
+  build their bodies from named fields; `mp publish` strips it from the stored manifest and inlined
+  compat. Every `writeLocal` that rewrites a JSON file from the canonical form (pull, push echo leg)
+  keeps the `$schema` the file on disk carries (`keepSchemaKey`), so a pull does not churn the file.
+- **Validator** (`lib/jsonschema.mjs`, zero-dep): the subset the schemas use — type, enum, const,
+  pattern, min/maxLength, minimum/maximum, min/maxItems, items, properties, required,
+  additionalProperties, propertyNames, allOf/anyOf/oneOf, not, `$ref` (local and by `$id`). A test
+  refuses a schema that uses any other keyword. Paths are readable (`resources[3].kind`).
+- **Severity (`x-uxc-severity`).** A finding is a **warning** unless the schema node holding the failing
+  keyword says `"x-uxc-severity": "error"` (it covers that node's own `$ref`, not its children). Schemas
+  set it only where uxc already refuses the same input: the handler/script/guiconfig `validate()`
+  rules, the delta checks (`checkTagDelta`), `validateCompat` (import/mp install refuse), an unknown
+  registry `kind` (sync throws), a non-semver `minClientVersion` (the client gate throws).
+  Marketplace findings stay warnings: `mp publish` is their gate. `verify` prints errors as `FAIL` lines
+  (exit 1) and warnings as warnings (`lintSchemas(pkg)`, offline, with the other §25 lints).
+- Checked on every local package at implementation time (examples/, uxoai*, gerflor, cm, llm, qpins,
+  pii-triage, eowin, demoseminaire, ct): no error, no warning.

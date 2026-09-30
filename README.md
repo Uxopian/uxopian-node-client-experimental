@@ -120,7 +120,8 @@ uxc import other-1.0.0.uxpkg --target stage   # pre-flight collision report, the
 ### Build — day-to-day, token-cheap by design
 
 Outputs are capped, projected, and `--json`-able, so they stay cheap to read (including for an LLM
-driving the CLI).
+driving the CLI). When an agent drives uxc (`UXC_AGENT=1`, or `CLAUDECODE=1` inside Claude Code)
+JSON is the default and compact; `--human` forces the text view, `UXC_AGENT=0` turns detection off.
 
 ```bash
 uxc add <kind> <Name> [flags]                 # scaffold a resource — the template IS the verified mechanics

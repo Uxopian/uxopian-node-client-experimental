@@ -16,7 +16,8 @@ const tmp = (p = 'uxc-ext-') => { const d = mkdtempSync(join(os.tmpdir(), p)); m
 test.after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 // the child's os.tmpdir() — where `init --extension` stages — is private, so a test can see leftovers
 const STAGE = tmp('uxc-stage-');
-const childEnv = { ...process.env, TMPDIR: STAGE, TEMP: STAGE, TMP: STAGE };
+// UXC_AGENT=0: these assertions read HUMAN output — pin it even when the suite runs inside an agent (#95)
+const childEnv = { ...process.env, UXC_AGENT: '0', TMPDIR: STAGE, TEMP: STAGE, TMP: STAGE };
 function uxc(args, { cwd } = {}) {
   try {
     return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, env: childEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
@@ -43,7 +44,8 @@ test('init --extension (generic kit): own package, dependency declared, one exam
   const res = openPackage(dir).entries().map((e) => `${e.kind}/${e.id}`).sort();
   assert.deepEqual(res, ['ai.prompt/acmeExample', 'fd.dataset/AcmeExamples', 'fd.documentclass/AcmeExample', 'fd.script/acme-example']);
   for (const f of ['tests/10-script.test.mjs', 'tests/20-prompt.test.mjs', 'tests/30-dataset.test.mjs']) assert.ok(existsSync(join(dir, f)), f);
-  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /EXTENDS `cm`/);
+  assert.match(readFileSync(join(dir, 'AGENTS.md'), 'utf8'), /EXTENDS `cm`/);
+  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /read AGENTS\.md first/);
   assert.deepEqual(codes(dir), [], 'a fresh extension passes its own lint');
 });
 
@@ -161,7 +163,8 @@ test('init --product-dir: the kit of the depended-on package drives the examples
   assert.equal(m.extension.library.classId, 'CmServerLibrary');
   assert.deepEqual(m.dataSets, [{ classId: 'CmExtensions', content: false, name: 'AcmeExtensions', path: 'data/AcmeExtensions.jsonl' }]);
   assert.equal(readFileSync(join(dir, 'fd/scripts/acme-lib/acme-lib.js'), 'utf8').split('\n').at(-2), "var CM_LIB_FIN = 'acme-lib';");
-  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /Dependency: cm 0\.4\.2\./);
+  // the kit's "claude" lines are package guidance: they land in the tool-neutral AGENTS.md
+  assert.match(readFileSync(join(dir, 'AGENTS.md'), 'utf8'), /<!-- uxc:end -->\n\n## From the `cm` extension kit\n\n[\s\S]*Dependency: cm 0\.4\.2\./);
   assert.deepEqual(codes(dir), []);
   const t = uxc(['test', '--offline'], { cwd: dir });
   assert.equal(t.code, 0, t.out);
@@ -361,7 +364,7 @@ test('init --extension refuses to overwrite files in the target unless --force; 
   const f = uxc([...args, '--force']);
   assert.equal(f.code, 0, f.out);
   assert.notEqual(readFileSync(join(dir, 'tests/10-script.test.mjs'), 'utf8'), 'mine');
-  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /^# keep me\n[\s\S]*EXTENDS `cm`/);
+  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /^# keep me\n[\s\S]*<!-- uxc:begin -->[\s\S]*AGENTS\.md/);
   assert.match(uxc(['init', '--name', 'X', '--code', 'xy', '--force', join(tmp(), 'p')]).out, /--force only applies with --extension/);
 });
 

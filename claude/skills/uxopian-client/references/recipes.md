@@ -2,7 +2,7 @@
 
 `uxc` = the `uxc` CLI on your PATH. All commands run from
 inside the package directory (or pass `--dir`). Add `--target <name>` to aim anywhere but the
-default. Add `--json` when parsing.
+default. Output is compact JSON when an agent drives uxc (CLAUDECODE=1 / UXC_AGENT=1); `--human` for text.
 
 ## 1. Start a new package
 
@@ -14,7 +14,12 @@ cd contracts-pkg
 uxc doctor                                      # connectivity + endpoint gauntlet — run BEFORE building
 ```
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
-dirs, and a CLAUDE.md stanza routing future sessions to uxc.
+dirs, a tool-neutral `AGENTS.md` (package map, operating rules, cheat-sheet, tests) and a short
+CLAUDE.md stanza pointing to it. Refresh the AGENTS.md block later: `uxc context --agents-md --write`.
+The manifest and registry (and every meta.json / `*.delta.json` that `uxc add` writes, and `mp init`'s
+marketplace.json) carry a `"$schema"` line: editors complete and check them, and `uxc verify` checks
+the same schemas (errors only where push/import would refuse anyway). `$schema` is ignored by hashing
+and never pushed.
 
 ## 2. Adopt an existing build (bring live resources under management)
 
@@ -180,3 +185,16 @@ uxc size fd.script/po-widgets   # …and what `// @include <file> strip` would s
 
 Then add `strip` to the heaviest `@include` directives — the sources keep every comment; only the
 body sent to the server is lighter (LEARNINGS §33).
+
+## Recipe 12 — an endpoint no command covers (`uxc api`, instead of curl)
+
+```bash
+uxc api GET /core/rest/documentclass/PoOrder          # surface inferred from /core; pretty JSON
+uxc api GET /api/v1/admin/prompts --json              # /api/v1 -> the AI gateway; {status, headers, body}
+uxc api GET /rest/tasks/T1 --query fields=name        # no prefix -> core
+uxc api POST /core/rest/documents/search --body search.json --yes   # a write: --yes, write lock, pin rule
+```
+
+It reuses the target's token, pacing and 429 retry; an error body's code (F00903, T00104…) is
+explained. It applies NONE of the verified mechanics — check the shape in the learnings first, and
+prefer a real command when one exists.

@@ -9,10 +9,14 @@ description: Use uxc (uxopian-client) for ALL FlowerDocs and Uxopian AI customiz
 that owns ALL the hard-won FlowerDocs + Uxopian AI API mechanics (array bodies, id-in-path
 updates, handler version rotation, tmp-file ordering, cache clears, scope merges, error codes).
 **Never hand-roll curl/fetch against Core REST or the gateway — go through uxc or its lib.**
+For an endpoint no command covers, use `uxc api <METHOD> <path>` (target auth, pacing, lock,
+`explain` on errors; writes need `--yes`) — never a copied token.
 
 Invoke: `uxc <cmd> …` (PATH-linked; or `node bin/uxc.mjs <cmd>` from the repo).
 Targets/credentials live in `~/.uxopian/targets.json`; `--target <name>` overrides
-the default. `uxc help` lists every command. A "package" = a directory with
+the default. `uxc help` lists every command; **`uxc help --search "<what you want to do>"`**
+returns the commands and the learnings `§` for a task (offline, `--json`) — run it BEFORE grepping
+docs/*LEARNINGS.md or DIAGNOSTICS.md, then read only the `§` it names. A "package" = a directory with
 `uxopian-project.json` + `registry.json` + `fd/` + `ai/` + `data/`; commands find it from cwd
 (or `--dir`).
 
@@ -102,7 +106,8 @@ Full rationale + more rules: `references/policies.md`.
 - `uxc explain <CODE|text>` BEFORE debugging any error; failures auto-append the explanation.
 - Never `--full` unless the capped output truly lacks what you need; `get --content` writes
   bytes to a file instead of dumping them.
-- `--json` everywhere when you will parse the output.
+- Inside Claude Code (CLAUDECODE=1) every command already answers in compact one-line JSON,
+  errors included (`{"ok":false,"error",…}`); add `--human` when you want the text view.
 - `uxc get <docId> --raw-tag PoCaseLog` prints ONE tag verbatim (pipe it to jq) — never regex a
   tag value out of the table.
 - `uxc status --kind fd.handler --prefix Po` narrows a big package; the summary prints FIRST.
