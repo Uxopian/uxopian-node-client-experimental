@@ -826,10 +826,7 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
 
-## 26. Tag-class deltas (`fd.tagclass-delta`)
-
-> Numbering: origin/main ends at §25. PRs #86 (compat report) and #87 (`init --extension`) each add a
-> §26 of their own; whichever merges last renumbers. This section is independent of both.
+## 28. Tag-class deltas (`fd.tagclass-delta`)
 
 An EXTENSION package cannot edit the product's CHOICELIST tag classes (task types, e-mail situations,
 integration systems) — it does not own them — yet needs its own values in them. A **delta** is that

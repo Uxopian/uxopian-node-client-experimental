@@ -328,7 +328,7 @@ DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — u
 process.exitCode = 1 for drift/expectation-failed, fail() for errors); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
 
-## lib/tagdelta.mjs (DESIGN §26) — pure, shareable
+## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
     removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
     sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)

@@ -1,4 +1,4 @@
-// Offline tests for the fd.tagclass-delta kind (DESIGN §26): pure merge, push/re-read/skip, rm of own
+// Offline tests for the fd.tagclass-delta kind (DESIGN §28): pure merge, push/re-read/skip, rm of own
 // values only, status presence, serialization, lint codes. A fake core client stands in for the server.
 import test from 'node:test';
 import assert from 'node:assert/strict';
