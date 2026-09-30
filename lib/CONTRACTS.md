@@ -327,3 +327,12 @@ Conventions: resolve resource args via `pkg.resolve(arg)` (kind/id or unique bar
 DESIGN §12 output discipline exactly (caps, projections, exit codes 0/1/2 — use
 process.exitCode = 1 for drift/expectation-failed, fail() for errors); `--json` via
 ctx.out.result(). `help` prints the command list with summaries (one line each).
+
+## lib/tagdelta.mjs (DESIGN §26) — pure, shareable
+    mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
+    removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
+    sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)
+    checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
+    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN
+    valuePrefix(manifest) -> 'ACME_'
+Adapter `fd.tagclass-delta`: mergeOnPush=true, presence(ctx, entry) for status --remote, push/remove serialized.

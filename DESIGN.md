@@ -825,3 +825,38 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
 - Category-aware reads: `search --category VIRTUAL_FOLDER|FOLDER|TASK`, `ls fd.vfinstance` really
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
+
+## 26. Tag-class deltas (`fd.tagclass-delta`)
+
+> Numbering: origin/main ends at §25. PRs #86 (compat report) and #87 (`init --extension`) each add a
+> §26 of their own; whichever merges last renumbers. This section is independent of both.
+
+An EXTENSION package cannot edit the product's CHOICELIST tag classes (task types, e-mail situations,
+integration systems) — it does not own them — yet needs its own values in them. A **delta** is that
+mechanism: `fd/tagclass-deltas/<Tag>.delta.json`, `{ "tagclass": "<Tag>", "allowedValues": [ {symbolicName,
+displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, never project-prefixed).
+
+- **Push** (`lib/kinds/fd-tagclass-delta.mjs`): `GET /rest/tagclass/{id}`, merge by `symbolicName`,
+  `POST /rest/tagclass/{id}` (array body, the object just read with the merged `allowedValues`), re-GET
+  to confirm — the read-back must hold every added value AND every value that was there before.
+  The merge is `mergeTagDelta` in `lib/tagdelta.mjs`: PURE and exported, so the product's own
+  `fusionnerDelta` uses the same logic. It appends what is missing, **never removes or renames** a
+  value; labels of an existing value are refreshed only when the value carries the package prefix.
+- **Hash**: the server side of the comparison is the *slice* of the tag class the delta names (its own
+  values, projected to `symbolicName` + `displayNames`, sorted). The product's other values never read as
+  drift, and an unchanged delta is **skipped without a write**. The kind sets `mergeOnPush`: a merge
+  cannot clobber, so `sync.mjs` skips the collision/conflict refusals and `--recreate` for it; partial
+  presence classifies `local` (push merges the rest).
+- **Order and pace**: last in `PUSH_ORDER`, one at a time (a module-level mutex besides the sequential
+  loop). A tag class write takes ~65 s on fd.demo (the POST timeout is 240 s, not the default 60 s), so
+  the kind prints what it is doing before and after each write. Never parallelize.
+- **`rm --server`** (and upgrade pruning) removes only the extension's own values — names from the local
+  file, or `ownValues` recorded in state at push when the file is gone, AND carrying the package prefix.
+  The tag class and the product's values stay. **`status --remote`** says `n/m values present — absent: …`.
+- **Offline checks** (`lintTagDeltas`, run by `verify` and by `push` validation):
+  `EXT_TAG_VALUE_PREFIX` (value lacks the manifest's uppercase prefix), `EXT_TAG_CLASS_UNKNOWN`
+  (no/mismatched `tagclass`; online: class absent or not a CHOICELIST), `EXT_TAG_DELTA_OWN` (the target is a
+  tag class this package owns). They live in `lib/tagdelta.mjs`, not `lib/extension.mjs`, so this PR has no
+  file in common with #87; once #87 merges, its extension verify can call `lintTagDeltas` too.
+- Not done on purpose: no cache clear (tag classes are read live), no version bump, no GUI refresh hook —
+  the product regenerates its own label catalogue after a delta (`CAPABILITIES`).

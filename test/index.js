@@ -27,6 +27,7 @@ import "./run.test.mjs";
 import "./scope.test.mjs";
 import "./session.test.mjs";
 import "./test-command.test.mjs";
+import "./tagclass-delta.test.mjs";
 import "./testkit.test.mjs";
 import "./transport-error.test.mjs";
 import "./util.test.mjs";
