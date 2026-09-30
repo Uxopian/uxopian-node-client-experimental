@@ -28,6 +28,8 @@ function uxc(args, { env = {} } = {}) {
         UXC_HOME: dir, HOME: dir, USERPROFILE: dir,
         UXC_TARGET: '', UXC_URL: '', UXC_CORE_URL: '', UXC_AI_URL: '', UXC_GUI_URL: '',
         UXC_SCOPE: '', UXC_USER: '', UXC_PASSWORD: '',
+        // human output by default, even when the suite runs inside Claude Code (CLAUDECODE=1, #95)
+        UXC_AGENT: '0',
         ...env,
       },
       encoding: 'utf8',

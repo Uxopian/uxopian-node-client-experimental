@@ -6,7 +6,7 @@ import { resolveTarget } from '../lib/config.mjs';
 import { createClients } from '../lib/http.mjs';
 import { findPackageDir } from '../lib/config.mjs';
 import { openPackage } from '../lib/registry.mjs';
-import { out, fail } from '../lib/output.mjs';
+import { out, fail, outputMode, setOutputMode, reportError } from '../lib/output.mjs';
 import {
   COMMANDS, TWO_WORD as TWO_WORD_LIST, resolveAliases, applyFlagAliases, aliasesOf,
 } from '../lib/cli-meta.mjs';
@@ -38,6 +38,8 @@ async function main() {
   if (TWO_WORD.has(cmd) && rest[0] !== undefined && !rest[0].startsWith('-')) {
     rest[0] = resolveAliases(cmd, rest[0]).sub;
   }
+  // Output mode first (#95), so even a dispatcher-level fail() speaks JSON to an agent.
+  setOutputMode(outputMode(parseArgv(process.argv.slice(2)).flags));
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     const { default: help } = await import('../lib/commands/help.mjs');
     return help.run(makeCtx(parseArgv(rest)));
@@ -87,7 +89,7 @@ async function main() {
 function makeCtx({ args, flags }) {
   const ctx = {
     args, flags,
-    out: out(flags),
+    out: out(flags, setOutputMode(outputMode(flags))),
     /** Lazily opened package (commands that need one call ctx.requirePkg()). */
     pkg: null,
     requirePkg() {
@@ -116,8 +118,6 @@ function makeCtx({ args, flags }) {
 }
 
 main().catch((e) => {
-  const lines = [e.message];
-  if (e.explanation) lines.push(`  ↳ ${e.explanation}`);
-  console.error(lines.join('\n'));
+  reportError(e, 2); // stderr text always; + the {"ok":false,…} envelope on stdout in JSON mode
   process.exit(2);
 });

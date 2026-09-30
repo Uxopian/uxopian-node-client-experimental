@@ -243,6 +243,10 @@ Six items, each with its own issue (#94–#99).
    compact JSON when stdout is not a TTY or an agent environment is detected (e.g. `CLAUDECODE`,
    `UXC_AGENT=1`); keep the human table on a TTY; `--human` / `--json` force either. Finish the
    `--json` audit and document each command's result shape in CONTRACTS.md so it is a contract.
+   **Done (#95):** JSON is the default only when an agent is DETECTED (`UXC_AGENT=1`, or
+   `CLAUDECODE=1`; `UXC_AGENT=0` opts out) — a non-TTY stdout alone does not switch, because
+   humans pipe to grep. Errors add a `{"ok":false,…}` envelope on stdout. Contract and per-command
+   result table: CONTRACTS.md "lib/output.mjs".
 3. **`uxc api <METHOD> <path>` — a raw, safe passthrough.** *(P3, #96)* `cf` covers the whole API.
    uxc covers what its adapters verified, and agents fall back to hand-written `curl` with
    copied tokens for the long tail. A passthrough on `core|gui|ai|f2` would reuse the target's
