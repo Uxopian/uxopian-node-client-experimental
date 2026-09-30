@@ -1,4 +1,4 @@
-// `uxc init --extension` (the partner kit) and the extension prefix lint (DESIGN §26). Offline.
+// `uxc init --extension` (the partner kit) and the extension prefix lint (DESIGN §27). Offline.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync, readdirSync } from 'node:fs';

@@ -826,7 +826,7 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
 
-## 26. Extension packages: `uxc init --extension` and the prefix control
+## 27. Extension packages: `uxc init --extension` and the prefix control
 
 A package that EXTENDS another (declares it in `dependencies`, §22) is a partner's package: its own
 code, its own id prefixes, deployed beside the product it extends. Two tools keep that honest.
@@ -834,7 +834,7 @@ Both stay generic: uxc compares prefixes and reads manifests; it never knows wha
 package is. Everything package-specific comes from the depended-on package itself (its kit) or from
 the generic built-ins.
 
-### 26.1 `uxc init --extension <code> --depends-on <slug>@<range>`
+### 27.1 `uxc init --extension <code> --depends-on <slug>@<range>`
 
 `uxc init --extension acme --depends-on case-management@">=0.3" [--name …] [--dep-code cm]
 [--kinds a,b] [--product-dir <checkout>] [dir]` (`--extension --code acme` is the same).
@@ -880,7 +880,7 @@ the generic built-ins.
 - No version bump: `init` writes `version: 0.1.0` for the partner's package; uxc's own version is
   left to the release.
 
-### 26.2 The prefix control (`lib/extension.mjs`, run by `verify`, `push` and `mp publish`)
+### 27.2 The prefix control (`lib/extension.mjs`, run by `verify`, `push` and `mp publish`)
 
 `lintExtension(pkg)` is pure and offline; findings are blocking (`push --ignore-lint` overrides).
 Two tiers, so a package that merely depends on another (for instance on a provider bundle) is not
