@@ -14,7 +14,10 @@ cd contracts-pkg
 uxc doctor                                      # connectivity + endpoint gauntlet — run BEFORE building
 ```
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
-dirs, and a CLAUDE.md stanza routing future sessions to uxc.
+dirs, and a CLAUDE.md stanza routing future sessions to uxc. The manifest and registry (and every
+meta.json / `*.delta.json` that `uxc add` writes, and `mp init`'s marketplace.json) carry a
+`"$schema"` line: editors complete and check them, and `uxc verify` checks the same schemas
+(errors only where push/import would refuse anyway). `$schema` is ignored by hashing and never pushed.
 
 ## 2. Adopt an existing build (bring live resources under management)
 

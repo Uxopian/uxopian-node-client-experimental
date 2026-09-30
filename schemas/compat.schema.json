@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/compat.schema.json",
+  "title": "uxc compatibility declaration (compat.json)",
+  "description": "What this package provides to others and requires from its dependencies, compared as sets by the upgrade report (DESIGN §26, uxc import --report). import, mp install and mp publish refuse an invalid declaration.",
+  "type": "object",
+  "x-uxc-severity": "error",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it."
+    },
+    "kind": {
+      "const": "uxc-compat/1",
+      "x-uxc-severity": "error",
+      "description": "Always \"uxc-compat/1\" when present."
+    },
+    "provides": {
+      "type": "object",
+      "x-uxc-severity": "error",
+      "description": "Per family: the contract version and the ids this package offers.",
+      "additionalProperties": {
+        "$ref": "#/$defs/family"
+      }
+    },
+    "requires": {
+      "type": "object",
+      "x-uxc-severity": "error",
+      "description": "Per dependency code: accepted versions and the families/ids needed from it.",
+      "additionalProperties": {
+        "type": [
+          "object",
+          "array"
+        ],
+        "x-uxc-severity": "error",
+        "properties": {
+          "versions": {
+            "description": "Version range: ^1.2, ~1.2, 1.x, >=1.0 <2.0, ^1 || ^3, an exact version, or a list (OR). An unparseable range is refused.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "families": {
+            "type": "object",
+            "description": "Families needed from the dependency.",
+            "additionalProperties": {
+              "$ref": "#/$defs/family"
+            }
+          }
+        }
+      }
+    },
+    "renames": {
+      "type": "object",
+      "x-uxc-severity": "error",
+      "description": "Per family: ids renamed since earlier versions (oldId -> newId). The report suggests the new name.",
+      "additionalProperties": {
+        "type": "object",
+        "x-uxc-severity": "error",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "family": {
+      "type": "object",
+      "x-uxc-severity": "error",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "x-uxc-severity": "error",
+          "description": "Contract version of the family, e.g. \"v1\". A change breaks dependants."
+        },
+        "ids": {
+          "x-uxc-severity": "error",
+          "description": "The ids: a list of names, or { id: { params: [names] } } to declare parameters.",
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {}
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "properties": {
+                  "params": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Parameter names; losing one a dependant names is a review."
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

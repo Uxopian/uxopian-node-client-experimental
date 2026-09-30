@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/fd.script.meta.schema.json",
+  "title": "uxc fd.script meta (fd/scripts/<id>/meta.json)",
+  "description": "A JSAPI script stored as a Script-class document (fd.script). The content file sits next to this meta. Only name, acl, registrationOrder, contentFile and classId are read; other keys are ignored by push but show as drift.",
+  "type": "object",
+  "x-uxc-severity": "error",
+  "required": [
+    "registrationOrder"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it (never hashed, never pushed)."
+    },
+    "name": {
+      "type": "string",
+      "description": "Document name (default: the id)."
+    },
+    "acl": {
+      "type": "string",
+      "examples": [
+        "acl-readonly"
+      ],
+      "description": "ACL id of the document (default \"acl-readonly\")."
+    },
+    "registrationOrder": {
+      "type": [
+        "string",
+        "integer",
+        "null"
+      ],
+      "pattern": "^[0-9]+$",
+      "x-uxc-severity": "error",
+      "description": "RegistrationOrder tag as an integer STRING, inside the manifest band (lower loads earlier). Without it the GUI never loads the script. null, spelled out, = a server-only library a handler load()s at run time (no tag).",
+      "minimum": 0
+    },
+    "contentFile": {
+      "type": "string",
+      "description": "File name of the script next to meta.json (default \"<id>.js\")."
+    },
+    "classId": {
+      "type": "string",
+      "minLength": 1,
+      "x-uxc-severity": "error",
+      "not": {
+        "const": "Script"
+      },
+      "description": "Server-only library only (registrationOrder null): store the document under this class so the GUI never downloads it. Omit it for a Script document; \"Script\" itself is refused."
+    }
+  }
+}

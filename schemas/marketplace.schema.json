@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/marketplace.schema.json",
+  "title": "uxc marketplace listing (marketplace.json)",
+  "description": "Listing and version metadata sent by uxc mp publish (scaffold: uxc mp init). mp publish refuses a missing slug, summary, category, audience or maintainer; unknown keys are tolerated.",
+  "type": "object",
+  "required": ["slug", "summary", "category", "audience", "maintainer"],
+  "properties": {
+    "$schema": { "type": "string", "description": "Editor hint only: uxc ignores it." },
+    "format": { "const": "uxopian-marketplace/1", "description": "Always \"uxopian-marketplace/1\"." },
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Marketplace id of the addon, lowercase kebab-case (uxc mp install <slug>)." },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 200, "description": "One line, at most 200 characters." },
+    "description": { "type": "string", "description": "Long description (defaults to the manifest description)." },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["content-intelligence", "contract-intelligence", "invoice-ap", "hr-employee", "quality-compliance", "records-management", "case-management", "ai-assistants", "search-discovery", "demo-showcase", "utilities", "other"],
+      "description": "Category. The seed vocabulary: content-intelligence, contract-intelligence, invoice-ap, hr-employee, quality-compliance, records-management, case-management, ai-assistants, search-discovery, demo-showcase, utilities, other (the server is the authority)."
+    },
+    "audience": { "enum": ["generic", "customer-demo", "prospect-demo"], "description": "Who may install it. customer-demo and prospect-demo need \"account\"." },
+    "account": { "type": ["string", "null"], "description": "Account the listing is restricted to (required unless audience is generic)." },
+    "tags": { "type": "array", "items": { "type": "string" }, "description": "Free tags." },
+    "maintainer": {
+      "type": "object",
+      "required": ["name", "email"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Maintainer name (default: uxc mp login --name)." },
+        "email": { "type": "string", "minLength": 1, "description": "Maintainer e-mail (default: uxc mp login --email)." }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "description": "Versions the addon was tested on (tags).",
+      "properties": {
+        "flowerdocs": { "type": "array", "items": { "type": "string" }, "description": "FlowerDocs versions tested on." },
+        "uxopianAi": { "type": "array", "items": { "type": "string" }, "description": "Uxopian AI versions tested on." }
+      }
+    },
+    "docs": { "type": "array", "items": { "type": "string" }, "description": "Package-relative documentation files uploaded with the version (must exist)." },
+    "screenshots": { "type": "array", "items": { "type": "string" }, "description": "Package-relative screenshot files (must exist)." },
+    "changelog": { "type": "string", "description": "Release notes of this version (uxc mp publish --notes overrides)." }
+  }
+}
