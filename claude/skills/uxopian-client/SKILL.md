@@ -12,7 +12,9 @@ updates, handler version rotation, tmp-file ordering, cache clears, scope merges
 
 Invoke: `uxc <cmd> …` (PATH-linked; or `node bin/uxc.mjs <cmd>` from the repo).
 Targets/credentials live in `~/.uxopian/targets.json`; `--target <name>` overrides
-the default. `uxc help` lists every command. A "package" = a directory with
+the default. `uxc help` lists every command; **`uxc help --search "<what you want to do>"`**
+returns the commands and the learnings `§` for a task (offline, `--json`) — run it BEFORE grepping
+docs/*LEARNINGS.md or DIAGNOSTICS.md, then read only the `§` it names. A "package" = a directory with
 `uxopian-project.json` + `registry.json` + `fd/` + `ai/` + `data/`; commands find it from cwd
 (or `--dir`).
 

@@ -36,3 +36,4 @@ import "./util.test.mjs";
 import "./variables.test.mjs";
 import "./version.test.mjs";
 import "./http-rate-limit.test.mjs";
+import "./help-search.test.mjs";
