@@ -860,7 +860,12 @@ the generic built-ins.
      an unknown placeholder is an error, not a blank). A product therefore generates its kit from its
      proven bench (fixture with the names replaced by placeholders), never edits it apart. The kit
      is read from `--product-dir` (a checkout or an unpacked `.uxpkg`); uxc does not fetch it from
-     a server or the marketplace yet. Kit paths must stay inside the kit and the package.
+     a server or the marketplace yet. Kit paths must stay inside the kit and the package: every
+     rendered destination, `registry[].path` and `dataSets[].path` is refused when absolute, when it
+     climbs out with `..`, or when a segment is not a portable file name (Windows `<>:"|?*`, a
+     trailing dot or space, a reserved name) — so `{{name}}`/`{{dep.range}}` never belong in a path.
+     `manifest` is rendered value by value (keys included), never as JSON text: a quote in `--name`
+     is data, not syntax.
   2. **Generic built-ins** when there is no `--product-dir` or the dependency ships no kit: kinds
      `script` (a browser script from the `fd.script` template, in the band), `prompt` (an `ai.prompt`),
      `dataset` (a document class, a dataset bound to it and one row). They are built through the same
@@ -869,7 +874,9 @@ the generic built-ins.
      dependency's, its files parse.
 - `--kinds` selects examples (`--families` is an accepted alias). The package is assembled in a
   staging directory and copied in only when everything rendered: a kit that fails half-way never
-  leaves a manifest that blocks the retry.
+  leaves a manifest that blocks the retry. The staging directory is removed on every exit path.
+  A file the kit would write that already exists in the target is refused (listed) unless
+  `--force`; an existing `CLAUDE.md` is kept and gets the stanza appended.
 - No version bump: `init` writes `version: 0.1.0` for the partner's package; uxc's own version is
   left to the release.
 
@@ -881,10 +888,10 @@ broken by a rule it never opted into:
 
 | Tier | Code | Refuses |
 |---|---|---|
-| any declared dependency | `EXT_PRODUCT_CODE` | the package's code equals a dependency's |
-| | `EXT_PRODUCT_RESOURCE` | a non-external registry resource whose id carries a dependency's prefix |
+| any declared dependency | `EXT_PRODUCT_RESOURCE` | a non-external registry resource whose id carries a dependency's prefix |
 | | `EXT_PRODUCT_ROW` | a dataset row (or tombstone `_id`) carrying a dependency's prefix |
-| manifest `extension` block | `EXT_NO_DEPENDENCY` | `extension` declared, no dependency |
+| manifest `extension` block | `EXT_PRODUCT_CODE` | the package's code equals a dependency's (without the block it is the tolerated self-reference the dependency check ignores, `lib/dependencies.mjs`) |
+| | `EXT_NO_DEPENDENCY` | `extension` declared, no dependency |
 | | `EXT_FOREIGN_RESOURCE` | a non-external resource outside the package's own prefixes |
 | | `EXT_ROW_PREFIX` | a dataset row outside the package's own prefixes |
 | | `EXT_ROW_KEY` | a row whose logical key tag (`extension.rowKeyTags.<classId>` or `*`) does not end, after its last `. / : > \|`, with the package's UPPER prefix |
@@ -894,7 +901,8 @@ Decisions: a resource is "ours" when the conventional id for its kind under our 
 itself (§`naming.mjs`, so handlers/scripts/prompts follow their kind's form); `ai.llm`, `ai.goal` and
 `fd.surfacing` ids are exempt (global or routing names); `policy: external` resources (referenced,
 not owned) are exempt, which is how an extension names a dependency's class. "Carries a prefix" is
-strict about word boundaries (`Cmd` and `cmdFoo` are not `Cm`/`cm` ids). Own-prefix wins over a
+strict about word boundaries (`Cmd` and `cmdFoo` are not `Cm`/`cm` ids). The package's own
+prefixes are its manifest `idPrefixes` when set (custom forms), else those derived from its code. Own-prefix wins over a
 dependency's when they overlap. The registration check of the product's capability registry
 (the spec's `EXT_REGISTRATION`) is NOT here: it needs the product's code and stays product-side
 until the product publishes a machine-readable capability file; uxc will then compare sets, as the

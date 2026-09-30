@@ -1,7 +1,7 @@
 // `uxc init --extension` (the partner kit) and the extension prefix lint (DESIGN §26). Offline.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, appendFileSync, readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
@@ -11,10 +11,15 @@ import { parseDependsOn, renderText } from '../lib/extension-kit.mjs';
 import verifyCmd from '../lib/commands/verify.mjs';
 
 const BIN = resolve(import.meta.dirname, '..', 'bin', 'uxc.mjs');
-const tmp = (p = 'uxc-ext-') => mkdtempSync(join(os.tmpdir(), p));
+const made = [];
+const tmp = (p = 'uxc-ext-') => { const d = mkdtempSync(join(os.tmpdir(), p)); made.push(d); return d; };
+test.after(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
+// the child's os.tmpdir() — where `init --extension` stages — is private, so a test can see leftovers
+const STAGE = tmp('uxc-stage-');
+const childEnv = { ...process.env, TMPDIR: STAGE, TEMP: STAGE, TMP: STAGE };
 function uxc(args, { cwd } = {}) {
   try {
-    return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
+    return { code: 0, out: execFileSync('node', [BIN, ...args], { cwd, env: childEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
   } catch (e) { return { code: e.status, out: String(e.stdout ?? '') + String(e.stderr ?? '') }; }
 }
 const initGeneric = (extra = []) => {
@@ -200,6 +205,16 @@ test('init --product-dir refusals', () => {
   kj.examples.effect.files = { '../escape.txt': 'tpl/effect.test.mjs' };
   writeFileSync(join(r2, 'extension-kit/kit.json'), JSON.stringify(kj));
   assert.match(uxc(['init', '--extension', 'acme', '--depends-on', 'a@*', '--product-dir', r2, dir]).out, /must be a relative path inside the package/);
+  // registry and dataSet paths get the same check as file destinations, after rendering
+  for (const [field, bad] of [['registry', '../{{kebab}}lib'], ['dataSets', '{{kebab}}/../../x.jsonl'], ['registry', '/abs/{{kebab}}']]) {
+    const rp = fakeProduct();
+    const k = JSON.parse(readFileSync(join(rp, 'extension-kit/kit.json'), 'utf8'));
+    k.examples.detector[field][0].path = bad;
+    writeFileSync(join(rp, 'extension-kit/kit.json'), JSON.stringify(k));
+    const out = uxc(['init', '--extension', 'acme', '--depends-on', 'a@*', '--product-dir', rp, dir]).out;
+    assert.match(out, field === 'registry' ? /registry path: ".*" must be a relative path inside the package/ : /dataSet path: ".*" must be a relative path/);
+  }
+  assert.ok(!existsSync(dir), 'nothing reached the target');
   const r3 = fakeProduct();
   writeFileSync(join(r3, 'extension-kit/tpl/effect.test.mjs'), '{{nope}}');
   assert.match(uxc(['init', '--extension', 'acme', '--depends-on', 'a@*', '--product-dir', r3, dir]).out, /unknown placeholder \{\{nope\}\}/);
@@ -300,4 +315,94 @@ test('uxc verify fails offline on a prefix violation (no server involved for the
   assert.ok(result.failures.some((m) => m.startsWith('EXT_PRODUCT_ROW:')), lines.join('\n'));
 });
 
-test.after(() => { /* temp dirs live under os.tmpdir(); nothing shared to clean */ void rmSync; });
+// ---------------------------------------------------------------- review fixes (#87)
+
+test('lint: a self-reference in dependencies is tolerated without an extension block', () => {
+  const dir = initGeneric();
+  const p = join(dir, 'uxopian-project.json');
+  const m = JSON.parse(readFileSync(p, 'utf8'));
+  delete m.extension;
+  writeFileSync(p, JSON.stringify({ ...m, dependencies: { acme: { versions: '*' } } }));
+  assert.deepEqual(codes(dir), [], 'dependencies.mjs ignores a self-reference; the lint must not block it');
+  writeFileSync(p, JSON.stringify({ ...m, dependencies: { acme: { versions: '*' }, cm: { versions: '*' } } }));
+  assert.deepEqual(codes(dir), []);
+});
+
+test('lint: rows honor a custom manifest.idPrefixes', () => {
+  const dir = initGeneric();
+  writeFileSync(join(dir, 'registry.json'), JSON.stringify({ resources: [] }));
+  const p = join(dir, 'uxopian-project.json');
+  const m = JSON.parse(readFileSync(p, 'utf8'));
+  writeFileSync(p, JSON.stringify({ ...m, idPrefixes: { pascal: 'Ax', camel: 'ax', kebab: 'ax-', upper: 'AX_' } }));
+  const f = join(dir, 'data/AcmeExamples.jsonl');
+  writeFileSync(f, JSON.stringify({ category: 'DOCUMENT', data: { classId: 'AcmeExample' }, id: 'AX_ROW', name: 'AX_ROW' }) + '\n');
+  assert.deepEqual(codes(dir), [], 'AX_ROW carries the custom upper prefix');
+  appendFileSync(f, JSON.stringify({ category: 'DOCUMENT', data: { classId: 'AcmeExample' }, id: 'ZZ_ROW', name: 'ZZ_ROW' }) + '\n');
+  const [finding] = lintExtension(openPackage(dir));
+  assert.equal(finding.code, 'EXT_ROW_PREFIX');
+  assert.match(finding.message, /Ax, ax, ax-, AX_/);
+});
+
+test('init --extension refuses to overwrite files in the target unless --force; CLAUDE.md is appended', () => {
+  const dir = join(tmp(), 'ext');
+  mkdirSync(join(dir, 'tests'), { recursive: true });
+  writeFileSync(join(dir, 'tests/10-script.test.mjs'), 'mine');
+  writeFileSync(join(dir, 'README.md'), 'mine too');
+  writeFileSync(join(dir, 'CLAUDE.md'), '# keep me\n');
+  const args = ['init', '--extension', 'acme', '--depends-on', 'case-management@>=0.3', '--dep-code', 'cm', dir];
+  const r = uxc(args);
+  assert.notEqual(r.code, 0);
+  assert.match(r.out, /2 file\(s\) already exist/);
+  assert.match(r.out, /README\.md/);
+  assert.match(r.out, /tests\/10-script\.test\.mjs/);
+  assert.match(r.out, /--force/);
+  assert.equal(readFileSync(join(dir, 'README.md'), 'utf8'), 'mine too');
+  assert.ok(!existsSync(join(dir, 'uxopian-project.json')));
+  const f = uxc([...args, '--force']);
+  assert.equal(f.code, 0, f.out);
+  assert.notEqual(readFileSync(join(dir, 'tests/10-script.test.mjs'), 'utf8'), 'mine');
+  assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /^# keep me\n[\s\S]*EXTENDS `cm`/);
+  assert.match(uxc(['init', '--name', 'X', '--code', 'xy', '--force', join(tmp(), 'p')]).out, /--force only applies with --extension/);
+});
+
+test('init --extension: a name with quotes is data in the kit manifest, never JSON syntax', () => {
+  const root = fakeProduct();
+  const kp = join(root, 'extension-kit/kit.json');
+  const k = JSON.parse(readFileSync(kp, 'utf8'));
+  k.manifest.extension.label = '{{name}} for {{dep.code}}';
+  k.manifest.extension.rowKeyTags['{{pascal}}Rules'] = ['{{pascal}}Key'];
+  writeFileSync(kp, JSON.stringify(k));
+  const name = 'Acme "Pro", \\ "x": 1';
+  const { dir, r } = initKit(root, ['--name', name]);
+  assert.equal(r.code, 0, r.out);
+  const m = JSON.parse(readFileSync(join(dir, 'uxopian-project.json'), 'utf8'));
+  assert.equal(m.extension.label, `${name} for cm`);
+  assert.deepEqual(m.extension.rowKeyTags.AcmeRules, ['AcmeKey'], 'keys are rendered too');
+  assert.equal(m.x, undefined, 'no key injected');
+});
+
+test('init --extension: a placeholder value that is not a portable file name is refused in a path', () => {
+  for (const dest of ['docs/{{dep.range}}.md', 'docs/{{name}}.md', 'docs/x./a.md']) {
+    const root = fakeProduct();
+    const kp = join(root, 'extension-kit/kit.json');
+    const k = JSON.parse(readFileSync(kp, 'utf8'));
+    k.examples.effect.files = { [dest]: 'tpl/effect.test.mjs' };
+    writeFileSync(kp, JSON.stringify(k));
+    const { dir, r } = initKit(root, ['--kinds', 'effect', '--name', 'What? Now']);
+    assert.notEqual(r.code, 0, dest);
+    assert.match(r.out, /is not a portable file name/, dest);
+    assert.ok(!existsSync(dir));
+  }
+});
+
+test('init --extension leaves no staging directory behind, on success or failure', () => {
+  const before = readdirSync(STAGE).filter((n) => n.startsWith('uxc-init-'));
+  initGeneric();
+  const root = fakeProduct();
+  writeFileSync(join(root, 'extension-kit/tpl/effect.test.mjs'), '{{nope}}');
+  assert.notEqual(initKit(root).r.code, 0);
+  const dir = join(tmp(), 'ext');
+  mkdirSync(dir); writeFileSync(join(dir, 'README.md'), 'x');
+  assert.notEqual(uxc(['init', '--extension', 'acme', '--depends-on', 'cm@*', dir]).code, 0);
+  assert.deepEqual(readdirSync(STAGE).filter((n) => n.startsWith('uxc-init-')), before);
+});
