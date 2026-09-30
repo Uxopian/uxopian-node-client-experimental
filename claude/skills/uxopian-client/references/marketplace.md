@@ -75,6 +75,11 @@ unpacking, before connecting, before any write (exit 2). `uxc push` of a working
 integrity-tracked per resource (3-way hashes + a re-check right before each write), so the artifact
 gate fills the gap for *downloaded* packages.
 
+`uxc mp install <slug>[@v] --report` / `uxc import <pkg> --report` judge an upgrade against the
+extensions installed on top of it (their `compat.json` `requires`, DESIGN §26) and write nothing:
+holds / review / breaks + a remedy per reason; **exit 3** when something breaks (2 = uxc failed).
+Without `--report` a `breaks` refuses the install (`--force` overrides).
+
 ## Lifecycle
 ```
 uxc mp deprecate <slug> --version v [--reason "…"]   # deprecate (still listed/downloadable)

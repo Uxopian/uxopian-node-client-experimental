@@ -451,7 +451,7 @@ uxc install-claude
 - **`run`**: streams capped at `--max-chars` (default 2000) with elapsed time; `--expect` prints
   PASS/FAIL + first 400 chars, exit 0/1;
 - errors: one line + learned explanation + suggested next command. Exit codes: 0 ok, 1 drift or
-  expectation failed, 2 error.
+  expectation failed, 2 error, 3 an upgrade `--report` found a `breaks` line (§26).
 
 ## 13. Error knowledge base (`uxc explain`, auto-appended to failures)
 
@@ -755,7 +755,8 @@ like two agents in one clone. `mkdir()` is the atomic test-and-set; the owner fi
   next handler-touching write waits it out (`waitHandlerWindow`) instead of opening a second,
   overlapping one. `--settle` already sat through it under the lock, so it records nothing.
 - Modes are declared in `lib/cli-meta.mjs` (`LOCK_MODES`), one audited place; a command may export
-  its own `lock`, including a function of its flags — `uxc test --offline` takes none.
+  its own `lock`, including a function of its flags — `uxc test --offline` takes none; a
+  `LOCK_MODES` value may be such a function too (`import`/`mp-install --report` are reads, §26).
 - Escape hatches: `--no-lock`, `--lock-timeout <s>`.
 
 ### 25.2 The package's operating policy (`lib/agent.mjs`)
@@ -837,13 +838,22 @@ means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat`
 ```json
 { "kind": "uxc-compat/1",
   "provides": { "<family>": { "contract": "v1", "ids": ["a"] | { "a": { "params": ["p"] } } } },
-  "requires": { "<depCode>": { "versions": ">=1.0", "families": { "<family>": { "contract": "v1", "ids": [...] } } } },
+  "requires": { "<depCode>": { "versions": "^1.2", "families": { "<family>": { "contract": "v1", "ids": [...] } } } },
   "renames":  { "<family>": { "<oldId>": "<newId>" } } }
 ```
 
+- **`requires.<dep>.versions`** is a range (`satisfiesRange`, `lib/version.mjs`), a superset of
+  the §18 pattern language: `set ( || set )*`, a set = space-separated comparators AND-ed, a
+  comparator = `*` | `x` | `[op]partial` with op `>= <= > < = ^ ~`. `1.2.3`/`=1.2` exact (missing
+  parts = 0, as in §18); `1.x`/`1.2.*` wildcard; `^1.2` = `>=1.2.0 <2.0.0` (`^0.2.3` =
+  `>=0.2.3 <0.3.0`); `~1.2` = `>=1.2.0 <1.3.0`; `>=1.0 <2.0`; `^1 || ^3`. Prereleases order by
+  semver precedence; the upper bound of `^ ~ x` excludes the next version's prereleases. A string
+  array is OR. An unparseable range fails `validateCompat` (so `mp publish` refuses it).
+  `versionSupported` (server + dependency gates) is unchanged.
 - **Receipts** keep what an installed package needs (§19): `dependencies` (normalized manifest
   block) and `requires` (= `compat.requires`), FD tag `UxcCompat`, AI receipt JSON fields. Absent
-  when undeclared, so receipts of packages without either are byte-identical to before.
+  when undeclared, so receipts of packages without either are byte-identical to before — and the
+  `UxcCompat` tagclass / `UxcPackage` class reference is ensured only when that tag is written.
 - **Judgement** (`judgeUpgrade(receipts, manifest, compat, {collisions})`): breaks = new version
   outside the range the extension declares (`requires.<dep>.versions`, else `dependencies`), a
   required id absent (remedy: its new name from `renames`, else "no replacement declared"), a
@@ -852,7 +862,9 @@ means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat`
 - **`uxc import <pkg|dir> --report`** and **`uxc mp install <slug>[@v] --report`**: read-only (the
   mp variant downloads and hash-verifies, then judges; an archive is unpacked to a scratch dir, a
   checkout is never rendered in place). Prints the table, one `remedy:` line per reason, `--json`
-  gets `upgrade.rows`; **exit code 2** when a `breaks` line exists.
+  gets `upgrade.rows`; **exit code 3** when a `breaks` line exists (2 stays "uxc failed").
+  Takes the target lock in READ mode (`LOCK_MODES` is a function of `--report`): never queues
+  behind a writer, never waits out a handler window. The scratch copy is removed on every path.
 - **Install gate**: without `--report`, the same judgement REFUSES the install before any write
   when a `breaks` line exists; `--force` installs anyway with a warning. Only packages shipping a
   compat declaration are judged; everything else behaves exactly as before.

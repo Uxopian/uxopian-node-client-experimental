@@ -7,8 +7,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, cpSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readCompat, judgeUpgrade, validateCompat, receiptDeps, hasBreaks } from '../lib/compat.mjs';
-import { buildReceipt, writeFdReceipt, receiptFromFdDoc, receiptFromAiPrompt, FD_TAGS } from '../lib/receipt.mjs';
+import { readCompat, judgeUpgrade, validateCompat, receiptDeps, hasBreaks, EXIT_BREAKS } from '../lib/compat.mjs';
+import { buildReceipt, writeFdReceipt, receiptFromFdDoc, receiptFromAiPrompt, FD_TAGS, FD_COMPAT_TAG, FD_CLASS } from '../lib/receipt.mjs';
+import { satisfiesRange, parseVersionRange, versionSupported } from '../lib/version.mjs';
+import { LOCK_MODES } from '../lib/cli-meta.mjs';
 import { importPackage } from '../lib/packageio.mjs';
 import { zipDir } from '../lib/zip.mjs';
 import { tag } from '../lib/util.mjs';
@@ -74,7 +76,7 @@ test('validateCompat: rejects malformed sections', () => {
 });
 
 test('receipts keep dependencies and compat.requires; round-trip through FD tags and the AI prompt', async () => {
-  assert.ok(FD_TAGS.includes('UxcCompat'));
+  assert.equal(FD_COMPAT_TAG, 'UxcCompat');
   const manifest = { code: 'ext', version: '1.0.0', products: ['flowerdocs', 'uxopian-ai'], dependencies: { sp: { versions: '>=0.1', slug: 'sp-addon' }, llm: '*' } };
   const compat = { requires: { sp: { families: { detectors: { ids: ['late'] } } } } };
   const r = buildReceipt(manifest, { compat });
@@ -88,7 +90,7 @@ test('receipts keep dependencies and compat.requires; round-trip through FD tags
 
   let written;
   const ctx = { target: { user: 'u' }, clients: { core: {
-    getOne: async () => ({ id: 'x', tagReferences: FD_TAGS.map((tagName) => ({ tagName })) }),
+    getOne: async () => ({ id: 'x', tagReferences: [...FD_TAGS, FD_COMPAT_TAG].map((tagName) => ({ tagName })) }),
     upsertDoc: async (d) => { written = d; },
   } } };
   await writeFdReceipt(ctx, manifest, { compat });
@@ -151,7 +153,8 @@ test('import --report: judges from receipts, writes NOTHING (no POST/PUT, checko
     assert.equal(res.written ?? false, false);
     assert.equal(res.upgrade.breaks, true);
     assert.deepEqual(res.upgrade.rows.map((r) => [r.code, r.verdict]), [['ext-ok', 'holds'], ['ext-range', 'breaks'], ['ext-rename', 'breaks']]);
-    assert.equal(process.exitCode, 2);
+    assert.equal(process.exitCode, EXIT_BREAKS);
+    assert.equal(EXIT_BREAKS, 3); // distinct from fail()/crash (2)
     assert.deepEqual(ctx.writes, []);
     assert.equal(readdirSync(dir).sort().join(), before);
     assert.match(ctx.lines.join('\n'), /remedy: use "overdue"/);
@@ -165,7 +168,7 @@ test('import --report: a product row edited on the instance turns "holds" into "
   try {
     const res = await importPackage(ctx, dir, { report: true });
     assert.equal(res.upgrade.rows[0].verdict, 'review');
-    assert.notEqual(process.exitCode, 2);
+    assert.notEqual(process.exitCode, EXIT_BREAKS);
     assert.deepEqual(ctx.writes, []);
   } finally { process.exitCode = prevExit; rmSync(dir, { recursive: true, force: true }); }
 });
@@ -211,4 +214,108 @@ test('install gate: "breaks" refuses before any write unless --force; without co
     const res = await importPackage(ctx, plain, { report: true });
     assert.equal(res.upgrade, null);
   } finally { rmSync(plain, { recursive: true, force: true }); }
+});
+
+// ---- review fixes (PR #86) ----
+
+test('ranges: ^ ~ x, space-AND comparator sets, ||, prereleases (satisfiesRange)', () => {
+  const cases = [
+    ['1.3.0', '^1.2', true], ['1.2.0', '~1.2', true], ['1.4.0', '1.x', true], ['1.4.0', '1.*', true],
+    ['2.5.0', '>=1.0 <2.0', false], ['1.5.0', '>=1.0 <2.0', true], ['1.5.0', '>= 1.0 < 2.0', true],
+    ['2.0.0', '^1.2', false], ['1.1.9', '^1.2', false], ['1.3.0', '~1.2', false], ['1.9.0', '~1', true],
+    ['0.2.9', '^0.2.3', true], ['0.3.0', '^0.2.3', false], ['0.0.4', '^0.0.3', false],
+    ['3.1.0', '^1 || ^3', true], ['2.0.0', '^1 || ^3', false], ['2.0.0', ['^1', '2.x'], true],
+    ['1.2.0', '1.2', true], ['1.2.1', '1.2', false], ['1.2.1', '=1.2.1', true], ['9.9.9', '*', true],
+    // prereleases: semver precedence; ^ ~ x upper bounds exclude the next version's prereleases
+    ['2.0.0-rc.1', '^1.2', false], ['1.3.0-rc.1', '^1.2', true], ['1.2.0-rc.1', '^1.2', false],
+    ['1.2.0-rc.2', '^1.2.0-rc.1', true], ['2.0.0-rc.1', '1.x', false], ['1.0.0-rc.1', '>=1.0', false],
+  ];
+  for (const [v, r, want] of cases) assert.equal(satisfiesRange(v, r), want, `${v} vs ${JSON.stringify(r)}`);
+  // every supportedVersions pattern means the same thing as a range
+  for (const [v, p] of [['2025.4.1', '2025.*'], ['2026.1.0', '>=2026'], ['2026.0.0', '2026.0.0'], ['1.0.0-rc.1', '1.*'], ['0.9.0', '<1.0'], ['0.2.0', '0.1.*']]) {
+    assert.equal(satisfiesRange(v, p), versionSupported(v, p), `${v} vs ${p}`);
+  }
+  for (const bad of ['', 'foo', '1.x.3', '1.0 - 2.0', '>=', '1.x-rc.1', '^1 ||', 42]) assert.equal(parseVersionRange(bad), null, JSON.stringify(bad));
+  assert.equal(satisfiesRange('1.0.0', 'foo'), false);
+  // versionSupported keeps its existing behavior for the server/dependency gates
+  assert.equal(versionSupported('1.3.0', '^1.2'), false);
+});
+
+test('judgeUpgrade: ^/~/x ranges hold, an upper bound breaks', () => {
+  const r = (versions) => rec('e', '1.0.0', { sp: { versions } });
+  const verdict = (versions, version) => judgeUpgrade([r(versions)], { code: 'sp', version }, V1)[0].verdict;
+  assert.equal(verdict('^1.2', '1.3.0'), 'holds');
+  assert.equal(verdict('~1.2', '1.2.0'), 'holds');
+  assert.equal(verdict('1.x', '1.4.0'), 'holds');
+  assert.equal(verdict('>=1.0 <2.0', '2.5.0'), 'breaks');
+});
+
+test('validateCompat: an unparseable requires.*.versions is rejected (mp publish refuses it)', () => {
+  assert.deepEqual(validateCompat({ requires: { sp: { versions: '^1.2 || >=3.0 <4' } } }), []);
+  assert.deepEqual(validateCompat({ requires: { sp: { versions: ['1.x', '2.*'] } } }), []);
+  const errs = validateCompat({ requires: { sp: { versions: '1.0 - 2.0' } } });
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /requires\.sp\.versions .* does not parse/);
+  assert.ok(validateCompat({ requires: { sp: { versions: 12 } } }).length);
+});
+
+function infraCtx() {
+  const calls = [];
+  const have = new Set(FD_TAGS.map((t) => `/rest/tagclass/${t}`));
+  return {
+    calls, target: { user: 'u' },
+    clients: { core: {
+      getOne: async (p) => (have.has(p) ? { id: p }
+        : p === `/rest/documentclass/${FD_CLASS}` ? { id: FD_CLASS, tagReferences: FD_TAGS.map((tagName) => ({ tagName })) } : null),
+      post: async (p, b) => { calls.push([p, b[0]?.id]); },
+      upsertDoc: async (d) => { calls.push(['upsertDoc', d]); },
+    } },
+  };
+}
+
+test('receipt without compat: no UxcCompat tagclass, no UxcPackage class update, no tag (as before §26)', async () => {
+  const ctx = infraCtx(); // a server whose infra was set up by a pre-§26 uxc
+  await writeFdReceipt(ctx, { code: 'plain', version: '1.0.0', products: ['flowerdocs'] }, { compat: null });
+  assert.deepEqual(ctx.calls.filter(([p]) => p !== 'upsertDoc'), []); // zero schema writes
+  const doc = ctx.calls.find(([p]) => p === 'upsertDoc')[1];
+  assert.equal(doc.tags.some((t) => t.name === FD_COMPAT_TAG), false);
+
+  const withCompat = infraCtx();
+  await writeFdReceipt(withCompat, { code: 'ext', version: '1.0.0', products: ['flowerdocs'] }, { compat: { requires: { sp: { versions: '^1' } } } });
+  const schema = withCompat.calls.filter(([p]) => p !== 'upsertDoc');
+  assert.deepEqual(schema.map(([p, id]) => `${p}:${id}`), ['/rest/tagclass:UxcCompat', `/rest/documentclass/${FD_CLASS}:${FD_CLASS}`]);
+  assert.ok(withCompat.calls.find(([p]) => p === 'upsertDoc')[1].tags.some((t) => t.name === FD_COMPAT_TAG));
+});
+
+test('--report is a READ for the lock (never queues, never waits the handler window); a plain install is a write', () => {
+  for (const mod of ['import', 'mp-install']) {
+    assert.equal(typeof LOCK_MODES[mod], 'function');
+    assert.equal(LOCK_MODES[mod]({ report: true }), 'read');
+    assert.equal(LOCK_MODES[mod]({}), 'write');
+  }
+});
+
+test('import --report removes its uxc-report-* scratch dir on every path (return and fail)', async () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'uxc-compat-tmp-'));
+  const saved = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+  const realExit = process.exit;
+  const realErr = console.error;
+  const good = product('0.2.0', V2);
+  const bad = product('0.2.0', V2);
+  writeFileSync(join(bad, 'compat.json'), '{ not json'); // fails AFTER the scratch copy exists
+  const prevExit = process.exitCode;
+  try {
+    Object.assign(process.env, { TMPDIR: tmpRoot, TMP: tmpRoot, TEMP: tmpRoot });
+    const scratch = () => readdirSync(tmpRoot).filter((n) => n.startsWith('uxc-report-'));
+    await importPackage(fakeCtx([EXT_HOLDS]), good, { report: true });
+    assert.deepEqual(scratch(), []);
+    process.exit = (c) => { throw Object.assign(new Error('exit'), { code: c }); };
+    console.error = () => {};
+    await assert.rejects(() => importPackage(fakeCtx([EXT_HOLDS]), bad, { report: true }), /exit/);
+    assert.deepEqual(scratch(), []);
+  } finally {
+    process.exit = realExit; console.error = realErr; process.exitCode = prevExit;
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    for (const d of [good, bad, tmpRoot]) rmSync(d, { recursive: true, force: true });
+  }
 });
