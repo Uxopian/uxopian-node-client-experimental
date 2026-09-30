@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import os from 'node:os';
 import {
   resolveSurface, withQuery, parseHeaders, redactHeaders, readRequestBody, explainResponse,
-  apiLockMode, isReadMethod, responseHeaderSubset,
+  apiLockMode, isReadMethod, isReadCall, responseHeaderSubset,
 } from '../lib/commands/api.mjs';
 import { LOCK_MODES, COMMANDS } from '../lib/cli-meta.mjs';
 
@@ -18,6 +18,18 @@ const UXC = resolve('bin/uxc.mjs');
 const TOKEN = 'SECRET-JWT-do-not-print-4242';
 
 // ---------------------------------------------------------------- pure helpers
+
+test('a POST to a FlowerDocs /rest/<x>/search is a read: no --yes, read lock; other POSTs stay writes', () => {
+  for (const path of ['/rest/documents/search', '/core/rest/tasks/search', '/rest/virtualFolder/search/', '/rest/documents/search?max=5']) {
+    assert.equal(isReadCall('POST', path), true, path);
+    assert.equal(apiLockMode({}, ['POST', path]), 'read', path);
+  }
+  for (const path of ['/rest/documents', '/rest/documents/search/x', '/rest/tagclass/Foo', '/api/v1/search']) {
+    assert.equal(isReadCall('POST', path), false, path);
+    assert.equal(apiLockMode({}, ['POST', path]), 'none', path);
+  }
+  assert.equal(isReadCall('DELETE', '/rest/documents/search'), false);
+});
 
 test('lock mode is a function of the method: reads read, writes need --yes to take the write lock', () => {
   for (const m of ['GET', 'get', 'HEAD', 'OPTIONS']) assert.equal(apiLockMode({}, [m, '/x']), 'read');
