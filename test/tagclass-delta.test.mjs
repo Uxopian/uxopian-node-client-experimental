@@ -198,7 +198,7 @@ test('push: a server that loses a product value on write is caught by the re-rea
   const realPost = srv.core.post;
   srv.core.post = async (p, body) => { body[0].allowedValues = body[0].allowedValues.filter((x) => x.symbolicName !== 'CHECK'); return realPost(p, body); };
   const { ctx, pkg } = ctxFor(dir, srv.core);
-  await assert.rejects(pushResources(ctx, pkg.entries('fd.tagclass-delta')), /LOST product values: CHECK/);
+  await assert.rejects(pushResources(ctx, pkg.entries('fd.tagclass-delta')), /LOST values: CHECK/);
 });
 
 test('two deltas are written strictly one after the other, each with progress', async () => {
@@ -274,4 +274,123 @@ test('template scaffolds a prefixed value', () => {
   assert.equal(t.obj.tagclass, 'CmTaskType');
   assert.equal(t.obj.allowedValues[0].symbolicName, 'ACME_QUALITY_CHECK');
   assert.equal(readFileSync(join(dir, 'uxopian-project.json'), 'utf8').includes('acme'), true);
+});
+
+// ---- review fixes (PR #88) -------------------------------------------------------------------
+
+test('a server-side relabel of an own value is a server edit: status says so, plain push refuses, --force overwrites', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_QC', 'Quality')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  const entries = pkg.entries('fd.tagclass-delta');
+  await pushResources(ctx, entries);
+  srv.tcs.get('CmTaskType').allowedValues[1] = v('ACME_QC', 'Edited on the server');
+  const s = await statusAll(ctx, { remote: false });
+  assert.equal(s.rows[0].state, 'insync', 'offline status only compares file vs base');
+  const { classify } = await import('../lib/sync.mjs');
+  assert.equal((await classify(ctx, entries[0])).state, 'server');
+  const posts = srv.log.posts.length;
+  const r = await pushResources(ctx, entries);
+  assert.equal(r[0].action, 'refused');
+  assert.match(r[0].detail, /server edited since last sync/);
+  assert.equal(srv.log.posts.length, posts, 'no write without --force');
+  const f = await pushResources(ctx, entries, { force: true });
+  assert.equal(f[0].action, 'updated');
+  assert.equal(srv.tcs.get('CmTaskType').allowedValues[1].displayNames[0].value, 'Quality');
+});
+
+test('an own value removed on the server is NOT a server edit: status local, push re-merges it without --force', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_A'), d('ACME_B')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  const entries = pkg.entries('fd.tagclass-delta');
+  await pushResources(ctx, entries);
+  srv.tcs.get('CmTaskType').allowedValues = [v('CHECK'), v('ACME_A')]; // a product push wiped ACME_B
+  const { classify } = await import('../lib/sync.mjs');
+  assert.equal((await classify(ctx, entries[0])).state, 'local');
+  const r = await pushResources(ctx, entries);
+  assert.notEqual(r[0].action, 'refused');
+  assert.deepEqual(names(srv.tcs.get('CmTaskType').allowedValues), ['CHECK', 'ACME_A', 'ACME_B']);
+});
+
+test('lost-update guard: the write merges onto a re-read taken right before the POST', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_QC')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK')] });
+  srv.tcs.get('CmTaskType').lastUpdateDate = 1;
+  const realGet = srv.core.getOne;
+  let calls = 0;
+  srv.core.getOne = async (p) => {
+    if (++calls === 2) { // another writer lands between our first read and the pre-POST re-read
+      const t = srv.tcs.get('CmTaskType');
+      t.allowedValues.push(v('OTHER_WRITER'));
+      t.lastUpdateDate = 2;
+    }
+    return realGet(p);
+  };
+  const { ctx, pkg, lines } = ctxFor(dir, srv.core);
+  const e = pkg.entry('fd.tagclass-delta', 'CmTaskType');
+  await adapter.push(ctx, e, adapter.readLocal(pkg, e));
+  assert.deepEqual(names(srv.tcs.get('CmTaskType').allowedValues), ['CHECK', 'OTHER_WRITER', 'ACME_QC']);
+  assert.ok(lines.some((l) => /changed on the server since it was read/.test(l)));
+});
+
+test('a value another writer added is caught loudly if the write erases it', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_QC')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK'), v('OTHER_WRITER')] });
+  const realPost = srv.core.post;
+  srv.core.post = async (p, body) => { body[0].allowedValues = body[0].allowedValues.filter((x) => x.symbolicName !== 'OTHER_WRITER'); return realPost(p, body); };
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  const e = pkg.entry('fd.tagclass-delta', 'CmTaskType');
+  await assert.rejects(adapter.push(ctx, e, adapter.readLocal(pkg, e)), /LOST values: OTHER_WRITER/);
+});
+
+test('ownValues is recorded when the values were already on the server at first push (adopted, no write)', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_QC')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK'), v('ACME_QC')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  const r = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(r[0].action, 'adopted');
+  assert.equal(srv.log.posts.length, 0);
+  assert.deepEqual(pkg.resState('t1', 'fd.tagclass-delta', 'CmTaskType').ownValues, ['ACME_QC']);
+});
+
+test('rm with no file and no recorded ownValues says the values are unknown and writes nothing', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_QC')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK'), v('ACME_QC')] });
+  const { ctx, warns } = ctxFor(dir, srv.core);
+  const { rmSync } = await import('node:fs');
+  rmSync(join(dir, 'fd/tagclass-deltas/CmTaskType.delta.json'));
+  await adapter.remove(ctx, 'CmTaskType');
+  assert.equal(srv.log.posts.length, 0);
+  assert.match(warns.join('\n'), /UNKNOWN .*nothing removed.*ACME_QC/);
+});
+
+test('a value dropped from the delta is reported orphaned, then removed by push (prefix only, product untouched)', async () => {
+  const dir = makePkg({ CmTaskType: { tagclass: 'CmTaskType', allowedValues: [d('ACME_A'), d('ACME_B')] } });
+  const srv = fakeServer({ CmTaskType: [v('CHECK')] });
+  const { ctx, pkg, lines } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  // a stray non-prefixed name in recorded state must never be removed
+  pkg.setResState('t1', 'fd.tagclass-delta', 'CmTaskType', { ownValues: ['ACME_A', 'ACME_B', 'CHECK'] });
+  writeFileSync(join(dir, 'fd/tagclass-deltas/CmTaskType.delta.json'), JSON.stringify({ tagclass: 'CmTaskType', allowedValues: [d('ACME_A')] }));
+  const s = await statusAll(ctx, { remote: true });
+  assert.equal(s.rows[0].state, 'local');
+  assert.match(s.rows[0].detail, /orphaned .*: ACME_B — uxc push removes them/);
+  const r = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.notEqual(r[0].action, 'unchanged');
+  assert.deepEqual(names(srv.tcs.get('CmTaskType').allowedValues), ['CHECK', 'ACME_A']);
+  assert.ok(lines.some((l) => /removed ACME_B — no longer in the delta/.test(l)));
+  assert.deepEqual(pkg.resState('t1', 'fd.tagclass-delta', 'CmTaskType').ownValues, ['ACME_A']);
+  const again = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(again[0].action, 'unchanged');
+});
+
+test('projectValues sorts by code unit (not locale) and labels by (language, value)', async () => {
+  const { projectValues } = await import('../lib/tagdelta.mjs');
+  const p = projectValues([
+    { symbolicName: 'a_x', displayNames: [{ language: 'en', value: 'b' }, { language: 'EN', value: 'a' }, { language: 'DE', value: 'z' }] },
+    { symbolicName: 'B_y', displayNames: [] },
+  ]);
+  assert.deepEqual(p.map((x) => x.symbolicName), ['B_y', 'a_x']);
+  assert.deepEqual(p[1].displayNames.map((x) => x.language + x.value), ['DEz', 'ENa', 'ENb']);
 });

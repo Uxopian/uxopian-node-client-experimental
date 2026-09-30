@@ -335,4 +335,9 @@ ctx.out.result(). `help` prints the command list with summaries (one line each).
     checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
     lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN
     valuePrefix(manifest) -> 'ACME_'
-Adapter `fd.tagclass-delta`: mergeOnPush=true, presence(ctx, entry) for status --remote, push/remove serialized.
+    onlyMissing(deltaValues, serverValues) -> bool   (server differs only by absent values)
+Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:
+    mergeOnPush=true + onlyMissing(local, server) -> bool   skip collision/conflict refusals ONLY when true
+    baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
+    orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
+    presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)

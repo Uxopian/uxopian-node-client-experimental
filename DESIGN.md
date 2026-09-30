@@ -837,22 +837,49 @@ mechanism: `fd/tagclass-deltas/<Tag>.delta.json`, `{ "tagclass": "<Tag>", "allow
 displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, never project-prefixed).
 
 - **Push** (`lib/kinds/fd-tagclass-delta.mjs`): `GET /rest/tagclass/{id}`, merge by `symbolicName`,
-  `POST /rest/tagclass/{id}` (array body, the object just read with the merged `allowedValues`), re-GET
-  to confirm — the read-back must hold every added value AND every value that was there before.
+  then **re-GET immediately before the write** and rebuild the merge on that fresh copy (a
+  `lastUpdateDate` change between the two reads is printed), `POST /rest/tagclass/{id}` (array body,
+  the fresh object with the merged `allowedValues`), re-GET to confirm — the read-back must hold every
+  added value AND every value of the pre-POST read, else the push fails loudly naming the LOST values.
+  **Residual race:** FlowerDocs has no conditional write (no If-Match / version check on the tag class
+  POST), so a writer whose own full replace lands while our ~65 s POST is in flight can still erase our
+  values, or we its values. The pre-POST re-read shrinks the window from "read … write" to the POST
+  itself; the post-write check catches the case where our write erased theirs; the case where theirs
+  erased ours shows up in `status --remote` (`absent: …`) and a re-push restores it.
+- **Dropped values**: `ownValues` (the delta's names) is recorded in state at every push AND whenever
+  sync records a base without calling the adapter (adopted/rebased/pulled — the `baseState` hook), so
+  first-push-when-already-present is covered. A value in recorded `ownValues`, no longer in the file,
+  carrying the package prefix, is an **orphan**: `status --remote` reports it (row `local`) and the next
+  push removes it (`orphans` hook: push writes even when the slice is unchanged) with a printed line.
+  Without a package prefix nothing is ever removed.
   The merge is `mergeTagDelta` in `lib/tagdelta.mjs`: PURE and exported, so the product's own
   `fusionnerDelta` uses the same logic. It appends what is missing, **never removes or renames** a
   value; labels of an existing value are refreshed only when the value carries the package prefix.
 - **Hash**: the server side of the comparison is the *slice* of the tag class the delta names (its own
   values, projected to `symbolicName` + `displayNames`, sorted). The product's other values never read as
-  drift, and an unchanged delta is **skipped without a write**. The kind sets `mergeOnPush`: a merge
-  cannot clobber, so `sync.mjs` skips the collision/conflict refusals and `--recreate` for it; partial
-  presence classifies `local` (push merges the rest).
+  drift, and an unchanged delta is **skipped without a write**. The kind sets `mergeOnPush` +
+  `onlyMissing`: when the server slice differs from the file ONLY by values the server lacks, a merge
+  cannot clobber, so `sync.mjs` skips the collision/conflict refusals and `--recreate` and classifies
+  `local` (push merges the rest). A value BOTH sides hold with different labels (someone relabelled an
+  extension value on the server) is a real server edit and keeps the normal refusals: status says
+  `server edit — uxc pull`, and plain push refuses (`--force` overwrites) — like every other kind.
 - **Order and pace**: last in `PUSH_ORDER`, one at a time (a module-level mutex besides the sequential
   loop). A tag class write takes ~65 s on fd.demo (the POST timeout is 240 s, not the default 60 s), so
   the kind prints what it is doing before and after each write. Never parallelize.
 - **`rm --server`** (and upgrade pruning) removes only the extension's own values — names from the local
-  file, or `ownValues` recorded in state at push when the file is gone, AND carrying the package prefix.
-  The tag class and the product's values stay. **`status --remote`** says `n/m values present — absent: …`.
+  file, or `ownValues` recorded in state when the file is gone, AND carrying the package prefix.
+  The tag class and the product's values stay. When neither the file nor `ownValues` exists, nothing is
+  removed and the warning lists the prefixed values found on the server as candidates.
+  **`status --remote`** says `n/m values present — absent: …` (plus `orphaned: …`).
+- **Interaction with the product's own `fd.tagclass` push.** The product package owns the tag class as a
+  whole (`fd.tagclass`, full replace, hash of the WHOLE object). Once an extension delta is on the server:
+  the product's `status --remote` sees its tag class as **server-changed** (`server edit`); a **forced
+  product push** (`push --force`, or an upgrade that replaces the class) **wipes the extension's values**;
+  a **product pull** absorbs them into the product's file (they then ship with the product — avoid it).
+  Recommended procedure: never pull the product's tag class on an instance carrying extensions; after a
+  product upgrade/forced push, **re-push every extension's deltas** (`uxc push` in each extension — the
+  merge re-adds only what is missing); `uxc status --remote` in the extension detects the wipe
+  (`absent: …`, row `local`).
 - **Offline checks** (`lintTagDeltas`, run by `verify` and by `push` validation):
   `EXT_TAG_VALUE_PREFIX` (value lacks the manifest's uppercase prefix), `EXT_TAG_CLASS_UNKNOWN`
   (no/mismatched `tagclass`; online: class absent or not a CHOICELIST), `EXT_TAG_DELTA_OWN` (the target is a

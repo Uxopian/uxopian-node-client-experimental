@@ -11,6 +11,17 @@ Push order is topological and automatic; you never order writes yourself.
 - Add: `uxc add fd.tagclass CtFoo --type CHOICELIST --values "A,B" [--title …] [--fr …]`
 - Gotcha: VF/aggregation pivot tags MUST be CHOICELIST. choicelist symbolicNames are UPPER_SNAKE.
 
+## fd.tagclass-delta — managed (extension packages)
+- Storage: `fd/tagclass-deltas/<Tag>.delta.json` = `{ "tagclass": "<Tag>", "allowedValues": [{symbolicName, displayNames}] }`;
+  id = the PRODUCT's tag class name, verbatim. Every value must carry the package prefix (`EXT_TAG_VALUE_PREFIX`).
+- Add: `uxc add fd.tagclass-delta CmTaskType --values "quality check" [--fr …]`
+- Push merges (adds missing, relabels own prefixed values, removes own values dropped from the file); never
+  touches product values. One write at a time, ~65 s each on fd.demo — let it run.
+- Gotcha: the product's own `fd.tagclass` then reads as `server edit`. A forced product push wipes the
+  extension values; a product pull absorbs them. After a product upgrade, re-run `uxc push` in every
+  extension; `uxc status --remote` in the extension shows `absent: …` when values were wiped.
+- A relabel made on the server is a server edit: plain push refuses (`--force` overwrites).
+
 ## fd.tagcategory — managed
 - Storage: `fd/tagcategories/<Id>.json`
 - Fields: `id, tags[] (membership), icon, visible, inline, reduced, displayNames`
