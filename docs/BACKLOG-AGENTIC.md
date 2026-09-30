@@ -222,3 +222,51 @@ vol de A, et chacun a lu `identical` après coup.
 **Contournement en attendant, et il est humain donc faillible** : un seul agent à la fois par script
 composé, ou une relecture du diff git des `parts/` avant chaque poussée. Nous avons choisi le second
 et il a échoué deux fois dans la même journée.
+
+## 27. Lessons from Cloudflare's `cf` CLI (added 2026-09-30)
+
+Source: <https://blog.cloudflare.com/cloudflare-cf-cli-launch/>. `cf` is a pure API client
+generated from OpenAPI (~3,000 operations); uxc is a package manager and sync engine, so most of
+its surface cannot be generated. What transfers is the stance: **the agent is the primary user**.
+Six items, each with its own issue (#94–#99).
+
+1. **`uxc help --search "<what I want to do>"`.** *(P2, #94)* `cf cli search` answers a
+   natural-language question with the commands that do it, and `--help` advertises the search
+   the first time an agent runs it. Our need is sharper: the knowledge base (FLOWERDOCS-LEARNINGS,
+   UXOPIAN-AI-LEARNINGS, FAST2-LEARNINGS, DIAGNOSTICS) is about 2,000 lines, and "never guess an
+   API shape — check the learnings" is enforced today by agents grepping. One offline, zero-dep
+   index over command help, `explain` codes, `kinds.md` and the learnings' `§` headings returns
+   commands **and** `§` references ("tag class update" → `push`, LEARNINGS §x). `uxc help` and
+   the CLAUDE.md stanza point to it.
+2. **Compact JSON by default for agents.** *(P3, extends 15, #95)* `cf` made JSON the default: pretty
+   for a terminal, condensed for an agent. uxc has `--json` on most commands, opt-in. Default to
+   compact JSON when stdout is not a TTY or an agent environment is detected (e.g. `CLAUDECODE`,
+   `UXC_AGENT=1`); keep the human table on a TTY; `--human` / `--json` force either. Finish the
+   `--json` audit and document each command's result shape in CONTRACTS.md so it is a contract.
+3. **`uxc api <METHOD> <path>` — a raw, safe passthrough.** *(P3, #96)* `cf` covers the whole API.
+   uxc covers what its adapters verified, and agents fall back to hand-written `curl` with
+   copied tokens for the long tail. A passthrough on `core|gui|ai|f2` would reuse the target's
+   auth, the rate-limit pacing (LEARNINGS §42), the write lock for non-GET, and `explain` on
+   error codes. Generating commands from a schema is **not** the model for FlowerDocs: its
+   mechanics (array bodies, id in path, cache clear, handler rotation) need verified adapters.
+   Where the AI gateway publishes OpenAPI, index its operations in item 1 and check `api` calls
+   against it.
+4. **JSON Schemas for every package file.** *(P2, #97)* `cf` moved its config to TypeScript so editors
+   and agents (through LSP) can autocomplete and validate it. Keep our files declarative JSON, but
+   ship JSON Schemas: `uxopian-project.json`, `registry.json`, per-kind `meta.json`, `compat.json`,
+   `*.delta.json`, `marketplace.json`. Scaffolds (`init`, `add`, `init --extension`) write
+   `$schema`, and `verify` validates against the same schemas, so a typo is caught while typing,
+   not mid-push.
+5. **AGENTS.md next to CLAUDE.md.** *(P3, #98)* `cf` writes context files for any agent. Partners
+   using the extension kit (DESIGN §27) may run Codex or Cursor, not Claude. `uxc init` and
+   `init --extension` write a tool-neutral `AGENTS.md` (the package map, operating rules, how to
+   find the learnings), and the CLAUDE.md stanza points to it instead of duplicating it.
+6. **Verb and flag consistency.** *(P3, #99)* `cf` exists partly because Wrangler drifted
+   (`d1 info`, `hyperdrive get`, `workflows describe`). uxc has started to drift: `get` /
+   `mp show` / `scope get`; `--yes` vs `--force`; `ls` flags that differ by family. Write one
+   verb/flag table in CONTRACTS.md, add aliases (`mp get` = `mp show`) rather than renames, and
+   lint new commands against it in the test suite.
+
+**Deliberately not taken:** command generation from schemas (see 3), a TypeScript config (it
+would break zero-dependency and declarative packages), and moving local dev onto a bundler
+(no build step to replace).
