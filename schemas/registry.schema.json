@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/registry.schema.json",
+  "title": "uxc resource catalog (registry.json)",
+  "description": "Every resource the package owns or references: kind, id, file path, sync policy (DESIGN §8). Written by uxc add/adopt/rm; committed and exported. Unknown keys are tolerated.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it."
+    },
+    "resources": {
+      "type": "array",
+      "description": "One entry per resource. uxc keeps them sorted by kind/id.",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "x-uxc-severity": "error",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "x-uxc-severity": "error",
+          "enum": [
+            "fd.acl",
+            "fd.tagclass",
+            "fd.tagcategory",
+            "fd.documentclass",
+            "fd.taskclass",
+            "fd.folderclass",
+            "fd.workflow",
+            "fd.vfclass",
+            "fd.dataset",
+            "fd.script",
+            "fd.guiconfig",
+            "fd.handler",
+            "fd.vfinstance",
+            "fd.surfacing",
+            "fd.tagclass-delta",
+            "ai.llm",
+            "ai.prompt",
+            "ai.goal",
+            "ai.mcp",
+            "ai.agent",
+            "ai.plan",
+            "ai.application",
+            "f2.map"
+          ],
+          "description": "Resource kind (uxc help kinds). An unknown kind stops status/push."
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Server id (handlers: the LOGICAL name without _vN; goals: goalName+promptId[+filterHash]; tag-class deltas: the target tag class)."
+        },
+        "path": {
+          "type": "string",
+          "description": "Package-relative path of the file or directory (posix separators)."
+        },
+        "policy": {
+          "enum": [
+            "managed",
+            "createOnly",
+            "external"
+          ],
+          "description": "managed = full write; createOnly = create if absent, never delete (fd.taskclass updates in place); external = referenced only, never written or deleted. Default: the kind's."
+        },
+        "title": {
+          "type": "string",
+          "description": "Human label (catalog, marketplace)."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-text note."
+        },
+        "retired": {
+          "type": "boolean",
+          "description": "Tombstone: deliberately removed from the server; skipped by push unless --revive."
+        }
+      },
+      "allOf": [
+        {
+          "required": [
+            "id"
+          ]
+        }
+      ]
+    }
+  }
+}

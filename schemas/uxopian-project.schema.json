@@ -1,0 +1,374 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/uxopian-project.schema.json",
+  "title": "uxc package manifest (uxopian-project.json)",
+  "description": "The manifest of a uxopian-package: name, code, id prefixes, version and the gates uxc applies at deploy time (DESIGN §6). Unknown keys are tolerated.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it (never hashed, never pushed)."
+    },
+    "format": {
+      "const": "uxopian-package/1",
+      "description": "Package format marker. Always \"uxopian-package/1\"."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human name of the package, e.g. \"Contract Management\"."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,7}$",
+      "description": "Short project code (lowercase, letter first, at most 8 characters) from which the four id prefixes derive, e.g. \"ct\" -> Ct / ct / ct- / CT_ (DESIGN §5)."
+    },
+    "idPrefixes": {
+      "type": "object",
+      "description": "The four prefix forms every owned server id carries (lib/naming.mjs is the authority). Written by uxc init; set custom forms only when the derived ones do not fit.",
+      "properties": {
+        "pascal": {
+          "type": "string",
+          "description": "Classes, tag classes, task classes, VF classes/instances, workflows, handler logical names (e.g. \"Ct\")."
+        },
+        "camel": {
+          "type": "string",
+          "description": "Prompts, goal names, GUIConfiguration bean ids (e.g. \"ct\")."
+        },
+        "kebab": {
+          "type": "string",
+          "description": "Script and GUIConfiguration document ids (e.g. \"ct-\")."
+        },
+        "upper": {
+          "type": "string",
+          "description": "Runtime ids minted by handlers and dataset rows; tag-delta value prefix (e.g. \"CT_\")."
+        }
+      }
+    },
+    "version": {
+      "$ref": "#/$defs/semver",
+      "description": "Package version (semver). Bumped on release; the marketplace keys versions by it."
+    },
+    "description": {
+      "type": "string",
+      "description": "One-paragraph description of the package."
+    },
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "examples": [
+          "flowerdocs",
+          "uxopian-ai",
+          "fast2"
+        ]
+      },
+      "description": "Products the package customizes: \"flowerdocs\", \"uxopian-ai\", \"fast2\"."
+    },
+    "minClientVersion": {
+      "$ref": "#/$defs/semver",
+      "x-uxc-severity": "error",
+      "description": "Minimum uxc client able to deploy every resource of this package. import, mp install and push refuse with an older client (DESIGN §8). Must be valid semver."
+    },
+    "requires": {
+      "type": "object",
+      "description": "Declared runtime requirements (checked by doctor/preflight and testkit, informational elsewhere).",
+      "properties": {
+        "uxc": {
+          "$ref": "#/$defs/semver",
+          "x-uxc-severity": "error",
+          "description": "Alias of minClientVersion (read when minClientVersion is absent)."
+        },
+        "llmProviders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "LLM provider ids the prompts expect on the gateway."
+        },
+        "llmProvider": {
+          "type": "string",
+          "description": "Single LLM provider id (testkit shorthand)."
+        },
+        "llmModels": {
+          "type": "array",
+          "description": "LLM models the prompts expect: model names, or { provider, models } per provider.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "type": "string",
+                    "description": "LLM provider id."
+                  },
+                  "models": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Model names on that provider."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "helpers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Gateway templating helpers the prompts call, e.g. \"flowerDocsService.extractTextualContent\"."
+        },
+        "f2TaskClasses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "fast2 task classes the maps use."
+        }
+      }
+    },
+    "supportedVersions": {
+      "type": "object",
+      "description": "Server versions this package was tested on, per product (flowerdocs, uxopianAi or uxopian-ai, fast2). Deploy refuses a server outside the patterns (DESIGN §18). Pattern language: '*', '1.1.*', '>=1.1', exact.",
+      "additionalProperties": {
+        "$ref": "#/$defs/patternList"
+      }
+    },
+    "registrationOrderBands": {
+      "type": "object",
+      "description": "RegistrationOrder band per banded kind (fd.handler, fd.guiconfig, fd.script): [low, high], inclusive. uxc add allocates the lowest free integer inside it.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        },
+        "minItems": 2,
+        "maxItems": 2,
+        "description": "[low, high] inclusive."
+      }
+    },
+    "dataSets": {
+      "type": "array",
+      "description": "Seed datasets: each binds a JSONL file of documents to the class its rows instantiate (fd.dataset, DESIGN §7.13).",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "classId",
+          "path"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Dataset name = the fd.dataset registry id."
+          },
+          "classId": {
+            "type": "string",
+            "description": "Document class of the rows."
+          },
+          "path": {
+            "type": "string",
+            "description": "Package-relative path of the JSONL file, e.g. \"data/playbook.jsonl\"."
+          },
+          "content": {
+            "type": "boolean",
+            "description": "true when rows carry content files."
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Packages that must already be installed on the target, keyed by PACKAGE CODE (DESIGN §22). Value: a version pattern, or { versions, slug }.",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/patternList"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "versions": {
+                "$ref": "#/$defs/patternList",
+                "description": "Version pattern(s) of the dependency."
+              },
+              "slug": {
+                "type": "string",
+                "description": "Marketplace slug, used in the fix-it command (uxc mp install <slug>)."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "extension": {
+      "type": "object",
+      "description": "Opt-in extension rules (DESIGN §27): the package extends a dependency and is held to its own prefixes by uxc verify/push/mp publish.",
+      "properties": {
+        "of": {
+          "type": "string",
+          "description": "Code of the depended-on package (informational)."
+        },
+        "rowKeyTags": {
+          "type": "object",
+          "description": "Per class id (or \"*\"): tags whose value is a row's logical key; its last segment must carry the package's UPPER prefix.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "library": {
+          "type": "object",
+          "description": "Server-only fd.script libraries (registrationOrder null) must use this class and end with this line.",
+          "properties": {
+            "classId": {
+              "type": "string",
+              "description": "Document class of the server-only libraries."
+            },
+            "endMarker": {
+              "type": "string",
+              "description": "Required last non-blank line; {id} = the script id."
+            }
+          }
+        }
+      }
+    },
+    "extensionKit": {
+      "type": "string",
+      "description": "Package-relative directory of this package's extension kit (default \"extension-kit\"), read by uxc init --extension --product-dir."
+    },
+    "variables": {
+      "type": "object",
+      "description": "Install-time variables ({{uxc:name}} placeholders in text resources, DESIGN §21). Never used in uxopian-project.json or registry.json.",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "What the value is, shown in the variable table."
+              },
+              "example": {
+                "description": "An example value."
+              },
+              "required": {
+                "type": "boolean",
+                "description": "Default: required when there is no default."
+              },
+              "default": {
+                "description": "Value used when none is given (implies required: false)."
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Regular expression the value must match."
+              },
+              "sensitive": {
+                "type": "boolean",
+                "description": "Never persisted or echoed. Avoid secrets in variables; use the keychain."
+              }
+            }
+          },
+          {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ],
+            "description": "Shorthand: the default value."
+          }
+        ]
+      }
+    },
+    "compat": {
+      "description": "Compatibility declaration (DESIGN §26): a package-relative path (default \"compat.json\") or the inline object.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/compat.schema.json"
+        }
+      ]
+    },
+    "includeOrder": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Declared @include order of shared script sources (basenames); lintIncludeOrder enforces it."
+    },
+    "agent": {
+      "type": "object",
+      "description": "Operating policy for agents working on this package (uxc context).",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "Default target name (a local .uxc/target file overrides it)."
+        },
+        "protect": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resources an agent must not modify."
+        },
+        "neverPull": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resources never to pull from the server."
+        },
+        "forbid": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Forbidden actions."
+        },
+        "gotchas": {
+          "type": "string",
+          "description": "Free text shown to agents."
+        },
+        "includeOrder": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Alternative location of includeOrder."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^[vV]?[0-9]+(\\.[0-9]+){0,2}(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "A semantic version, e.g. \"1.2.0\" or \"0.20.0-rc.1\"."
+    },
+    "patternList": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ],
+      "description": "A version pattern ('*', '1.1.*', '>=1.1', '1.2.3') or a list of them (OR)."
+    }
+  }
+}

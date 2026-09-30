@@ -18,7 +18,7 @@ Env overrides: `UXC_MARKETPLACE_URL`, `UXC_MARKETPLACE_BROWSE_URL`, `UXC_MARKETP
 `UXC_MARKETPLACE_TOKEN`. The key is never committed/exported. Publishes are attributed to the key's
 owner (the server resolves identity from the key, not from `marketplace.json`).
 
-## marketplace.json (in the package; `uxc mp init` scaffolds it)
+## marketplace.json (in the package; `uxc mp init` scaffolds it, with a `$schema` line for editors)
 ```json
 {
   "format": "uxopian-marketplace/1",

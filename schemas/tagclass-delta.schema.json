@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/tagclass-delta.schema.json",
+  "title": "uxc tag-class delta (fd/tagclass-deltas/<Tag>.delta.json)",
+  "description": "Values an extension adds to a CHOICELIST tag class it does not own (fd.tagclass-delta, DESIGN §28). Push merges by symbolicName and never removes a product value. Every value must carry the package's UPPER prefix (checked by uxc verify: EXT_TAG_VALUE_PREFIX).",
+  "type": "object",
+  "x-uxc-severity": "error",
+  "required": ["tagclass", "allowedValues"],
+  "properties": {
+    "$schema": { "type": "string", "description": "Editor hint only: uxc ignores it." },
+    "tagclass": { "type": "string", "minLength": 1, "x-uxc-severity": "error", "description": "Target tag class id; must equal the file name (<Tag>.delta.json) and the registry id." },
+    "allowedValues": {
+      "type": "array",
+      "minItems": 1,
+      "x-uxc-severity": "error",
+      "description": "The extension's own values (non-empty).",
+      "items": {
+        "type": "object",
+        "x-uxc-severity": "error",
+        "required": ["symbolicName"],
+        "properties": {
+          "symbolicName": { "type": "string", "minLength": 1, "x-uxc-severity": "error", "description": "UPPER_SNAKE value name, starting with the package's UPPER prefix (e.g. \"ACME_ESCALATION\")." },
+          "displayNames": {
+            "type": "array",
+            "description": "Labels, EN and FR by convention.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": { "type": "string", "examples": ["EN", "FR"], "description": "Language code (normalized to upper case)." },
+                "value": { "type": "string", "description": "The label." }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -30,6 +30,7 @@ import "./prune.test.mjs";
 import "./receipt.test.mjs";
 import "./registry.test.mjs";
 import "./run.test.mjs";
+import "./schemas.test.mjs";
 import "./scope.test.mjs";
 import "./session.test.mjs";
 import "./test-command.test.mjs";

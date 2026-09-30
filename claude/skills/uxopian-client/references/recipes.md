@@ -16,6 +16,10 @@ uxc doctor                                      # connectivity + endpoint gauntl
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
 dirs, a tool-neutral `AGENTS.md` (package map, operating rules, cheat-sheet, tests) and a short
 CLAUDE.md stanza pointing to it. Refresh the AGENTS.md block later: `uxc context --agents-md --write`.
+The manifest and registry (and every meta.json / `*.delta.json` that `uxc add` writes, and `mp init`'s
+marketplace.json) carry a `"$schema"` line: editors complete and check them, and `uxc verify` checks
+the same schemas (errors only where push/import would refuse anyway). `$schema` is ignored by hashing
+and never pushed.
 
 ## 2. Adopt an existing build (bring live resources under management)
 

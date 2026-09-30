@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Uxopian/uxopian-node-client-experimental/main/schemas/fd.handler.meta.schema.json",
+  "title": "uxc fd.handler meta (fd/handlers/<Logical>/meta.json)",
+  "description": "An operation handler registration (fd.handler, DESIGN §7.11). Every push deploys a fresh <Logical>_v<N>. script and filter resolve relative to the handler directory (../shared/ allowed).",
+  "type": "object",
+  "x-uxc-severity": "error",
+  "required": [
+    "action",
+    "objectType",
+    "order"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only: uxc ignores it (never hashed, never pushed)."
+    },
+    "action": {
+      "minLength": 1,
+      "x-uxc-severity": "error",
+      "examples": [
+        "CREATE",
+        "UPDATE",
+        "DELETE",
+        "ANSWER"
+      ],
+      "description": "Action tag: the operation that fires the handler (the _on<Action> suffix of the logical name).",
+      "allOf": [
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "objectType": {
+      "minLength": 1,
+      "x-uxc-severity": "error",
+      "examples": [
+        "DOCUMENT",
+        "TASK",
+        "FOLDER",
+        "VIRTUAL_FOLDER"
+      ],
+      "description": "ObjectType tag: the component category the handler listens on.",
+      "allOf": [
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "phase": {
+      "enum": [
+        "BEFORE",
+        "AFTER",
+        null
+      ],
+      "x-uxc-severity": "error",
+      "description": "ExecutionPhase (default AFTER). Only a BEFORE script can throw to abort the operation."
+    },
+    "order": {
+      "type": "integer",
+      "x-uxc-severity": "error",
+      "description": "RegistrationOrder, an integer inside the manifest's fd.handler band (uxc add allocates it)."
+    },
+    "asynchronous": {
+      "type": "boolean",
+      "description": "Asynchronous tag (default true)."
+    },
+    "stopOnException": {
+      "type": "boolean",
+      "description": "StopOnException tag (default false)."
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Enabled tag (default true). Use uxc disable/enable for the emergency switch."
+    },
+    "script": {
+      "type": "string",
+      "description": "Script path relative to the handler directory (default \"handler.js\"); ../shared/x.js shares one source between registrations."
+    },
+    "filter": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Optional request filter XML path relative to the handler directory (uploaded as the file named 'request'); null or absent = no filter."
+    },
+    "name": {
+      "type": "string",
+      "description": "Local annotation only (never pushed)."
+    }
+  }
+}

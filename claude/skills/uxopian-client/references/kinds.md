@@ -3,6 +3,9 @@
 Registry id form: `kind/id` (bare id works when unique). Policies: `managed` (full sync),
 `createOnly` (create if absent, then verify-only), `external` (never written/deleted).
 Push order is topological and automatic; you never order writes yourself.
+JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handler `meta.json` and
+`*.delta.json` (plus manifest, registry, compat, marketplace); `uxc add` writes their `$schema`,
+`uxc verify` validates them. Unknown keys are allowed; `$schema` never reaches a hash or the server.
 
 ## fd.tagclass — managed
 - Storage: `fd/tagclasses/<Id>.json`

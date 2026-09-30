@@ -568,3 +568,14 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
     presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
+
+## lib/jsonschema.mjs + lib/schemas.mjs (DESIGN §29) — JSON Schemas of the package files
+    validateSchema(schema, value, {registry: Map($id -> schema)}) -> [{path, message, keyword, severity}]
+      subset: SUPPORTED_KEYWORDS; severity 'error' only where the failing node says "x-uxc-severity": "error"
+    SCHEMA_BASE / schemaUrl(name) -> the $id (= the $schema scaffolds write); schemas read from schemas/
+    SCHEMA_NAMES {manifest, registry, marketplace, compat} · KIND_SCHEMAS {kind -> name} · schemaForKind(kind)
+    loadSchemas() -> {byName, byId} · validateAgainst(name, value) -> findings
+    lintSchemas(pkg) -> [{file, path, message, severity, where}]   verify: error = FAIL, warning = warn
+    stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
+    keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
+Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
