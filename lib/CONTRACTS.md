@@ -337,10 +337,11 @@ findings are warnings BY DESIGN — a prompt may be called from outside the pack
 Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
 search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
-doctor, install-claude, context, size, help.
+doctor, install-claude, context, size, api, help.
 
 `lock` is optional: `'write' | 'read' | 'none'`, or a function of the flags
-(`lock: (flags) => flags.offline ? 'none' : 'write'`). Absent, the mode comes from
+(`lock: (flags) => flags.offline ? 'none' : 'write'`), and receives the positionals as a second
+argument (`(flags, args)`). Absent, the mode comes from
 `LOCK_MODES` in lib/cli-meta.mjs — the audited default per command (a value there may also be a
 function of the flags: `import` / `mp-install` are `'read'` under `--report`).
 
@@ -423,6 +424,30 @@ alias resolves to a real module and shadows none; every flag a module reads (`fl
 `flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
 `--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
 every alias.
+
+## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
+
+```js
+export function resolveSurface(path, {surface, target})   // -> {surface, path, inferred}
+//   --surface wins (a matching /core, /gui, …/uxopian-ai prefix is stripped); else a full URL under
+//   a target base -> that surface; …/uxopian-ai/… -> ai; /core/… -> core; /gui/… -> gui;
+//   /api/v1/… -> ai; /api/… -> f2; anything else -> core. Paths are relative to the client base.
+export function withQuery(path, pairs)          // --query k=v (repeatable), keeps an existing ?…
+export function parseHeaders(pairs)             // --header k=v | "K: v" (repeatable) -> {}
+export function redactHeaders(headers)          // authorization/token/cookie… -> '<redacted>'
+export function responseHeaderSubset(headers)   // content-type, length, location, retry-after, etag…
+export function readRequestBody(flags, {readStdin})  // --data | --body <file|-> -> {text, json} | null
+export function explainResponse(status, json, text)  // body.code first, then the whole body
+export { isReadMethod, apiLockMode }            // from lib/cli-meta.mjs
+```
+
+`uxc api <METHOD> <path>` goes through the target's own clients (`raw()`), so auth (Core JWT /
+fast2 Bearer), pacing, 429 retry and timeouts are the verified ones. Lock: GET/HEAD/OPTIONS are
+`'read'`; any other method is refused without `--yes` (and takes no lock), with `--yes` it is
+`'write'` — serialised on the target and under the write rule of the target pin. Output: the status
+line on stderr; the body on stdout (pretty JSON; raw text for `--raw` or a non-JSON content type);
+`--json` -> `{status, surface, method, path, headers, body, explanation?}`. A status >= 400 prints a
+2,000-char body excerpt + the `explain` match on stderr and exits 1. Tokens are never printed.
 
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}

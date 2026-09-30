@@ -9,6 +9,8 @@ description: Use uxc (uxopian-client) for ALL FlowerDocs and Uxopian AI customiz
 that owns ALL the hard-won FlowerDocs + Uxopian AI API mechanics (array bodies, id-in-path
 updates, handler version rotation, tmp-file ordering, cache clears, scope merges, error codes).
 **Never hand-roll curl/fetch against Core REST or the gateway — go through uxc or its lib.**
+For an endpoint no command covers, use `uxc api <METHOD> <path>` (target auth, pacing, lock,
+`explain` on errors; writes need `--yes`) — never a copied token.
 
 Invoke: `uxc <cmd> …` (PATH-linked; or `node bin/uxc.mjs <cmd>` from the repo).
 Targets/credentials live in `~/.uxopian/targets.json`; `--target <name>` overrides
