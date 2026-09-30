@@ -180,3 +180,16 @@ uxc size fd.script/po-widgets   # …and what `// @include <file> strip` would s
 
 Then add `strip` to the heaviest `@include` directives — the sources keep every comment; only the
 body sent to the server is lighter (LEARNINGS §33).
+
+## Recipe 12 — an endpoint no command covers (`uxc api`, instead of curl)
+
+```bash
+uxc api GET /core/rest/documentclass/PoOrder          # surface inferred from /core; pretty JSON
+uxc api GET /api/v1/admin/prompts --json              # /api/v1 -> the AI gateway; {status, headers, body}
+uxc api GET /rest/tasks/T1 --query fields=name        # no prefix -> core
+uxc api POST /core/rest/documents/search --body search.json --yes   # a write: --yes, write lock, pin rule
+```
+
+It reuses the target's token, pacing and 429 retry; an error body's code (F00903, T00104…) is
+explained. It applies NONE of the verified mechanics — check the shape in the learnings first, and
+prefer a real command when one exists.
