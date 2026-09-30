@@ -586,7 +586,7 @@ checkout — can ask "what is installed here, at which version?" (`lib/receipt.m
 - **FlowerDocs**: a document of the uxc-owned class `UxcPackage` (created on demand with five
   `Uxc*` STRING tagclasses), id **`UXC_PKG_<CODE>`** — deterministic, so per-package checks are a
   DIRECT GET (lag-proof, §25/LEARNINGS). Tags: `UxcPackageCode/Version/ClientVersion/InstalledAt/
-  ArtifactSha`.
+  ArtifactSha`, plus `UxcCompat` (§26: the package's `dependencies` and `compat.requires`, JSON).
 - **uxopian-ai**: a SYSTEM prompt **`uxcPkg<Code>`** whose content is the receipt JSON
   (`uxc-package-receipt/1`). Inert (no goal references it); visible in the admin UI by design.
 
@@ -825,3 +825,35 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
 - Category-aware reads: `search --category VIRTUAL_FOLDER|FOLDER|TASK`, `ls fd.vfinstance` really
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
+
+## 26. Upgrade report and compatibility (`compat.json`, `--report`)
+
+Before a new version of a product lands, say for each installed extension that depends on it:
+**holds**, **review** or **breaks**, with the reason and the remedy (`lib/compat.mjs`, pure).
+uxc stays generic: it compares SETS declared in a file, and never learns what a family or an id
+means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat` = a path, default
+`compat.json`, or the inline object):
+
+```json
+{ "kind": "uxc-compat/1",
+  "provides": { "<family>": { "contract": "v1", "ids": ["a"] | { "a": { "params": ["p"] } } } },
+  "requires": { "<depCode>": { "versions": ">=1.0", "families": { "<family>": { "contract": "v1", "ids": [...] } } } },
+  "renames":  { "<family>": { "<oldId>": "<newId>" } } }
+```
+
+- **Receipts** keep what an installed package needs (§19): `dependencies` (normalized manifest
+  block) and `requires` (= `compat.requires`), FD tag `UxcCompat`, AI receipt JSON fields. Absent
+  when undeclared, so receipts of packages without either are byte-identical to before.
+- **Judgement** (`judgeUpgrade(receipts, manifest, compat, {collisions})`): breaks = new version
+  outside the range the extension declares (`requires.<dep>.versions`, else `dependencies`), a
+  required id absent (remedy: its new name from `renames`, else "no replacement declared"), a
+  family `contract` changed. Review = a required id lost parameters the extension names, or product
+  resources edited on the instance (the pre-flight collision table, read only). Holds otherwise.
+- **`uxc import <pkg|dir> --report`** and **`uxc mp install <slug>[@v] --report`**: read-only (the
+  mp variant downloads and hash-verifies, then judges; an archive is unpacked to a scratch dir, a
+  checkout is never rendered in place). Prints the table, one `remedy:` line per reason, `--json`
+  gets `upgrade.rows`; **exit code 2** when a `breaks` line exists.
+- **Install gate**: without `--report`, the same judgement REFUSES the install before any write
+  when a `breaks` line exists; `--force` installs anyway with a warning. Only packages shipping a
+  compat declaration are judged; everything else behaves exactly as before.
+- `mp publish` validates the declaration and inlines it into the marketplace-stored manifest.

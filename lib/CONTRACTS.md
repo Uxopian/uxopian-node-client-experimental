@@ -89,6 +89,18 @@ export async function importPackage(ctx, src, { remap = null, force = false, ign
 //   pushResources in PUSH_ORDER -> verify summary.
 ```
 
+## lib/compat.mjs — upgrade report (DESIGN §26)
+
+```js
+export async function readCompat(dirOrUxpkg)          // -> compat object | null; throws on invalid file
+export async function readCompatLenient(dir, out)     // same, warns + null (receipt stamping never blocks)
+export function validateCompat(c)                     // -> [problem]
+export function receiptDeps(manifest, compat)         // -> { dependencies|null, requires|null } for receipts
+export function judgeUpgrade(receipts, manifest, compat, { collisions })  // pure -> [{code,version,verdict,reasons[]}]
+export function printUpgradeReport(out, product, version, rows); export const hasBreaks
+// importPackage(..., { report:true }) -> { report:true, upgrade, collisions, written:false }, writes nothing
+```
+
 ## lib/refs.mjs
 
 ```js
