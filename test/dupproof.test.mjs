@@ -327,4 +327,8 @@ test('fd.dataset: pushing a 0-row dataset records a syncedHash, and it reads bac
   const srv = await ds.readServer(ctx, entry);
   assert.ok(srv);
   assert.equal(hashResource('fd.dataset', srv.obj, Object.values(srv.contents)), base);
+  // but a dataset synced WITH rows and then wiped on the server reads as absent (server-missing),
+  // not as an empty server edit that a pull would apply by emptying the local file
+  st['tgt|fd.dataset|Empty'] = { syncedHash: 'hash-of-a-synced-dataset-with-rows' };
+  assert.equal(await ds.readServer(ctx, entry), null);
 });
