@@ -293,3 +293,42 @@ test('probeVerdict: OK / blocked-list / not-firing / broken', async () => {
   assert.equal(probeVerdict('pending', { timedOut: true }).verdict, 'NOT_FIRING');
   assert.equal(probeVerdict('garbage').verdict, 'ENGINE_BROKEN');
 });
+
+// ---------------------------------------------------------------------------
+// fd.dataset — an EMPTY dataset records a base after push (no "no base recorded" forever)
+// ---------------------------------------------------------------------------
+
+test('fd.dataset: pushing a 0-row dataset records a syncedHash, and it reads back in sync', async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const ds = (await import('../lib/kinds/fd-dataset.mjs')).default;
+  const { hashResource } = await import('../lib/canonical.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'uxc-ds-'));
+  mkdirSync(join(dir, 'data'));
+  writeFileSync(join(dir, 'data', 'Empty.jsonl'), '');
+  const st = {};
+  const entry = { kind: 'fd.dataset', id: 'Empty', path: 'data/Empty.jsonl' };
+  const pkg = {
+    dir,
+    manifest: { dataSets: [{ name: 'Empty', classId: 'CmX', path: 'data/Empty.jsonl' }] },
+    entry: () => entry,
+    resState: (t, k, id) => st[`${t}|${k}|${id}`] ?? null,
+    setResState: (t, k, id, patch) => { st[`${t}|${k}|${id}`] = { ...st[`${t}|${k}|${id}`], ...patch }; },
+  };
+  const ctx = { ...coreCtx(), pkg, target: { name: 'tgt' }, requirePkg: () => pkg };
+  assert.equal(await ds.readServer(ctx, entry), null); // never synced + no rows = absent
+  await ds.create(ctx, { id: 'Empty' });
+  const base = st['tgt|fd.dataset|Empty']?.syncedHash;
+  assert.ok(base, 'a base must be recorded for an empty dataset');
+  const local = ds.readLocal(pkg, entry);
+  assert.equal(base, hashResource('fd.dataset', local.obj, Object.values(local.contents)));
+  // once synced empty, the server reads back as an (empty) dataset with the same hash -> insync, not server-missing
+  const srv = await ds.readServer(ctx, entry);
+  assert.ok(srv);
+  assert.equal(hashResource('fd.dataset', srv.obj, Object.values(srv.contents)), base);
+  // but a dataset synced WITH rows and then wiped on the server reads as absent (server-missing),
+  // not as an empty server edit that a pull would apply by emptying the local file
+  st['tgt|fd.dataset|Empty'] = { syncedHash: 'hash-of-a-synced-dataset-with-rows' };
+  assert.equal(await ds.readServer(ctx, entry), null);
+});
