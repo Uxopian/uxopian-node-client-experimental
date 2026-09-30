@@ -14,7 +14,8 @@ cd contracts-pkg
 uxc doctor                                      # connectivity + endpoint gauntlet — run BEFORE building
 ```
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
-dirs, and a CLAUDE.md stanza routing future sessions to uxc.
+dirs, a tool-neutral `AGENTS.md` (package map, operating rules, cheat-sheet, tests) and a short
+CLAUDE.md stanza pointing to it. Refresh the AGENTS.md block later: `uxc context --agents-md --write`.
 
 ## 2. Adopt an existing build (bring live resources under management)
 

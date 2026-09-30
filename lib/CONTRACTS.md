@@ -449,6 +449,17 @@ line on stderr; the body on stdout (pretty JSON; raw text for `--raw` or a non-J
 `--json` -> `{status, surface, method, path, headers, body, explanation?}`. A status >= 400 prints a
 2,000-char body excerpt + the `explain` match on stderr and exits 1. Tokens are never printed.
 
+## lib/agents-md.mjs — AGENTS.md + CLAUDE.md pointer (DESIGN §27.3)
+
+```js
+export const BEGIN, END                          // '<!-- uxc:begin -->' / '<!-- uxc:end -->'
+export function renderAgentsSection(manifest)    // -> fenced block, deterministic, manifest facts only
+export function renderClaudeSection(manifest)    // -> fenced pointer block (AGENTS.md + skill/slash commands)
+export function upsertSection(existing|null, section, header?)  // replace the block or append it; CRLF kept
+```
+
+Used by `init` (both forms) and `context --agents-md [--write]`. Pure; no I/O.
+
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
     removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
