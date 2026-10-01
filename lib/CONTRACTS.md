@@ -111,9 +111,16 @@ export const EXIT_BREAKS = 3
 ```
 
 ```js
-// lib/version.mjs — compat ranges (DESIGN §26); versionSupported (§18 patterns) is unchanged
+// lib/version.mjs — ranges (DESIGN §26): THE dependency grammar too (#109) — compat requires,
+// manifest dependencies.*, init --depends-on; versionSupported (§18 server patterns) is unchanged
 export function parseVersionRange(range)    // string | [string] -> [[ [op, version] ]] (OR of ANDs) | null
 export function satisfiesRange(version, range)  // '^1.2' '~1.2' '1.x' '>=1.0 <2.0' '^1 || ^3' exact; unparseable -> false
+export const isValidRange = (range) => bool    // parseVersionRange(range) !== null
+export const RANGE_FORMS                        // the accepted forms, for error messages
+
+// lib/dependencies.mjs (DESIGN §22) — the gate evaluates with satisfiesRange (was versionSupported)
+export function dependencyRangeErrors(manifest) // -> [{ code, range, message }] ranges outside the grammar
+                                                //    (mp publish errors; verify via lintSchemas)
 ```
 
 ## lib/refs.mjs
@@ -545,7 +552,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | install-claude     | `[{dest, src}]`                                                         |
 | completion --install | `{installed, shell}`                                                  |
 | version            | `{version}`                                                             |
-| init               | `{dir, manifest, created, extension?}`                                  |
+| init               | `{dir, manifest, created, extension?}` (`extension.source`: kit/generic/none — none = `--no-examples`/`--kinds none`) |
 | target add         | `{name, core, ai, gui, f2, scope, default}`                             |
 | target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
 | target use         | `{default}`                                                             |
@@ -591,6 +598,7 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     SCHEMA_NAMES {manifest, registry, marketplace, compat} · KIND_SCHEMAS {kind -> name} · schemaForKind(kind)
     loadSchemas() -> {byName, byId} · validateAgainst(name, value) -> findings
     lintSchemas(pkg) -> [{file, path, message, severity, where}]   verify: error = FAIL, warning = warn
+      (+ an error per manifest dependencies.* range outside the satisfiesRange grammar, #109)
     stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
     keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
