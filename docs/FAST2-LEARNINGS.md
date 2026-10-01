@@ -483,7 +483,15 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
 Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
 - What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
   that writes a known CSV.
-- The `upload-library` refusal status while a campaign is running.
+- The `upload-library` / `restore-library` refusal status while a campaign is running (FAST-5880
+  asks for 409 + `{code:"CAMPAIGN_RUNNING"}`). Until it is recorded, `uxc f2 lib push|restore`
+  checks for a Started/Starting campaign first and shows any non-2xx verbatim (`classifyRefusal`).
+- The `library-versions/{name}` element shape, the name a restored `.old` jar is listed under, and
+  whether a respawned worker keeps its `workerId` (uxc also accepts a new `pid` or a stale-then-fresh
+  `lastSeen`, `workerBack`).
+- The paging parameters of `GET /api/workers/libraries`. 2026-10-01, rc5: `?page=0&size=200` →
+  200 rows of `total:401`, and `?page=1&size=200` did NOT return the next 200 (repeated or empty).
+  `uxc f2 lib ls` then makes one `?size=<total>` call; that fallback is not yet verified live.
 - The worker-restart response (200 vs 207 multi-status).
 - The exceptions and results file formats of a run.
 - Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).

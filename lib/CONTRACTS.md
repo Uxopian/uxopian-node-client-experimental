@@ -387,7 +387,7 @@ Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXC
 | `run` | execute/start on the server | `run`, `f2 run` | — |
 
 Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
-`login`, `publish`, `install`, `deprecate`, `versions`, `categories` — reasons in
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories`, `lib` (`f2 lib ls|push|restore`) — reasons in
 `VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
 of a family and are not linted for verb choice.
 
@@ -419,7 +419,8 @@ Destructive gates (`DESTRUCTIVE`; the lint requires every `rm`/`delete`/`destroy
 listed and its gate flags to be in its help and read by its code):
 `rm` — a side (`--local|--server|--both`), `--force` for createOnly/external · `destroy` —
 `--confirm <code>` or `--dry-run` · `doc rm` — explicit ids only · `scope delete` / `mp rm` —
-`--yes` · `data push` — row deletes only with `--prune --yes`.
+`--yes` · `data push` — row deletes only with `--prune --yes` · `f2 lib push|restore` — `--yes`, and `--force` past a
+running campaign.
 
 Lint rules (test/cli-consistency.test.mjs): every module exports `name`/`summary`/`help`/`run`
 and its name matches its file; every two-word subcommand verb is in `VERBS` or
@@ -572,6 +573,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | scope delete       | `{id, deleted:true}`                                                    |
 | f2 ls              | `{maps, campaigns}`                                                     |
 | f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, steps?, waited?}` |
+| f2 lib             | `{action:'ls'|'push'|'restore', jar, status, workerBackAfterSec, listed}` + ls: `total, libraries` · push: `sizeBytes, httpStatus` · restore: `from, httpStatus` · busy: `campaigns` · refused: `body` · timeout: `workers`. `status`: `ok`, `uploaded`/`restored` (--no-wait), `busy`, `refused`, `timeout`, `not-listed`; exit 1 for all but `ok`/`uploaded`/`restored` |
 | mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
 | mp show            | addon detail, or the version detail with `@version`                     |
 | mp init            | `{path, marketplace, errors, warnings}`                                 |
