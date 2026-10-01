@@ -17,6 +17,7 @@ import "./dupproof.test.mjs";
 import "./extension.test.mjs";
 import "./f2-auth.test.mjs";
 import "./f2-only-target.test.mjs";
+import "./f2-xml-import.test.mjs";
 import "./f2map.test.mjs";
 import "./ft5.test.mjs";
 import "./fd-script.test.mjs";
