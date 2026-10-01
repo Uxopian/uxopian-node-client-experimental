@@ -387,7 +387,8 @@ Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXC
 | `run` | execute/start on the server | `run`, `f2 run` | — |
 
 Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
-`login`, `publish`, `install`, `deprecate`, `versions`, `categories`, `status` (`f2 status`) — reasons in
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories`, `status` (`f2 status`),
+`exceptions` (`f2 exceptions`) — reasons in
 `VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
 of a family and are not linted for verb choice.
 
@@ -436,7 +437,7 @@ export function f2Surface(target, {loginCooldownMs = 30_000}?)  // target.f2 + f
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 //   {base, login(), req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
 //    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
-//    on a status), text(path) -> string}
+//    on a status; opts.binary -> response.bytes, a Buffer), text(path) -> string}
 ```
 
 Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. Re-auth rule
@@ -573,6 +574,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | f2 ls              | `{maps, campaigns}`                                                     |
 | f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, queued?, processing?, steps?, waited?}` (the `f2 status` shape + `map`) |
 | f2 status          | `{campaign, mapId, status, elapsedSec, ok, exception, queued, processing, steps:[{step, ok, exception, queued, processing, speed}]}` |
+| f2 exceptions      | `{campaigns, mapIds, path, rows, byStep:{<step>:{<exceptionClass>:n}}, top:[{step, exception, count}]}` |
 | mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
 | mp show            | addon detail, or the version detail with `@version`                     |
 | mp init            | `{path, marketplace, errors, warnings}`                                 |

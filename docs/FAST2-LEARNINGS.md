@@ -494,12 +494,32 @@ Verified read-only on the rc5 broker, on two existing `Finished` campaigns.
   read once per process; `elapsedSec` = `finishDate|stopDate` − `startDate` (now while running).
   `--watch` polls status + stats on one client, so a whole watch costs one login.
 
+## §F35 — The exceptions export: a CSV for one campaign, a ZIP for several (rc5, 2026-10-01)
+Verified read-only on the rc5 broker, on two existing `Finished` campaigns (1 exception each).
+- `GET /api/campaigns/download-exceptions?campaigns=<c>&mapIds=<m>` (the mapId from
+  `stats.taskFlowMapRef`) → **200 `application/octet-stream`**, `Content-Disposition: attachment;
+  filename=<c>_exceptions.csv`. The body is a CSV: **every field double-quoted, LF line ends,
+  one header line**. Fixed leading columns `"Campaign","Step","TraceId","Status","ExceptionType",
+  "Message","Punnet Id","Document Id"`, then one `punnet.….value` / `punnet.documents.data.…`
+  column per punnet/document property (they vary with the map). **`Step` is the step NAME**
+  (not the id) and `ExceptionType` the exception class
+  (`com.fast2.model.task.exception.TaskProcessException`). `Message` can be long; quote-aware
+  parsing is required (it may hold commas, quotes, newlines). 1 exception → 1 data row.
+- **Two campaigns** (`campaigns=<c1>,<c2>&mapIds=<m1>,<m2>`, comma lists paired in order) →
+  200 octet-stream with a **`.zip`** filename: a deflated zip (general-purpose flag `0x0808`: data
+  descriptor + UTF-8 names) holding **one `<campaign>_exceptions.csv` per campaign**. Read the body
+  as bytes, never as text — a UTF-8 decode corrupts it. The entry names were read live; the
+  entries' CSV content was not (the first capture was text-decoded), so it is assumed to be the
+  single-campaign format.
+- It is a file, never a count: `uxc f2 exceptions` counts rows and (step, class) pairs client-side.
+
 ## Unverified on rc5 (open after the 2026-10-01 probe)
 Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
 - What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
   that writes a known CSV.
 - The `upload-library` refusal status while a campaign is running.
 - The worker-restart response (200 vs 207 multi-status).
-- The exceptions and results file formats of a run.
+- The results file format of a run (`step/{stepId}/download-result`). The exceptions export is §F35;
+  the content of the CSVs inside its multi-campaign zip is still to be read once as bytes.
 - Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
 - A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
