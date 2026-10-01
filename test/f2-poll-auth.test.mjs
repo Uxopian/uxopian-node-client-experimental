@@ -78,11 +78,13 @@ async function stubBroker({ statuses = ['Started', 'Started', 'Started', 'Finish
         return json(res, 200, { total: 1, collection: [w] });
       }
       if (path === '/api/workers/libraries') {
-        const all = state.swapped ? [{ jarName: 'fast2-zz-1.0.jar' }] : [];
+        // dated at the upload, as rc5 lists a pushed jar: the push proves its swap from this date
+        const all = state.swapped ? [{ jarName: 'fast2-zz-1.0.jar', lastModificationDate: state.swappedAt }] : [];
         return json(res, 200, { total: all.length, collection: all });
       }
       if (path === '/api/workers/upload-library') {
         state.swapped = true;
+        state.swappedAt = Date.now();
         state.hooks.upload?.(revoke);
         res.writeHead(200); return res.end();
       }
@@ -166,7 +168,7 @@ test('lib push: a transport blip during the swap is still tolerated', async () =
     b.state.dropNextWorkers = 1;
     const r = await run(['f2', 'lib', 'push', jar, '--yes', '--timeout', '20']);
     assert.equal(r.status, 0, r.all);
-    assert.match(r.stdout, /worker\s+w2 back after/);
+    assert.match(r.stdout, /worker\s+w2 heard from .* after the push/);
     assert.ok(b.state.workerPolls >= 2);
   });
 });
