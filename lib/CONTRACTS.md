@@ -160,8 +160,9 @@ export * as util from './util.mjs'
 ```
 
 `connect()` side effect (FAST-5884, REVIEW P3-9): on a target with a fast2 URL, the `f2` client
-shares the token cache — it reads and writes `<UXC_HOME|~>/.uxopian/f2-tokens/` for every
-embedding program, exactly as the CLI does. Opt out with `UXC_F2_TOKEN_CACHE=0`.
+shares the token cache — it reads and writes `<UXC_HOME|~>/.uxopian/f2-tokens/` (and the
+failed-login marker there) for every embedding program, exactly as the CLI does. Opt out of the
+token cache with `UXC_F2_TOKEN_CACHE=0`; the failed-login marker stays on (it holds no secret).
 
 ## Adapters — kind-specific notes (DESIGN.md §7 is normative; highlights)
 
@@ -407,7 +408,7 @@ Flag semantics:
 | `--json` | machine output via `ctx.out.result()` | global |
 | `--target <name>` | which instance | global; checked against the package pin (DESIGN §25) |
 | `--dir <path>` | which package | global |
-| `--no-token-cache` | this process neither reads nor writes the shared fast2 token | global; = `UXC_F2_TOKEN_CACHE=0` (FAST-5884) |
+| `--no-token-cache` | this process neither reads nor writes the shared fast2 token (the failed-login marker stays on) | global; = `UXC_F2_TOKEN_CACHE=0` (FAST-5884) |
 | `--kind k1,k2` / `--prefix P` | filters on a package sweep | `status`, `adopt --scan`; `ls` takes the kind positionally |
 | `--max n` | at most n items back | `search`, `recent`, `task ls`; `--limit` is an alias |
 | `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
@@ -440,8 +441,8 @@ every alias.
 
 ```js
 export function f2Surface(target, {loginCooldownMs = 30_000, reloginIntervalMs = 30_000, tokenCache = false,
-  loginWaitMs = 5_000}?)  // target.f2 + f2User/f2Password -> client
-export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache}; the CLI passes false for --no-token-cache
+  failedLoginMarker = tokenCache, loginWaitMs = 5_000}?)  // target.f2 + f2User/f2Password -> client
+export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache, failedLoginMarker: true}; the CLI passes false for --no-token-cache
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
 //   {base, login({force}?) -> token, hasToken() -> bool, tokenSource() -> 'login'|'cache'|'refresh'|null,
@@ -455,7 +456,17 @@ Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToke
 returns the token in hand while it is fresh (JWT `exp` − 10 min, else 3.5 h; then the cache below) and only `login({force:true})` always calls the
 broker, so any caller (doctor, a library driver on `connect()`) may call it safely. The anti-lockout
 cooldown (30 s) counts FAILED logins only (a failed status or a transport error on the login):
-inside it, `login()` throws `UXC_F2_COOLDOWN` without a request. Re-auth rule (§F22/§F23): a 401 ->
+inside it, `login()` throws `UXC_F2_COOLDOWN` without a request; its message says when the last
+login failed, whether in another process, and when to retry (`retry in Ns (at HH:MM:SS)`).
+Cross-process (FAST-5874 / A04): a failed login also writes `<key>.failed.json` `{v:1, broker,
+user, failedAt}` (0600, temp + rename) beside the token entry, and `cooldownLeft()` takes the later
+of the process's own failure and that marker — so a chain of `uxc` processes with a wrong password
+spends ONE failed login per 30 s, not one per process. A successful login removes the marker; a
+login that never reached the broker (ECONNREFUSED, DNS, connect timeout, TLS) writes none; a
+marker dated in the future is ignored. On for `createClients` (CLI and `connect()`) EVEN with the
+token cache off (`--no-token-cache` / `UXC_F2_TOKEN_CACHE=0`: lockout protection is not a cache and
+the marker holds no secret); off for a bare `f2Surface()` unless `{failedLoginMarker: true}` or
+`{tokenCache: true}`, and whenever `loginCooldownMs` is 0. Re-auth rule (§F22/§F23): a 401 ->
 one forced login + one replay, unless a re-login is skipped — inside the failed-login cooldown, or
 within `reloginIntervalMs` (30 s) of the previous 401-forced re-login (the token it minted refused
 too, or a flapping topology; after the interval a long-lived client may re-log-in again, REVIEW
@@ -474,7 +485,8 @@ call site. Upload answers 201 + the full map (§F25).
 
 Token cache (FAST-5884, `lib/f2/token-cache.mjs`). On for `createClients` (CLI and `connect()`),
 off for a bare `f2Surface()` unless `{tokenCache: true}`, and off whenever `UXC_F2_TOKEN_CACHE=0`
-(also `false|off|no`) or the CLI gets `--no-token-cache` — then nothing is read or written.
+(also `false|off|no`) or the CLI gets `--no-token-cache` — then no token is read or written (the
+failed-login marker above still is).
 One file per identity: `<UXC_HOME|~>/.uxopian/f2-tokens/<sha256(broker URL \n user \n tenant)[0..32]>.json`,
 directory 0700, file 0600, written to a `.<key>.<pid>.<rand>.tmp` in the same directory then
 `rename()`d (atomic; concurrent writers = last one wins). The directory is `lstat`ed: a symlink, a
@@ -498,9 +510,9 @@ deletes it when it still holds the refused token. Login lock (REVIEW P3-3): a br
 token the holder stores and uses it — after a 401, any stored token other than the refused one —
 then logs in itself only if none came (a lock older than 10 s is a crashed holder's and is taken
 over). N parallel processes after a broker restart = 1 login. Every write sweeps orphans: entries
-whose access and refresh tokens died over an hour ago, temp/lock files older than an hour
-(REVIEW P3-5). `uxc target logout [name] [--all]` and
-re-registering a name with `target add` delete entries (`--all` also removes lock files). No token is ever printed (`--json`,
+whose access and refresh tokens died over an hour ago, markers and temp/lock files older than an
+hour (REVIEW P3-5). `uxc target logout [name] [--all]` and
+re-registering a name with `target add` delete entries (`--all` also removes markers and locks). No token is ever printed (`--json`,
 messages, the `UXC_HTTP_LOG` journal — it logs method, path, status, time, size only).
 
 Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`). A stored

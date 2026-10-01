@@ -113,7 +113,7 @@ test('a FAILED login starts the cooldown: the next attempt inside it never reach
     const f2 = f2Surface(b.target);
     await assert.rejects(f2.login(), (e) => e.status === 401 && /login failed/.test(e.explanation));
     await assert.rejects(f2.login({ force: true }), (e) => {
-      assert.match(e.message, /refusing to re-authenticate to fast2 \d+s after a failed login/);
+      assert.match(e.message, /refusing to re-authenticate to fast2: the last fast2 login for this broker \+ user failed \d+s ago — retry in \d+s \(at \d\d:\d\d:\d\d\)/);
       assert.equal(e.code, 'UXC_F2_COOLDOWN');
       return true;
     });

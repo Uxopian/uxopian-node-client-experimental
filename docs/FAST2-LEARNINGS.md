@@ -363,8 +363,16 @@ used a throwaway `UXC_A0_probe_*` map, and all of them were deleted afterwards (
   0700 dir, one per broker URL + user, atomic rename, never the password) and reused until 10 min
   before its JWT `exp`, then refreshed; so a chain of `uxc` commands logs in once per 4 h instead
   of once per process (A0 friction #5). A 401 on the cached token or a failed login deletes the
-  entry. Off with `UXC_F2_TOKEN_CACHE=0` / `--no-token-cache`; `uxc target logout` clears it. The
-  failed-login cooldown itself is still per process (cross-process: A04).
+  entry. Off with `UXC_F2_TOKEN_CACHE=0` / `--no-token-cache`; `uxc target logout` clears it.
+- The failed-login cooldown is cross-process (FAST-5874 / A04): a failed login writes
+  `~/.uxopian/f2-tokens/<key>.failed.json` (`{v, broker, user, failedAt}`, 0600, atomic, no
+  secret) and every `uxc` process honours it, so `uxc f2 ls && uxc f2 status && uxc doctor --f2`
+  with a wrong or rotated password spends ONE failed login (the broker's lockout needs 3), and the
+  next processes stop locally with "retry in Ns (at HH:MM:SS)" and exit 2 instead of locking the
+  account — UI included — for 30 s. The marker stays on with the token cache off (it is lockout
+  protection, not a cache); a successful login removes it; a login that never reached the broker
+  (connection refused, DNS, connect timeout, TLS) writes none. After a broker restart, N parallel
+  processes share ONE re-login: the first takes `<key>.lock`, the others wait for its token.
 
 ## §F22 — 401 vs 403: what each one means on rc5 (updates §F3 and §F14)
 - **No token → 403** with the generic Spring envelope

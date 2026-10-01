@@ -450,6 +450,79 @@ test('FAST-5884 BDD1: nothing is written in the working directory (the package)'
   } finally { await b.close(); rmSync(home, { recursive: true, force: true }); rmSync(pkg, { recursive: true, force: true }); }
 });
 
+// --- REVIEW @0e4a0c0: cross-process failed-login cooldown (P2-1, FAST-5874 / A04) -----------------
+
+const markerFiles = (dir) => { try { return readdirSync(dir).filter((f) => f.endsWith('.failed.json')); } catch { return []; } };
+
+for (const [label, env] of [['token cache on', {}], ['UXC_F2_TOKEN_CACHE=0 (lockout protection stays on)', { UXC_F2_TOKEN_CACHE: '0' }]]) {
+  test(`P2-1: three consecutive \`uxc\` processes with a wrong password spend ONE failed login; the 2nd and 3rd are refused locally with a retry time (${label})`, async () => {
+    const b = await stubBroker();
+    const home = setupHome(b.url);
+    try {
+      b.state.loginStatus = 401; // wrong / rotated password
+      const runs = [];
+      for (let i = 0; i < 3; i++) runs.push(await uxc(['api', 'GET', '/api/ok', '--surface', 'f2'], { home, env }));
+      assert.equal(b.state.logins, 1, 'exactly one POST /api/auth/login reached the broker');
+      assert.notEqual(runs[0].status, 0);
+      assert.match(runs[0].all, /fast2 login failed/);
+      for (const r of runs.slice(1)) {
+        assert.equal(r.status, 2, r.all);
+        assert.match(r.all, /refusing to re-authenticate to fast2: the last fast2 login for this broker \+ user failed \d+s ago \(in another uxc process\) — retry in \d+s \(at \d\d:\d\d:\d\d\)/);
+        assert.match(r.all, /remaining-attempts/);
+      }
+      const dir = join(home, '.uxopian', 'f2-tokens');
+      const markers = markerFiles(dir);
+      assert.equal(markers.length, 1, 'one <key>.failed.json');
+      const raw = readFileSync(join(dir, markers[0]), 'utf8');
+      assert.ok(!raw.includes(PASSWORD), 'the marker never holds the password');
+      assert.deepEqual(Object.keys(JSON.parse(raw)).sort(), ['broker', 'failedAt', 'user', 'v']);
+      if (POSIX) assert.equal(statSync(join(dir, markers[0])).mode & 0o777, 0o600);
+      const json = await uxc(['api', 'GET', '/api/ok', '--surface', 'f2', '--json'], { home, env });
+      assert.match(json.stdout, /"code": ?"UXC_F2_COOLDOWN"/);
+      assert.equal(b.state.logins, 1);
+    } finally { await b.close(); rmSync(home, { recursive: true, force: true }); }
+  });
+}
+
+test('P2-1: the marker is written atomically 0600 on a failed login, read by a sibling client, and removed by the next successful login', async () => {
+  const b = await stubBroker();
+  try {
+    await withHome(async () => {
+      b.state.loginStatus = 401;
+      await assert.rejects(() => client(b.url, { loginCooldownMs: 300 }).login(), (e) => e.code === 'UXC_F2_LOGIN');
+      assert.equal(markerFiles(tokenCacheDir()).length, 1);
+      assert.deepEqual(cacheFiles().filter((f) => f.endsWith('.tmp')), [], 'no temp file left');
+      const sibling = client(b.url, { loginCooldownMs: 300 });
+      await assert.rejects(() => sibling.login(), (e) => e.code === 'UXC_F2_COOLDOWN' && /another uxc process/.test(e.message));
+      assert.equal(b.state.logins, 1);
+      await new Promise((ok) => setTimeout(ok, 350));
+      b.state.loginStatus = 200;
+      await sibling.login();
+      assert.equal(b.state.logins, 2);
+      assert.deepEqual(markerFiles(tokenCacheDir()), [], 'a successful login clears the marker');
+      assert.equal(tokenCache({ broker: b.url, user: USER }).failedAt(), null);
+    });
+  } finally { await b.close(); }
+});
+
+test('P2-1: a login that never reached the broker (connection refused) writes no marker; a bare f2Surface() never writes one', async () => {
+  const gone = await stubBroker();
+  await gone.close(); // a port nothing listens on any more: ECONNREFUSED
+  await withHome(async () => {
+    const dead = f2Surface({ name: 'd', f2: gone.url, f2User: USER, f2Password: PASSWORD }, { tokenCache: true });
+    await assert.rejects(() => dead.login(), (e) => /ECONNREFUSED/.test(e.code));
+    assert.deepEqual(markerFiles(tokenCacheDir()), []);
+  });
+  const b = await stubBroker();
+  try {
+    await withHome(async () => {
+      b.state.loginStatus = 401;
+      await assert.rejects(() => f2Surface(target(b.url)).login(), (e) => e.code === 'UXC_F2_LOGIN');
+      assert.deepEqual(cacheFiles(), [], 'library default: nothing on disk');
+    });
+  } finally { await b.close(); }
+});
+
 // --- REVIEW @0e4a0c0 P3-1: the directory and the file are not trusted by path ------------------
 
 test('P3-1: a symlinked f2-tokens directory is refused: not chmod-ed, nothing written through it, each process logs in', { skip: !POSIX }, async () => {
@@ -586,11 +659,12 @@ test('P3-4: an exp in milliseconds is read as ms; an exp beyond 24 h (or 1e300) 
 
 // --- REVIEW @0e4a0c0 P3-5: orphan entries expire ----------------------------------------------
 
-test('P3-5: a write sweeps entries whose tokens died over an hour ago and stale temp files; live ones stay', async () => {
+test('P3-5: a write sweeps entries whose tokens died over an hour ago, stale markers and temp files; live ones stay', async () => {
   await withHome(async () => {
     const long = Date.now() - 3 * 3600_000;
     const orphan = tokenCache({ broker: 'http://old-host:1789', user: USER });
     orphan.write({ accessToken: jwt(1, Math.floor(long / 1000)), refreshToken: jwt(1, Math.floor(long / 1000), 'R'), at: long - 60_000 });
+    orphan.markFailed(long);
     const live = tokenCache({ broker: 'http://other:1789', user: USER });
     live.write({ accessToken: jwt(2, nowSec() + 3600) });
     const tmp = join(tokenCacheDir(), '.deadbeef.1.abc.tmp');
@@ -598,6 +672,7 @@ test('P3-5: a write sweeps entries whose tokens died over an hour ago and stale 
     utimesSync(tmp, long / 1000, long / 1000);
     tokenCache({ broker: 'http://h:1', user: USER }).write({ accessToken: jwt(3, nowSec() + 3600) });
     assert.equal(orphan.read(), null, 'orphan entry swept');
+    assert.equal(orphan.failedAt(), null, 'stale marker swept');
     assert.ok(!existsSync(tmp), 'stale temp swept');
     assert.ok(live.read(), 'a live entry of another identity stays');
   });
