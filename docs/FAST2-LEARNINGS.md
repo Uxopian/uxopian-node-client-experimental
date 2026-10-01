@@ -581,4 +581,9 @@ Out of scope of a read-mostly probe; verify on a throwaway object before relying
   multi-campaign zip content included, is §F35.
 - Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
 - A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
+- The shape of a library's `lastModificationDate` in `GET /api/workers/libraries` (review N1):
+  the one live `lib ls --json` was not recorded past `jarName`. `dateMs` now accepts epoch
+  seconds (a number below 1e12 is ×1000), epoch ms, an ISO string or `{value|date}`, so a
+  seconds-epoch no longer turns a good `lib push` into `stale` (exit 1). One live push of a
+  throwaway jar with `--json` is still needed to record the real format in §F32.
 

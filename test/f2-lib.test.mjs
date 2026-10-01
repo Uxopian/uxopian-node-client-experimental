@@ -40,7 +40,7 @@ const LIBS = Array.from({ length: 250 }, (_, i) => ({
  * (default: the EMBEDDED worker, same workerId + pid, heard from again within a second) | 'newId' |
  * 'newPid' | 'never' (stops at the swap, never heard from again) · opts.listAfter: whether the
  * pushed jar shows up in libraries afterwards · opts.jarDate: 'now' (default, epoch ms) | 'iso' |
- * 'old' | 'garbage' · opts.workers: (st) => [status, body] | null — override GET /api/workers ·
+ * 'seconds' (epoch s) | 'old' | 'garbage' · opts.workers: (st) => [status, body] | null — override GET /api/workers ·
  * opts.capSize: the broker caps `size` and ignores `page` · opts.versions: the library-versions body.
  * `lastSeen` is an AGE in ms, as on rc5 (§F32).
  */
@@ -50,7 +50,8 @@ async function stubBroker(opts = {}) {
     campaigns: opts.campaigns ?? {},
   };
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
-  const jarDate = () => ({ now: st.swappedAt, iso: new Date(st.swappedAt).toISOString(), old: 1_700_000_000_000, garbage: 'n/a' })[opts.jarDate ?? 'now'];
+  const jarDate = () => ({ now: st.swappedAt, iso: new Date(st.swappedAt).toISOString(), seconds: Math.floor(st.swappedAt / 1000),
+    old: 1_700_000_000_000, garbage: 'n/a' })[opts.jarDate ?? 'now'];
   const swap = () => { st.swapped = true; st.swappedAt = Date.now(); };
   const server = createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
@@ -334,6 +335,15 @@ test('#2 the jar date may be an ISO string', async () => {
   });
 });
 
+// N1: the rc5 library date shape is unrecorded; an epoch in SECONDS must not read as 1970 -> stale.
+test('N1 the jar date may be epoch seconds -> ok, not stale', async () => {
+  await withBroker({ jarDate: 'seconds' }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '8', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).status, 'ok');
+  });
+});
+
 // #2 false positive (review P1): a failed `before` snapshot was swallowed (`.catch(() => [])`),
 // and the first worker seen then counted as "back" before the swap. Now: refuse, nothing uploaded.
 test('#2 the pre-push GET /api/workers fails -> exit 2, nothing uploaded (not swallowed)', async () => {
@@ -465,10 +475,12 @@ test('respawnKind / dateMs / installState', () => {
   assert.equal(dateMs(null), null);
   const names = new Set(['x.jar']);
   const libs = (d, total = 1) => ({ libraries: [{ jarName: 'x.jar', lastModificationDate: d }], total });
-  assert.equal(installState(libs(1000), names, 1000).state, 'installed');
-  assert.equal(installState(libs(1000 - 20_000), names, 1000).state, 'installed', 'within the clock-skew allowance');
-  assert.equal(installState(libs(1000 - 60_000), names, 1000).state, 'stale');
-  assert.equal(installState(libs('?'), names, 1000).state, 'undated');
+  const T = 1_790_000_000_000;
+  assert.equal(installState(libs(T), names, T).state, 'installed');
+  assert.equal(installState(libs(T - 20_000), names, T).state, 'installed', 'within the clock-skew allowance');
+  assert.equal(installState(libs(T - 60_000), names, T).state, 'stale');
+  assert.equal(installState(libs(T / 1000), names, T).state, 'installed', 'N1: epoch seconds');
+  assert.equal(installState(libs('?'), names, T).state, 'undated');
   assert.equal(installState(libs(1), names, null).state, 'installed', 'a restore checks no date');
   assert.equal(installState({ libraries: [], total: 0 }, names, 1).state, 'absent');
   assert.equal(installState({ libraries: [], total: 5 }, names, 1).state, 'incomplete');
@@ -552,6 +564,19 @@ test('#7 restore --force skips the candidate check (unknown --from, or an empty 
     assert.equal(forced.status, 0, forced.all);
     assert.equal(b.st.restores.length, 1);
   });
+});
+
+test('N1 dateMs: epoch seconds, epoch ms and ISO all give the same instant', () => {
+  const ms = 1_790_000_000_000;
+  assert.equal(dateMs(1_790_000_000), ms, 'seconds (number)');
+  assert.equal(dateMs('1790000000'), ms, 'seconds (numeric string)');
+  assert.equal(dateMs({ value: 1_790_000_000 }), ms, 'seconds in {value}');
+  assert.equal(dateMs(ms), ms, 'ms (number)');
+  assert.equal(dateMs(String(ms)), ms, 'ms (numeric string)');
+  assert.equal(dateMs(new Date(ms).toISOString()), ms, 'ISO');
+  assert.equal(dateMs(999_999_999_999), 999_999_999_999_000, 'just below 1e12 -> seconds');
+  assert.equal(dateMs(1e12), 1e12, '1e12 and above -> ms');
+  assert.equal(dateMs(NaN), null);
 });
 
 test('versionNames accepts strings, objects and a {collection} envelope', () => {
