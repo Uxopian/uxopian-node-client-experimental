@@ -1088,8 +1088,8 @@ so no package that works today is rejected by an editor or by verify. The other 
   registry `kind` (sync throws), a non-semver `minClientVersion` (the client gate throws).
   Marketplace findings stay warnings: `mp publish` is their gate. `verify` prints errors as `FAIL` lines
   (exit 1) and warnings as warnings (`lintSchemas(pkg)`, offline, with the other §25 lints).
-- Checked on every local package at implementation time (examples/, uxoai*, gerflor, cm, llm, qpins,
-  pii-triage, eowin, demoseminaire, ct): no error, no warning.
+- Checked on every local package at implementation time (the examples/ packages and 16 other local
+  packages, customer POCs included): no error, no warning.
 
 ## 30. Legacy values in a tag-class delta (`"legacy": [...]`)
 
@@ -1110,3 +1110,29 @@ them: `{ "tagclass": "CmCaseType", "legacy": ["ORDER"], "allowedValues": [ {ORDE
   unprefixed name that is merely in `allowedValues` or in a stray `ownValues` is never removed.
 - State: `fd.tagclass-delta` records `{ownValues, legacyValues}` per target (`baseState` too).
 - Schema `schemas/tagclass-delta.schema.json` documents `legacy`; `uxc explain EXT_TAG_LEGACY`.
+
+## 31. `data push --prune` and row ownership across installed packages
+
+A dataset can be fed by several installed packages: the Case Management product and an extension (the
+Purchase Order Management `po`) both contribute rows to `CmTeams`. `--prune` deletes "server rows absent
+from MY local file" — in a shared dataset that is the OTHER package's rows. It now never does.
+
+- **Who owns a row** (`lib/ownership.mjs`): the other packages on the target, read from the installation
+  receipts (DESIGN §19, `readReceipts`, both surfaces) plus the manifest's declared `dependencies` (an
+  offline floor: receipts unreadable still protects the dependency). Never the package itself. A package
+  owns the ids carrying its prefix forms: those the receipt declares (`idPrefixes`, optional) else
+  derived from its code (`prefixForms`: `Cm`/`cm`/`cm-`/`CM_`), matched with the same strict word-boundary
+  rule as the extension lint (`carriesForms`).
+- **Decision per server-only row** (`splitRowOwnership`, pure): carries THIS package's prefix (manifest
+  `idPrefixes` honoured) -> ours, deletable; carries only another installed package's prefix -> theirs,
+  kept; carries no known prefix -> deletable, exactly as before (ownership by prefix is a protection, not
+  a new licence to guess).
+- **Output**: the kill list (and `--yes` deletion) contains only our rows; the foreign rows are named in
+  one warning with their owner (`belong to another installed package (cm) — kept, never deleted: …`) and
+  returned as `keptForeign: [{id, code}]` in the result. A dataset whose only orphans are foreign prints
+  no kill list.
+- Unchanged: tombstone rows (`{"_id":…,"_deleted":true}`) are explicit and still delete; without
+  `--prune` nothing is deleted; `rm --server`/`destroy` of a whole dataset is a different path.
+- Limit: a row of another package that carries NO prefix of it (a legacy code such as `SUPPLY_PLANNING`)
+  cannot be told from ours by id; keep such rows out of the prune by listing them in the local file or
+  avoid `--prune` on shared datasets.

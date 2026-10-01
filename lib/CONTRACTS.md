@@ -580,3 +580,8 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
     keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
+
+## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune`
+    foreignOwners(ctx, manifest) -> [{code, forms, source:'receipt'|'dependency'}]   other installed packages
+    splitRowOwnership(ids, manifest, owners) -> {own:[id], foreign:[{id, code}]}      PURE
+    pushRows(...) report gains keptForeign: [{id, code}]
