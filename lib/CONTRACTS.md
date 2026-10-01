@@ -117,7 +117,15 @@ export const shortHash                            // 'sha256:<hex>' -> first 16 
 // none attached for a plain receipt on a fileless doc. writeReceipts defaults resourceHashes from ctx.pkg
 // state; writeFdReceipt retries WITHOUT the file on failure (receipt.warning says so).
 export async function readFdReceiptContent(core, doc)  // -> object|null (no file / unreadable = null)
-export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes
+export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes/dataSets/tagContributions
+// 0.25.1 (#125/#126) — same content file / AI receipt JSON, absent when empty, null on older receipts:
+//   receipt.dataSets = receiptDataSets(manifest) -> [{name, classId, path?, content?}] sorted (definitions, never rows)
+//   receipt.tagContributions = [{tagClass, values:[symbolicName]}] — per fd.tagclass-delta: own PREFIXED values +
+//     state legacyAdded (never a pre-existing declared legacy value); writeReceipts defaults it from ctx.pkg
+//     (tagContributionsFromPkg(pkg, targetName)). The content file is written when any of the three keys is
+//     carried (or the doc had one); a refused upload retries without all three (warning).
+export function receiptDataSets(manifest)               // PURE
+export async function tagContributionsFromPkg(pkg, targetName)
 export async function removeReceipts(ctx, code)  // destroy: FD doc + AI prompt -> [{surface, ok, action:'deleted'|'absent', error?}]
 ```
 
@@ -315,6 +323,10 @@ export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:
 //   a resource outside pkg.registry resolves through manifest.dependencies: the dependency's
 //   receipt (readReceiptsChecked, read once per ctx, retried) must list 'kind/id' (a receipt with
 //   no list is trusted), then serverOf as usual. Unreadable receipts -> "could not check …" (#115).
+//   fd.dataset/<Name> not defined by this manifest (#125): definition from the dependency's receipt
+//   dataSets -> GET /rest/documentclass/<classId> + paged class search: >= 1 row that is the dependency's
+//   (splitRowOwnership from its side) => ok. No dataSets on any of its receipts => skip "dependency
+//   <code>@<v> installed by a uxc older than 0.25.1: re-push it to record its datasets".
 ```
 
 `lib/receipt.mjs` adds `stampTestReceipt(ctx, code, {passed, skipped, total, when})` — targeted
@@ -701,3 +713,21 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
     foreignNote(foreign) -> string | null   (exported from fd-dataset.mjs)
   sync.mjs statusAll rows carry note?: string (informational, never drift); status prints in-sync rows that have one.
   lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged
+    rowOwners(ctx, manifest, {checked?})   checked = a readReceiptsChecked result to reuse (one read)
+  Tag-class VALUE ownership (#126, DESIGN §28):
+    inOwnerScope(ctx, fn)   per-operation memo (statusAll / pullResources / pushResources wrap themselves)
+    tagValueOwners(ctx, manifest) -> rowOwners(...) + {contributions: Map(tagClass -> Map(name -> code))}
+      (other installed packages' receipt tagContributions; empty when receipts unreadable)   memoized in scope
+    splitTagValues(names, tagClass, manifest, view) -> {own:[name], foreign:[{name, code}]}   PURE
+      contributions first, then splitRowOwnership(…, view.owners); unreadable -> nothing foreign
+    guardTagValues(names, manifest, view, recorded, {neverRead}) -> {guarded:Set, maybeForeign(name)}   PURE
+  fd.tagclass (lib/kinds/fd-tagclass.mjs):
+    readServer(ctx, id) / serverView(ctx, id, res) -> {obj, foreign?, refusePull?, exclude?}
+      obj = the class minus other installed packages' values (alone: the object as read, byte-identical);
+      unreadable receipts: obj as read + refusePull/exclude for values absent locally that may be foreign
+    update(ctx, id, local)   full replace of local values + other packages' values still on the server
+    writeLocal(pkg, entry, res)   drops res.exclude names · presence(ctx, entry) -> {note} | undefined
+    foreignValuesNote(foreign) -> "+n values of <code> (… not hashed, not drift)"
+    state: targets[t].foreignTagValues = {TagClass: [name]} (last successful read; written on change only)
+  sync.mjs: statusAll applies adapter.serverView to batch-listed objects; pullResources refuses a server
+    form carrying refusePull (also --force).

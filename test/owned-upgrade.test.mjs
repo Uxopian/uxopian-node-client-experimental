@@ -271,3 +271,37 @@ test('stale receipt WITHOUT a hash may only claim ids carrying its own prefix; a
   assert.deepEqual(rows.map((r) => `${r.id}:${r.state}`), ['SpStatus:collision', 'Status:upgrade']);
   assert.deepEqual(res.upgraded, ['fd.tagclass/Status']);
 });
+
+test('#125/#126 receipts record dataSets (definitions only) + tagContributions in the content file — zero schema writes, stale copies dropped', async () => {
+  const manifest = {
+    code: 'cm', version: '1.0.0', products: ['flowerdocs', 'uxopian-ai'],
+    dataSets: [{ name: 'CmTransitions', classId: 'CmTransitionsClass', path: 'data/CmTransitions.jsonl' }, { name: 'CmDocs', classId: 'CmDocClass', path: 'data/CmDocs.jsonl', content: true, extra: 'x' }],
+  };
+  const r = buildReceipt(manifest, { tagContributions: [{ tagClass: 'CmCaseType', values: ['ORDER', 'PO_ORDER'] }] });
+  assert.deepEqual(r.dataSets, [
+    { name: 'CmDocs', classId: 'CmDocClass', path: 'data/CmDocs.jsonl', content: true },
+    { name: 'CmTransitions', classId: 'CmTransitionsClass', path: 'data/CmTransitions.jsonl' },
+  ]);
+  const core = fdStore();
+  const gw = { prompts: [], get: async () => gw.prompts, post: async (_p, b) => { gw.prompts.push(b); } };
+  const ctx = { target: { name: 't', user: 'u' }, clients: { core, gateway: gw } };
+  const res = await writeFdReceipt(ctx, manifest, { tagContributions: r.tagContributions });
+  assert.equal(res.dataSets.length, 2);
+  assert.deepEqual(core.calls.filter(([op]) => op !== 'upsertDoc'), [], 'zero schema writes');
+  const back = (await readReceipts(ctx, { code: 'cm' })).find((x) => x.surface === 'flowerdocs');
+  assert.deepEqual(back.dataSets, r.dataSets);
+  assert.deepEqual(back.tagContributions, r.tagContributions);
+  assert.equal(back.resourceHashes, null);
+  // the AI receipt JSON carries the same keys
+  assert.deepEqual(receiptFromAiPrompt({ id: 'uxcPkgCm', content: JSON.stringify(r) }).dataSets, r.dataSets);
+  // a later receipt of a package that dropped them rewrites the file without them
+  await writeFdReceipt(ctx, { code: 'cm', version: '1.0.1' }, {});
+  const again = (await readReceipts(ctx, { code: 'cm' })).find((x) => x.surface === 'flowerdocs');
+  assert.equal(again.dataSets, null);
+  assert.equal(again.tagContributions, null);
+  // the upload refused: the receipt survives without its content (readers: an older receipt)
+  const flaky = fdStore({ failUpload: true });
+  const kept = await writeFdReceipt({ target: { name: 't', user: 'u' }, clients: { core: flaky } }, manifest, {});
+  assert.equal(kept.dataSets, undefined);
+  assert.match(kept.warning, /receipt content not recorded/);
+});

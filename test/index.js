@@ -51,3 +51,4 @@ import "./http-redirect.test.mjs";
 import "./help-search.test.mjs";
 import "./first-contact.test.mjs";
 import "./owned-upgrade.test.mjs";
+import "./shared-tagclass.test.mjs";

@@ -243,3 +243,58 @@ test('checkRequires #115: unreadable receipts are retried, then "could not check
   assert.match(again.reason, /could not check fd\.tagclass\/CmOther/);
   assert.equal(probes, 3);
 });
+
+// #125 — a required fd.dataset owned by a dependency: definition from the dependency's receipt
+// (uxc-receipt.json `dataSets`), then the class + the dependency's rows checked on the server
+const DS_KEY = 'fd.dataset/CmTransitions';
+function dsCtx({ content = undefined, classes = ['CmTransitionsClass'], rows = [] } = {}) {
+  const rc = receiptDoc('cm', '0.5.0', [DS_KEY]);
+  if (content !== undefined) rc.files = [{ id: 'f1' }];
+  const ctx = depCtx({ receipts: [rc, receiptDoc('pom', '1.0.0', null)] });
+  const core = ctx.clients.core;
+  core.getContent = async () => Buffer.from(JSON.stringify(content));
+  const getOne = core.getOne;
+  core.getOne = async (path) => (/\/rest\/documentclass\//.test(path)
+    ? (classes.includes(decodeURIComponent(path.split('/').pop())) ? { id: decodeURIComponent(path.split('/').pop()) } : null)
+    : getOne(path));
+  const search = core.search;
+  core.search = async (q) => (q.classId === 'UxcPackage' ? search(q)
+    : { found: rows.length, results: rows.slice(q.start ?? 0, (q.start ?? 0) + (q.max ?? 200)).map((id) => ({ id })) });
+  return ctx;
+}
+const extDs = { manifest: { code: 'pom', dependencies: { cm: '>=0.4' }, dataSets: [{ name: 'PoTransitions', classId: 'CmTransitionsClass', path: 'data/PoTransitions.jsonl' }] }, registry: { resources: [{ kind: 'fd.dataset', id: 'PoTransitions' }] } };
+const DEFS = { kind: 'uxc-receipt-content/1', dataSets: [{ name: 'CmTransitions', classId: 'CmTransitionsClass', path: 'data/CmTransitions.jsonl' }] };
+
+test('checkRequires #125: a dependency\'s dataset resolves through its receipt — class present + its rows -> ok', async () => {
+  const ok = await checkRequires(dsCtx({ content: DEFS, rows: ['PomTransitions_A', 'CmTransitions_OPEN'] }), extDs, { resources: [DS_KEY] });
+  assert.equal(ok.ok, true, ok.reason);
+  // only the extension's own rows in the class: the dependency's dataset is not there
+  const onlyOurs = await checkRequires(dsCtx({ content: DEFS, rows: ['PomTransitions_A', 'POM_B'] }), extDs, { resources: [DS_KEY] });
+  assert.equal(onlyOurs.reason, 'requires fd.dataset/CmTransitions: class CmTransitionsClass holds no rows of dependency cm@0.5.0 on gfdefault — push the dependency\'s dataset');
+  // an unprefixed row is the dependency's (§31: unprefixed -> the owner reading it)
+  assert.equal((await checkRequires(dsCtx({ content: DEFS, rows: ['LEGACY_ROW'] }), extDs, { resources: [DS_KEY] })).ok, true);
+  // the class itself is absent
+  const noClass = await checkRequires(dsCtx({ content: DEFS, classes: [] }), extDs, { resources: [DS_KEY] });
+  assert.match(noClass.reason, /class CmTransitionsClass \(dataset of dependency cm@0\.5\.0\) is not on gfdefault/);
+  // never the old "has no manifest" — the package's own dataset still takes the normal path
+  assert.doesNotMatch(String(noClass.reason), /no manifest/);
+});
+
+test('checkRequires #125: an old receipt (no dataSets) skips with the re-push reason; a receipt without the name says so', async () => {
+  const old = await checkRequires(dsCtx({ rows: ['CmTransitions_OPEN'] }), extDs, { resources: [DS_KEY] });
+  assert.equal(old.reason, 'requires fd.dataset/CmTransitions: dependency cm@0.5.0 installed by a uxc older than 0.25.1: re-push it to record its datasets');
+  const fileNoDefs = await checkRequires(dsCtx({ content: { kind: 'uxc-receipt-content/1', resourceHashes: { a: 'b' } } }), extDs, { resources: [DS_KEY] });
+  assert.match(fileNoDefs.reason, /older than 0\.25\.1/);
+  const other = await checkRequires(dsCtx({ content: { kind: 'uxc-receipt-content/1', dataSets: [{ name: 'CmOther', classId: 'X' }] } }), extDs, { resources: [DS_KEY] });
+  assert.equal(other.reason, 'requires fd.dataset/CmTransitions: dependency cm@0.5.0 defines no dataset "CmTransitions" in its receipt');
+});
+
+test('checkRequires #125: a throwing search is "could not check", after the retries', async () => {
+  const ctx = dsCtx({ content: DEFS });
+  let n = 0;
+  const search = ctx.clients.core.search;
+  ctx.clients.core.search = async (q) => { if (q.classId === 'UxcPackage') return search(q); n++; throw new Error('HTTP 503'); };
+  const r = await checkRequires(ctx, extDs, { resources: [DS_KEY] });
+  assert.match(r.reason, /could not check fd\.dataset\/CmTransitions on gfdefault: HTTP 503/);
+  assert.equal(n, 3);
+});
