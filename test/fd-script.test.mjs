@@ -3,7 +3,10 @@
 // (the GUI never loads it; a handler fetches and load()s it — FLOWERDOCS-LEARNINGS §40).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import script, { isServerOnly } from '../lib/kinds/fd-script.mjs';
+import script, { isServerOnly, libraryClassIds } from '../lib/kinds/fd-script.mjs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { hashResource } from '../lib/canonical.mjs';
 
 const entry = { id: 'po-lib-a', path: 'fd/scripts/po-lib-a' };
@@ -109,4 +112,73 @@ test('classId: an update whose class change the server did not apply fails loudl
   delete back.obj.classId;
   await script.update(ctxWith('Script').ctx, 'po-lib-a', back);
   await assert.rejects(script.update(ctxWith('PoServerLibrary').ctx, 'po-lib-a', back), /pushed as class Script but the server kept PoServerLibrary/);
+});
+
+// ---- #76: the class must be known to the package; ls/adopt see a library moved to another class ----
+
+/** A minimal package view: registry entries + meta.json files on disk. */
+function fakePkg(entries, metas = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'uxc-fdscript-'));
+  for (const [id, meta] of Object.entries(metas)) {
+    mkdirSync(join(dir, 'fd/scripts', id), { recursive: true });
+    writeFileSync(join(dir, 'fd/scripts', id, 'meta.json'), JSON.stringify(meta));
+  }
+  return {
+    dir,
+    entries: (kind) => entries.filter((e) => !kind || e.kind === kind),
+    entry: (kind, id) => entries.find((e) => e.kind === kind && e.id === id) ?? null,
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+test('classId: validate requires an fd.documentclass entry of the package (typo -> did-you-mean)', () => {
+  const mk = (o) => ({ obj: { name: 'X', contentFile: 'po-lib-a.js', registrationOrder: null, ...o }, contents: { 'po-lib-a.js': bytes } });
+  const pkg = fakePkg([{ kind: 'fd.documentclass', id: 'PoServerLibrary', path: 'fd/classes/PoServerLibrary.json' }]);
+  try {
+    assert.deepEqual(script.validate(pkg, entry, mk({ classId: 'PoServerLibrary' })), []);
+    assert.match(script.validate(pkg, entry, mk({ classId: 'PoServerlibrary' })).join('\n'), /not an fd\.documentclass.*did you mean "PoServerLibrary"/);
+    const unknown = script.validate(pkg, entry, mk({ classId: 'PoOther' })).join('\n');
+    assert.match(unknown, /not an fd\.documentclass of this package/);
+    assert.match(unknown, /uxc adopt fd\.documentclass PoOther --external/, 'a server-side class is registered, not pushed');
+    // a class registered as external satisfies it
+    const ext = fakePkg([{ kind: 'fd.documentclass', id: 'PoOther', policy: 'external' }]);
+    assert.deepEqual(script.validate(ext, entry, mk({ classId: 'PoOther' })), []);
+    ext.cleanup();
+  } finally { pkg.cleanup(); }
+});
+
+test('list: searches Script plus the library classes the package declares, and reports the class', async () => {
+  const pkg = fakePkg(
+    [
+      { kind: 'fd.script', id: 'po-lib-a', path: 'fd/scripts/po-lib-a' },
+      { kind: 'fd.script', id: 'po-lib-b', path: 'fd/scripts/po-lib-b' },
+      { kind: 'fd.script', id: 'po-ui', path: 'fd/scripts/po-ui' },
+    ],
+    {
+      'po-lib-a': { registrationOrder: null, classId: 'PoServerLibrary' },
+      'po-lib-b': { registrationOrder: null, classId: 'PoServerLibrary' },
+      'po-ui': { registrationOrder: '930' },
+    },
+  );
+  try {
+    assert.deepEqual(libraryClassIds({ pkg }), ['PoServerLibrary']);
+    let asked;
+    const ctx = {
+      pkg,
+      clients: { core: { search: async (q) => {
+        asked = q;
+        return { found: 2, results: [
+          { id: 'po-ui', fields: { name: 'Po UI', classid: 'Script' } },
+          { id: 'po-lib-c', fields: { name: 'Po Lib C', classid: 'PoServerLibrary' } },
+        ] };
+      } } },
+    };
+    const rows = await script.list(ctx);
+    assert.deepEqual(asked.classId, ['Script', 'PoServerLibrary']);
+    assert.deepEqual(rows, [{ id: 'po-ui', name: 'Po UI' }, { id: 'po-lib-c', name: 'Po Lib C', classId: 'PoServerLibrary' }]);
+    // no package (uxc ls outside a package): Script only, and requirePkg throwing is not fatal
+    const bare = { requirePkg: () => { throw new Error('no package'); }, clients: ctx.clients };
+    await script.list(bare);
+    assert.deepEqual(asked.classId, ['Script']);
+  } finally { pkg.cleanup(); }
 });

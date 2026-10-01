@@ -256,13 +256,15 @@ never rewrites installedAt. `resolveTarget` exposes `allowTests` (targets.json /
 ## lib/home.mjs — where uxc keeps its non-package state
 
 ```js
-export function uxcHome()                   // UXC_HOME (any platform) else os.homedir()
+export function uxcHome()                   // UXC_HOME (any platform; a relative one is path.resolve()d) else os.homedir()
 export function uxcDir(...parts)            // <home>/.uxopian/<...parts>, resolved PER CALL
 ```
 
 `os.homedir()` reads $HOME on posix and %USERPROFILE% on Windows, so `HOME`-based test isolation
 silently did nothing there — the suite overwrote the real `~/.uxopian/targets.json` (#71). Every
-path under `~/.uxopian` goes through `uxcDir()`; tests set `UXC_HOME`.
+path under `~/.uxopian` goes through `uxcDir()`; tests set `UXC_HOME`. Print a config path with
+`targetsPath()` / `marketplaceConfigPath()` (per call), never the import-time `TARGETS_FILE` /
+`MARKETPLACE_FILE` constants (kept for compatibility only, #76).
 
 ## lib/lock.mjs — cross-process target lock (DESIGN §25.1)
 

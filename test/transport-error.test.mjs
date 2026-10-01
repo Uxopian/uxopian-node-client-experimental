@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createClients, NetworkError } from '../lib/http.mjs';
+import { createClients, NetworkError, HttpError } from '../lib/http.mjs';
 import { runPrompt } from '../lib/run.mjs';
 
 /** A server that authenticates, then destroys the socket on any other route — the §29 signature. */
@@ -40,7 +40,7 @@ test('a socket closed mid-request becomes a NetworkError, not a bare "terminated
     assert.match(e.message, /GET .*\/rest\/thing/, 'it must name the endpoint');
     assert.ok(e.explanation, 'a uxc error carries its next move');
     assert.match(e.explanation, /§29/);
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('connection refused is reported as such, with the target to check', async () => {
@@ -71,7 +71,7 @@ test('runPrompt names the prompt and the §29 isolation step when the gateway dr
     assert.match(e.message, /NOT an answer/, 'the whole point: it must not read as a result');
     assert.match(e.explanation, /calls NO bean/, 'it must give the isolation step');
     assert.match(e.explanation, /uxc get ai\.prompt\/summarizeDocumentText/);
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('a NetworkError is never mistaken for an HTTP failure (it has no status)', async () => {
@@ -82,7 +82,7 @@ test('a NetworkError is never mistaken for an HTTP failure (it has no status)', 
     assert.equal(e.status, undefined, 'a request that never got a response has no status code');
     assert.equal(e.name, 'NetworkError');
     assert.ok(e.cause, 'the original undici error stays attached for debugging');
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ test('an image rides as an IMAGE content item alongside the PROMPT', async () =>
     assert.equal(content[0].value, 'describeImage');
     assert.equal(content[1].type, 'IMAGE');
     assert.equal(content[1].value, PNG_DATA_URI);
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('bare base64 is refused BEFORE the request — it would close the socket, not 400', async () => {
@@ -151,7 +151,7 @@ test('bare base64 is refused BEFORE the request — it would close the socket, n
     assert.match(e.message, /data:<mime>;base64,/);
     assert.match(e.message, /closes the socket/, 'say WHY it is refused here rather than by the server');
     assert.equal(bodies.length, 0, 'nothing may reach the gateway');
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('several images are all carried, in order', async () => {
@@ -164,7 +164,7 @@ test('several images are all carried, in order', async () => {
     const [content] = bodies.map((b) => b.inputs[0].content);
     assert.deepEqual(content.map((c) => c.type), ['PROMPT', 'IMAGE', 'IMAGE']);
     assert.equal(content[2].value, second);
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('a run with no images keeps the exact single-content body it always had', async () => {
@@ -175,7 +175,7 @@ test('a run with no images keeps the exact single-content body it always had', a
     const [content] = bodies.map((b) => b.inputs[0].content);
     assert.equal(content.length, 1);
     assert.deepEqual(content[0], { type: 'PROMPT', value: 'plain', payload: { a: 1 } });
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
 });
 
 test('an older gateway refuses inline images with the version that added them', async () => {
@@ -188,5 +188,33 @@ test('an older gateway refuses inline images with the version that added them', 
     assert.ok(e, 'a pre-ft5 gateway has no IMAGE content type');
     assert.match(e.message, /inline images need uxopian-ai 2026\.0\.0-ft5\+/);
     assert.equal(bodies.length, 0);
-  } finally { server.close(); }
+  } finally { server.closeAllConnections?.(); server.close(); }
+});
+
+// ---- #76 follow-ups ----
+
+test('TLS classifier: an incomplete chain and a missing local issuer are certificate failures', () => {
+  for (const code of ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'CERT_HAS_EXPIRED']) {
+    assert.equal(NetworkError.describe(code), 'the TLS certificate was rejected', code);
+    assert.match(NetworkError.advise(code), /NODE_EXTRA_CA_CERTS/, code);
+  }
+});
+
+test('a body that dies after a 5xx keeps the status: HttpError 502, not a NetworkError', async () => {
+  const server = createServer((req, res) => {
+    if (req.url.startsWith('/rest/authentication')) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ value: 'tok' })); return; }
+    // promise 1000 bytes, send a few, then kill the socket mid-body
+    res.writeHead(502, { 'Content-Type': 'text/plain', 'Content-Length': '1000' });
+    res.write('Bad Gat');
+    setTimeout(() => req.socket.destroy(), 20);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const { core } = createClients({ core: base, gateway: base, gui: base, user: 'u', password: 'p', scope: 's' });
+    const e = await core.get('/rest/thing').then(() => null, (err) => err);
+    assert.ok(e instanceof HttpError, `expected an HttpError, got ${e?.name}: ${e?.message}`);
+    assert.equal(e.status, 502);
+    assert.match(e.message, /response body lost after HTTP 502/);
+  } finally { server.closeAllConnections?.(); server.close(); }
 });

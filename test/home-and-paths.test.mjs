@@ -16,7 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute } from 'node:path';
 
 import { uxcHome, uxcDir } from '../lib/home.mjs';
 import { toPosix } from '../lib/util.mjs';
@@ -60,6 +60,26 @@ test('an unset/blank UXC_HOME falls back to os.homedir()', () => {
   } finally {
     if (prev === undefined) delete process.env.UXC_HOME; else process.env.UXC_HOME = prev;
   }
+});
+
+test('a relative UXC_HOME is resolved to an absolute path (#76)', () => {
+  const prev = process.env.UXC_HOME;
+  try {
+    process.env.UXC_HOME = join('some', 'rel-home');
+    assert.equal(uxcHome(), resolve(process.cwd(), 'some', 'rel-home'));
+    assert.ok(isAbsolute(uxcDir('targets.json')));
+  } finally {
+    if (prev === undefined) delete process.env.UXC_HOME; else process.env.UXC_HOME = prev;
+  }
+});
+
+test('targetsPath()/marketplaceConfigPath() follow a UXC_HOME set AFTER import (#76)', async () => {
+  const { targetsPath } = await import('../lib/config.mjs');
+  const { marketplaceConfigPath } = await import('../lib/mpconfig.mjs');
+  await withUxcHome((home) => {
+    assert.equal(targetsPath(), join(home, '.uxopian', 'targets.json'));
+    assert.equal(marketplaceConfigPath(), join(home, '.uxopian', 'marketplace.json'));
+  });
 });
 
 test('targets.json is written under UXC_HOME, never the real home (the #71 data-loss hazard)', async () => {

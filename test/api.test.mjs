@@ -118,7 +118,7 @@ async function fakeInstance() {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { seen, base, close: () => new Promise((r) => server.close(r)) };
+  return { seen, base, close: () => new Promise((r) => { server.closeAllConnections?.(); server.close(r); }) };
 }
 
 /** Run uxc asynchronously (the fake server lives in THIS process). */

@@ -37,5 +37,7 @@ test('a cross-origin redirect is not followed (the token stays home); a same-ori
     const same = await core.raw('POST', '/rest/here', { a: 1 });
     assert.equal(same.status, 200);
     assert.deepEqual(same.json, { token: true, method: 'POST' }, '307 keeps the method and the token on the same origin');
-  } finally { target.server.close(); other.server.close(); }
+  } finally {
+    for (const s of [target.server, other.server]) { s.closeAllConnections?.(); s.close(); }
+  }
 });
