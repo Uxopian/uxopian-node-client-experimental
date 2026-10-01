@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
 import { openPackage } from '../lib/registry.mjs';
-import { pushResources, statusAll } from '../lib/sync.mjs';
+import { pushResources, pullResources, statusAll } from '../lib/sync.mjs';
 import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
 import adapter from '../lib/kinds/fd-tagclass-delta.mjs';
 import { hashResource } from '../lib/canonical.mjs';
@@ -441,25 +441,56 @@ test('legacy: push adds a missing legacy value, leaves product labels alone, rec
   const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
   assert.deepEqual(st.ownValues, ['ACME_QUOTE', 'ORDER']);
   assert.deepEqual(st.legacyValues, ['ORDER']);
+  assert.deepEqual(st.legacyAdded, [], 'ORDER was on the server already: declared, NOT removable');
 });
 
-test('legacy: rm --server removes the declared unprefixed value, never an undeclared one', async () => {
-  const dir = makePkg({ CmCaseType: LEG({ allowedValues: [d('ORDER'), d('CLAIM'), d('ACME_QUOTE')] }) });
-  const srv = fakeServer({ CmCaseType: [v('ORDER'), v('CLAIM'), v('ACME_QUOTE'), v('KEEP')] });
-  const { ctx } = ctxFor(dir, srv.core);
+test('legacy: rm --server removes a legacy value this package\'s push ADDED, never an undeclared one', async () => {
+  const dir = makePkg({ CmCaseType: LEG() });
+  const srv = fakeServer({ CmCaseType: [v('CLAIM'), v('KEEP')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
+  assert.deepEqual(st.legacyAdded, ['ORDER']);
+  pkg.setResState('t1', 'fd.tagclass-delta', 'CmCaseType', { ownValues: [...st.ownValues, 'CLAIM'] }); // a stray undeclared name
   await adapter.remove(ctx, 'CmCaseType');
   assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM', 'KEEP']);
 });
 
-test('legacy: file gone, rm uses the recorded legacyValues (and not an unrecorded unprefixed name)', async () => {
-  const dir = makePkg({ CmCaseType: LEG() });
-  const srv = fakeServer({ CmCaseType: [v('ORDER'), v('CLAIM'), v('ACME_QUOTE')] });
+test('legacy: a declaration alone never makes a product value removable (push adopts, rm keeps it and says so)', async () => {
+  const dir = makePkg({ CmCaseType: { tagclass: 'CmCaseType', legacy: ['CLOSED'], allowedValues: [d('CLOSED'), d('ACME_QUOTE')] } });
+  const srv = fakeServer({ CmCaseType: [v('OPEN'), v('CLOSED'), v('ACME_QUOTE')] });
+  const { ctx, pkg, lines } = ctxFor(dir, srv.core);
+  const r = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(r[0].action, 'adopted');
+  assert.equal(srv.log.posts.length, 0);
+  const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
+  assert.ok(!(st.legacyAdded ?? []).includes('CLOSED'));
+  const s = await statusAll(ctx, { remote: true });
+  assert.match(s.rows[0].detail, /kept: CLOSED \(legacy value present before this package/);
+  await adapter.remove(ctx, 'CmCaseType');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['OPEN', 'CLOSED']);
+  assert.ok(lines.some((l) => /kept: CLOSED — legacy value present before this package/.test(l)));
+});
+
+test('legacy: a push that writes (adds a prefixed value) still records only what it added', async () => {
+  const dir = makePkg({ CmCaseType: { tagclass: 'CmCaseType', legacy: ['CLOSED', 'ORDER'], allowedValues: [d('CLOSED'), d('ORDER'), d('ACME_QUOTE')] } });
+  const srv = fakeServer({ CmCaseType: [v('CLOSED')] });
   const { ctx, pkg } = ctxFor(dir, srv.core);
-  pkg.setResState('t1', 'fd.tagclass-delta', 'CmCaseType', { ownValues: ['ORDER', 'CLAIM', 'ACME_QUOTE'], legacyValues: ['ORDER'] });
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.deepEqual(pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType').legacyAdded, ['ORDER']);
+  await adapter.remove(ctx, 'CmCaseType');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLOSED']);
+});
+
+test('legacy: file gone, rm uses the recorded legacyAdded (a declared-only or unrecorded unprefixed name stays)', async () => {
+  const dir = makePkg({ CmCaseType: LEG() });
+  const srv = fakeServer({ CmCaseType: [v('ORDER'), v('CLAIM'), v('ACME_QUOTE'), v('OLD')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  pkg.setResState('t1', 'fd.tagclass-delta', 'CmCaseType', { ownValues: ['ORDER', 'CLAIM', 'ACME_QUOTE', 'OLD'], legacyValues: ['ORDER', 'OLD'], legacyAdded: ['ORDER'] });
   const { rmSync } = await import('node:fs');
   rmSync(join(dir, 'fd/tagclass-deltas/CmCaseType.delta.json'));
   await adapter.remove(ctx, 'CmCaseType');
-  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM']);
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM', 'OLD']);
 });
 
 test('legacy: a legacy value dropped from the delta is an orphan and removed by push; an undeclared one is not', async () => {
@@ -476,4 +507,56 @@ test('legacy: a legacy value dropped from the delta is an orphan and removed by 
   assert.doesNotMatch(s.rows[0].detail, /STRAY/);
   await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
   assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM', 'ACME_QUOTE', 'STRAY']);
+});
+
+test('legacy: dropping a pre-existing legacy value from legacy AND allowedValues stops tracking it, never deletes it', async () => {
+  const dir = makePkg({ CmCaseType: { tagclass: 'CmCaseType', legacy: ['CLOSED'], allowedValues: [d('CLOSED'), d('ACME_QUOTE')] } });
+  const srv = fakeServer({ CmCaseType: [v('CLOSED')] });
+  const { ctx, pkg, lines } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLOSED', 'ACME_QUOTE']);
+  writeFileSync(join(dir, 'fd/tagclass-deltas/CmCaseType.delta.json'), JSON.stringify({ tagclass: 'CmCaseType', allowedValues: [d('ACME_QUOTE')] }));
+  const s = await statusAll(ctx, { remote: true });
+  assert.doesNotMatch(s.rows[0].detail ?? '', /orphaned/);
+  const r = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(srv.log.posts.length, 1, 'no write: nothing to remove');
+  assert.equal(r[0].action, 'rebased');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLOSED', 'ACME_QUOTE']);
+  assert.ok(lines.some((l) => /no longer tracked: CLOSED — not added by this package/.test(l)));
+  assert.deepEqual(pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType').ownValues, ['ACME_QUOTE']);
+  await adapter.remove(ctx, 'CmCaseType');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLOSED']);
+});
+
+test('legacy survives the push echo write and pull; the next push still lints clean; baseState keeps it', async () => {
+  const file = (dir) => JSON.parse(readFileSync(join(dir, 'fd/tagclass-deltas/CmCaseType.delta.json'), 'utf8'));
+  const dir = makePkg({ CmCaseType: LEG() });
+  const srv = fakeServer({ CmCaseType: [v('CLAIM')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.deepEqual(file(dir).legacy, ['ORDER'], 'echo leg keeps the declaration');
+  assert.deepEqual(lintTagDeltas(openPackage(dir)), []);
+  const e = pkg.entry('fd.tagclass-delta', 'CmCaseType');
+  assert.deepEqual(adapter.validate(pkg, e, adapter.readLocal(pkg, e)), []);
+  // relabel on the server, then pull: the file takes the server labels and keeps `legacy`
+  srv.tcs.get('CmCaseType').allowedValues.find((x) => x.symbolicName === 'ACME_QUOTE').displayNames[0].value = 'Quote!';
+  const p = await pullResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(p[0].action, 'pulled');
+  assert.deepEqual(file(dir).legacy, ['ORDER'], 'pull keeps the declaration');
+  const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
+  assert.deepEqual(st.legacyValues, ['ORDER'], 'pull base records the declared legacy values');
+  assert.deepEqual(st.legacyAdded, ['ORDER'], 'a base record never touches the removable set');
+  const again = await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.equal(again[0].action, 'unchanged');
+  // a pulled value the server lacks leaves `legacy` narrowed to what is listed (never EXT_TAG_LEGACY)
+  srv.tcs.get('CmCaseType').allowedValues = srv.tcs.get('CmCaseType').allowedValues.filter((x) => x.symbolicName !== 'ORDER');
+  await pullResources(ctx, pkg.entries('fd.tagclass-delta'), { force: true });
+  assert.equal(file(dir).legacy, undefined);
+});
+
+test('legacy is not hashed: a delta hashes as on main with or without it', () => {
+  const obj = { tagclass: 'CmCaseType', allowedValues: [{ symbolicName: 'ACME_QUOTE', displayNames: [{ language: 'EN', value: 'Quote' }, { language: 'FR', value: 'Devis' }] }, { symbolicName: 'ORDER', displayNames: [{ language: 'en', value: 'Order' }] }] };
+  const MAIN = 'sha256:624d7848bbf2a3b830e9be9a9e7e9e76fd68e1b5b20a5d0252e6bad234e2f665'; // computed on main (ee62ec5)
+  assert.equal(hashResource('fd.tagclass-delta', { obj }), MAIN);
+  assert.equal(hashResource('fd.tagclass-delta', { obj: { ...obj, legacy: ['ORDER'] } }), MAIN);
 });
