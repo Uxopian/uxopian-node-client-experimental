@@ -13,7 +13,9 @@
     "node": ">=18.17"
   },
   "scripts": {
+    "pretest": "node scripts/home-tripwire.mjs snapshot",
     "test": "node --test test/",
+    "posttest": "node scripts/home-tripwire.mjs check",
     "postinstall": "node scripts/postinstall.mjs",
     "prepare": "node scripts/postinstall.mjs"
   },

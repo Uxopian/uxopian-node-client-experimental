@@ -149,7 +149,7 @@ export async function runPlan(ctx, planId, { payload = {}, expect = null, maxCha
 ## lib/index.mjs (public lib)
 
 ```js
-export { connect } from …       // async connect(targetName?) -> { core, gateway, gui, cacheClear, target }
+export { connect } from …       // async connect(targetName?) -> { core, gateway, gui, f2, cacheClear, target }
 export { openPackage } from '../registry path'
 export { KINDS, PUSH_ORDER } from './kinds/index.mjs'
 export { canonicalize, hashResource } from './canonical.mjs'
@@ -158,6 +158,11 @@ export { explainCode, explainError } from './explain.mjs'
 export * as naming from './naming.mjs'
 export * as util from './util.mjs'
 ```
+
+`connect()` side effect (FAST-5884, REVIEW P3-9): on a target with a fast2 URL, the `f2` client
+shares the token cache — it reads and writes `<UXC_HOME|~>/.uxopian/f2-tokens/` (and the
+failed-login marker there) for every embedding program, exactly as the CLI does. Opt out of the
+token cache with `UXC_F2_TOKEN_CACHE=0`; the failed-login marker stays on (it holds no secret).
 
 ## Adapters — kind-specific notes (DESIGN.md §7 is normative; highlights)
 
@@ -336,7 +341,7 @@ findings are warnings BY DESIGN — a prompt may be called from outside the pack
 
 ## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, lock?, run(ctx) }
 
-Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
+Names: init, target-add, target-ls, target-use, target-logout, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
 search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
 doctor, install-claude, context, size, api, help.
@@ -387,7 +392,8 @@ Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXC
 | `run` | execute/start on the server | `run`, `f2 run` | — |
 
 Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
-`login`, `publish`, `install`, `deprecate`, `versions`, `categories` — reasons in
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories`, `status` (`f2 status`),
+`exceptions` (`f2 exceptions`), `lib` (`f2 lib ls|push|restore`) — reasons in
 `VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
 of a family and are not linted for verb choice.
 
@@ -402,6 +408,7 @@ Flag semantics:
 | `--json` | machine output via `ctx.out.result()` | global |
 | `--target <name>` | which instance | global; checked against the package pin (DESIGN §25) |
 | `--dir <path>` | which package | global |
+| `--no-token-cache` | this process neither reads nor writes the shared fast2 token (the failed-login marker stays on) | global; = `UXC_F2_TOKEN_CACHE=0` (FAST-5884) |
 | `--kind k1,k2` / `--prefix P` | filters on a package sweep | `status`, `adopt --scan`; `ls` takes the kind positionally |
 | `--max n` | at most n items back | `search`, `recent`, `task ls`; `--limit` is an alias |
 | `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
@@ -419,7 +426,8 @@ Destructive gates (`DESTRUCTIVE`; the lint requires every `rm`/`delete`/`destroy
 listed and its gate flags to be in its help and read by its code):
 `rm` — a side (`--local|--server|--both`), `--force` for createOnly/external · `destroy` —
 `--confirm <code>` or `--dry-run` · `doc rm` — explicit ids only · `scope delete` / `mp rm` —
-`--yes` · `data push` — row deletes only with `--prune --yes`.
+`--yes` · `data push` — row deletes only with `--prune --yes` · `f2 lib push|restore` — `--yes`, and `--force` past a
+running campaign.
 
 Lint rules (test/cli-consistency.test.mjs): every module exports `name`/`summary`/`help`/`run`
 and its name matches its file; every two-word subcommand verb is in `VERBS` or
@@ -428,6 +436,94 @@ alias resolves to a real module and shadows none; every flag a module reads (`fl
 `flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
 `--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
 every alias.
+
+## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
+
+```js
+export function f2Surface(target, {loginCooldownMs = 30_000, reloginIntervalMs = 30_000, tokenCache = false,
+  failedLoginMarker = tokenCache, loginWaitMs = 5_000}?)  // target.f2 + f2User/f2Password -> client
+export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache, failedLoginMarker: true}; the CLI passes false for --no-token-cache
+export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
+export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
+//   {base, login({force}?) -> token, hasToken() -> bool, tokenSource() -> 'login'|'cache'|'refresh'|null,
+//    anonymous(method, path, opts?) -> response,
+//    req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
+//    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
+//    on a status; opts.binary -> response.bytes, a Buffer), text(path) -> string}
+```
+
+Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. `login()`
+returns the token in hand while it is fresh (JWT `exp` − 10 min, else 3.5 h; then the cache below) and only `login({force:true})` always calls the
+broker, so any caller (doctor, a library driver on `connect()`) may call it safely. The anti-lockout
+cooldown (30 s) counts FAILED logins only (a failed status or a transport error on the login):
+inside it, `login()` throws `UXC_F2_COOLDOWN` without a request; its message says when the last
+login failed, whether in another process, and when to retry (`retry in Ns (at HH:MM:SS)`).
+Cross-process (FAST-5874 / A04): a failed login also writes `<key>.failed.json` `{v:1, broker,
+user, failedAt}` (0600, temp + rename) beside the token entry, and `cooldownLeft()` takes the later
+of the process's own failure and that marker — so a chain of `uxc` processes with a wrong password
+spends ONE failed login per 30 s, not one per process. A successful login removes the marker; a
+login that never reached the broker (ECONNREFUSED, DNS, connect timeout, TLS) writes none; a
+marker dated in the future is ignored. On for `createClients` (CLI and `connect()`) EVEN with the
+token cache off (`--no-token-cache` / `UXC_F2_TOKEN_CACHE=0`: lockout protection is not a cache and
+the marker holds no secret); off for a bare `f2Surface()` unless `{failedLoginMarker: true}` or
+`{tokenCache: true}`, and whenever `loginCooldownMs` is 0. Re-auth rule (§F22/§F23): a 401 ->
+one forced login + one replay, unless a re-login is skipped — inside the failed-login cooldown, or
+within `reloginIntervalMs` (30 s) of the previous 401-forced re-login (the token it minted refused
+too, or a flapping topology; after the interval a long-lived client may re-log-in again, REVIEW
+N3) — and then the BROKER's 401 is
+returned (`req()` throws its `HttpError`, `explanation` = why the re-login was skipped, never the
+cooldown text). A GENERIC 403 -> one login + one replay, at most once per token, never inside the
+cooldown after any login, and never on a token the broker already accepted (a 403 on a proven
+token is a real refusal whatever its body shape — Spring omits `message` by default); if the fresh
+token still gets the generic 403, it is real for the rest of the process. Any other 403 -> no
+login, surfaced with the broker's body. A status >= 400 throws `HttpError` carrying the broker's
+body (`get`/`post`/`put`/`del`/`req`/`text`). Poll loops (`f2 status --watch`, `f2 run`, the
+`lib push` worker wait) never swallow an `isF2AuthError` error: it ends the command, exit 2.
+`DELETE /api/maps/{id}` answers **200 with an empty body** (§F29), so `del()` resolves to `undefined`
+on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
+call site. Upload answers 201 + the full map (§F25).
+
+Token cache (FAST-5884, `lib/f2/token-cache.mjs`). On for `createClients` (CLI and `connect()`),
+off for a bare `f2Surface()` unless `{tokenCache: true}`, and off whenever `UXC_F2_TOKEN_CACHE=0`
+(also `false|off|no`) or the CLI gets `--no-token-cache` — then no token is read or written (the
+failed-login marker above still is).
+One file per identity: `<UXC_HOME|~>/.uxopian/f2-tokens/<sha256(broker URL \n user \n tenant)[0..32]>.json`,
+directory 0700, file 0600, written to a `.<key>.<pid>.<rand>.tmp` in the same directory then
+`rename()`d (atomic; concurrent writers = last one wins). The directory is `lstat`ed: a symlink, a
+non-directory or another owner's directory refuses the cache (nothing read, written, chmod-ed or
+deleted through it; it costs a login). A file is opened `O_NOFOLLOW|O_NONBLOCK` and `fstat`ed: a
+symlink, a FIFO or any non-regular file, group/other bits or another owner -> ignored and removed.
+Windows: none of these POSIX checks apply and no ACL is set — the profile directory's inherited ACL
+is the only protection of the token files. Format (v1, one JSON line):
+`{v:1, broker, user, tenant:null, accessToken, refreshToken|null, refreshExpiresAt:ms|null,
+expiresAt:ms, expSource:'jwt'|'ttl', savedAt:ms}` — `expiresAt` = the JWT `exp` (decoded without
+verification; an `exp` >= 1e12 is read as ms; one more than 24 h after the login is not believed)
+or login + 3.5 h; `refreshExpiresAt` likewise (an unbelievable one -> login + 3.5 h); never the password. `login()` without `force`: the token in hand
+while fresh → the cached token while `now < expiresAt − 10 min` (`ttl`: `< expiresAt`) → inside that
+margin `POST /api/auth/refresh-token` with `Authorization: Bearer <refreshToken>` (not a login: never
+counts towards the lockout, never inside the cooldown logic) → a broker login. Every successful
+login/refresh writes the entry; a failed login (any status, or a transport error) deletes the entry
+it started from, and a spent unrefreshable entry is deleted the same way — compare-and-delete
+(`dropIf`), so a fresh entry a sibling process stored meanwhile survives (REVIEW P3-2); a 401
+deletes it when it still holds the refused token. Login lock (REVIEW P3-3): a broker login takes
+`<key>.lock` (O_EXCL); a process that finds it held waits (<= `loginWaitMs`, polling 50 ms) for the
+token the holder stores and uses it — after a 401, any stored token other than the refused one —
+then logs in itself only if none came (a lock older than 10 s is a crashed holder's and is taken
+over). N parallel processes after a broker restart = 1 login. Every write sweeps orphans: entries
+whose access and refresh tokens died over an hour ago, markers and temp/lock files older than an
+hour (REVIEW P3-5). `uxc target logout [name] [--all]` and
+re-registering a name with `target add` delete entries (`--all` also removes markers and locks). No token is ever printed (`--json`,
+messages, the `UXC_HTTP_LOG` journal — it logs method, path, status, time, size only).
+
+Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`). A stored
+target is judged on its STORED fields: saved with `f2` and no FlowerDocs field, it stays Fast2-only
+even when `UXC_SCOPE`/`UXC_USER`/`UXC_CORE_URL`/… are exported (env FlowerDocs vars only complete a
+stored FlowerDocs target). A pure-env target is judged on the env; its "incomplete" error names
+the FlowerDocs env vars that made it a FlowerDocs target.
+`createClients` returns `noSurface(target, product)` for `core`, `gui` and `gateway` — a Proxy
+whose every property read throws `Error{code:'UXC_NO_SURFACE'}` "target <name> has no FlowerDocs
+surface …" before any request; `auth()` and `cacheClear()` reject the same way. Commands never
+null-check `ctx.clients.core`: the guard is the one place this is decided.
 
 ## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
 
@@ -539,14 +635,18 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | completion --install | `{installed, shell}`                                                  |
 | version            | `{version}`                                                             |
 | init               | `{dir, manifest, created, extension?}`                                  |
-| target add         | `{name, core, ai, gui, f2, scope, default}`                             |
-| target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
+| target add         | `{name, core, ai, gui, f2, scope, default}` (Fast2-only: core/ai/gui/scope `null`) |
+| target ls          | `[{def, name, core, ai, scope, user, password:'••••••', f2}]` (masked)  |
 | target use         | `{default}`                                                             |
+| target logout      | `{target, f2, removed}` · `--all` `{all:true, removed:<count>}` (local; no broker call) |
 | scope get          | scope object · `{id, exists:false}` (exit 1)                            |
 | scope create       | `{action:'created'|'updated', scope}`                                   |
 | scope delete       | `{id, deleted:true}`                                                    |
 | f2 ls              | `{maps, campaigns}`                                                     |
-| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, steps?, waited?}` |
+| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, queued?, processing?, steps?, waited?}` (the `f2 status` shape + `map`) |
+| f2 status          | `{campaign, mapId, status, elapsedSec, ok, exception, queued, processing, steps:[{step, ok, exception, queued, processing, speed}]}`. Exit: without `--watch` it is a READ — 0 for any status the broker returns, exceptions included; `--watch` checks an expectation — 1 unless it ends `Finished` with 0 exceptions (also 1 on timeout). |
+| f2 exceptions      | `{campaigns, mapIds, path, rows, byStep:{<step>:{<exceptionClass>:n}}, top:[{step, exception, count}]}` |
+| f2 lib             | `{action:'ls'|'push'|'restore', jar, status, workerBackAfterSec, listed}` + ls: `total, libraries` · push: `sizeBytes, httpStatus` · restore: `from, httpStatus` · waited: `worker:{workerId, pid, respawn:'same-worker'|'new-pid'|'new-worker'}` · busy: `campaigns` · refused: `body` · timeout: `workers`. `status`: `ok` (a worker heard from after the call AND the jar listed — dated ≥ the upload start for a push), `uploaded`/`restored` (--no-wait), `unverified` (worker back, the jar not provable: listing short of `total`, or an unreadable date), `busy`, `refused`, `timeout` (no worker heard from), `not-listed`, `stale` (listed, dated before the push); exit 1 for all but `ok`/`uploaded`/`restored`/`unverified` |
 | mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
 | mp show            | addon detail, or the version detail with `@version`                     |
 | mp init            | `{path, marketplace, errors, warnings}`                                 |

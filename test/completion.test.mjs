@@ -56,7 +56,7 @@ test('bashCompletion: kind- and id-aware argument completion present', () => {
 
 test('bashCompletion: per-command flags include globals + curated set', () => {
   const s = bashCompletion(ARGS());
-  assert.match(s, /__uxc_flags='--target --json --human --dir --help'/);
+  assert.match(s, /__uxc_flags='--target --json --human --dir --help --no-token-cache'/);
   // key push flags present in the push arm (exact-list pinning broke on every new flag)
   const pushArm = s.match(/"push"\) __uxc_flags="\$__uxc_flags ([^"]+)"/)[1].split(' ');
   for (const f of ['--changed', '--all', '--force', '--settle', '--yes-removals', '--keep-removed']) {

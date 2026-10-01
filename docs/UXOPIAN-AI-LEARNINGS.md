@@ -2,8 +2,8 @@
 
 Same contract as [FLOWERDOCS-LEARNINGS.md](./FLOWERDOCS-LEARNINGS.md): every entry was VERIFIED
 live before being written; never guess an API shape — prove it on a throwaway object, then append
-here (numbered §, date, instance). One file per product (`FAST2-LEARNINGS.md` will follow when
-fast2 support lands). Historical note: early uxopian-ai findings were recorded inside the
+here (numbered §, date, instance). One file per product ([FAST2-LEARNINGS.md](./FAST2-LEARNINGS.md)
+for the Fast2 broker). Historical note: early uxopian-ai findings were recorded inside the
 FlowerDocs file — cross-references below point at them; NEW uxopian-ai findings belong HERE.
 
 ## §A1 — Surface + auth

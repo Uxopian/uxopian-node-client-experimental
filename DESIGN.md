@@ -525,7 +525,8 @@ Sources in `claude/`, installed by `uxc install-claude` (symlinks into `~/.claud
 ## 18. Server dialects (version-aware behavior)
 
 Uxopian products release fast (uxopian-ai monthly, API changes still allowed pre-GA; FlowerDocs
-yearly; `fast2` support planned). uxc therefore detects the server VERSION it talks to and
+yearly; fast2 supported since 0.14.0 — `DIALECTS.fast2`, FAST2-LEARNINGS §F2/§F24). uxc therefore
+detects the server VERSION it talks to and
 branches on **capability flags**, never on raw version strings in adapters (`lib/dialects.mjs`).
 
 **Detection** (once per product per run, cached on ctx; precedence):

@@ -333,3 +333,273 @@ A link is `{name, target, condition}` where `condition` wraps an objectConfigura
 - `com.fast2.filesystem.DeleteFileFromSystem` (`pathOfFileToDelete`) deletes the source outright.
 - Remember `security.allowed.directories` in `config/application.properties`: when set, the worker
   may only touch listed directories — a move to an unlisted folder fails at run time.
+
+---
+
+**§F21–§F33 verified 2026-10-01** on a broker `2026.0.0-rc5` (`fast2-broker-rest-server`, built
+`2026-09-14`), embedded worker, authentication on. REST only (no shell on the host); every write
+used a throwaway `UXC_A0_probe_*` map, and all of them were deleted afterwards (pattern search
+`^UXC_A0.*` → `{"total":0}`). No campaign was started, no library uploaded, no worker restarted.
+
+## §F21 — Login, token lifetimes and refresh (rc5)
+- `POST /api/auth/login` body `{email, password}` plus an optional `tenantId` (OpenAPI
+  `AuthenticationRequest`) → **200** `{accessToken, refreshToken, tokenType:"BEARER", email,
+  firstname, lastname, roles[], tenantId:"default", tenantIds[]}`. The token field is
+  **`accessToken`** (unchanged from §F3). Roles come back as `ROLE_*` plus `*_PRIVILEGE` entries.
+- The access JWT is RS256 with claims `role, tenantId, email, sub, iat, exp`; **`exp - iat` =
+  14'400 s (4 h)**. The refresh JWT also lives **4 h** (claims `tenantId, sub, iat, exp`). Refresh
+  endpoint: **`POST /api/auth/refresh-token`**, the REFRESH token as `Authorization: Bearer`, no
+  body → 200 with a new access token and the SAME refresh token (broker
+  `AuthenticationService.refreshToken`, read on `origin/develop`; used by uxc since FAST-5884, not
+  yet exercised live). It is not a login: it never touches the failed-login counter.
+- Anonymous (public) endpoints: `GET /api/auth/is-authentication-required` → `true`,
+  `/api/auth/is-authenticated` → `false`, `/api/auth/max-failed-attempts` → `3`,
+  `/api/auth/lock-time-duration` → `30`, `/v3/api-docs` → 200 (OpenAPI 3.1, 113 paths / 140
+  operations, global `Bearer Token` scheme), `/swagger-ui/index.html` → 200.
+- Only FAILED logins count toward the lockout (§F3). uxc's own 30 s cooldown matches: it counts
+  failed logins only, and `login()` reuses a fresh token, so one process sharing one client
+  (`connect()`, then `f2 ls`, `f2 status`, `doctor --f2`) logs in once.
+- Across processes (FAST-5884): the token is cached in `~/.uxopian/f2-tokens/` (0600 files in a
+  0700 dir, one per broker URL + user, atomic rename, never the password) and reused until 10 min
+  before its JWT `exp`, then refreshed; so a chain of `uxc` commands logs in once per 4 h instead
+  of once per process (A0 friction #5). A 401 on the cached token or a failed login deletes the
+  entry. Off with `UXC_F2_TOKEN_CACHE=0` / `--no-token-cache`; `uxc target logout` clears it.
+- The failed-login cooldown is cross-process (FAST-5874 / A04): a failed login writes
+  `~/.uxopian/f2-tokens/<key>.failed.json` (`{v, broker, user, failedAt}`, 0600, atomic, no
+  secret) and every `uxc` process honours it, so `uxc f2 ls && uxc f2 status && uxc doctor --f2`
+  with a wrong or rotated password spends ONE failed login (the broker's lockout needs 3), and the
+  next processes stop locally with "retry in Ns (at HH:MM:SS)" and exit 2 instead of locking the
+  account — UI included — for 30 s. The marker stays on with the token cache off (it is lockout
+  protection, not a cache); a successful login removes it; a login that never reached the broker
+  (connection refused, DNS, connect timeout, TLS) writes none. After a broker restart, N parallel
+  processes share ONE re-login: the first takes `<key>.lock`, the others wait for its token.
+
+## §F22 — 401 vs 403: what each one means on rc5 (updates §F3 and §F14)
+- **No token → 403** with the generic Spring envelope
+  `{"timestamp", "status":403, "error":"Forbidden", "path"}` — no `message`. Verified on
+  `/actuator/info`, `/api/broker/health`, `/api/config`, `/api/workers`, `/api/maps/...`. Never 401,
+  never a 200 envelope. (On rc4, §F3 recorded the generic text "An unexpected error occurred…".)
+- **Bad token → 401** with the envelope `{"status":"INVALID","message":"Invalid compact JWT string: …"}`
+  for a non-JWT, and a 401 `"…signed with the 'HS256' signature algorithm, but the provided
+  …RSAPublicKeyImpl key may not be used…"` for a forged HS256 JWT. So rc5 answers a bad token with
+  **401 + INVALID**, where rc4 answered a stale-after-restart token with **200 + INVALID** (§F14).
+  Keep both: a client must branch on 401 AND still guard the 200 envelope for older builds.
+  A stale-after-restart token was not re-tested on rc5 (it needs a broker restart).
+- **Consequence for uxc (`lib/http.mjs` `f2Surface`)**: re-authenticate on **401**; on a 403 only
+  when the body is the generic envelope above, at most once per token. Any other 403 is a real
+  authorization answer (§F23) and is surfaced verbatim, with no login attempt.
+
+## §F23 — Authenticated-but-forbidden: a 403 is NOT always an expired token
+Two legitimate 403s answered with a valid super-admin token:
+- **`GET /api/broker/health` → 403 even for `ROLE_SUPER_ADMIN`.** It is unusable as a probe on
+  rc5. Probe with the authed `GET /actuator/info` (§F24), or anonymously with
+  `GET /api/auth/is-authentication-required` (2026 only).
+- **`GET /api/broker/contents?path=/` → 403** `Access denied: Attempt to access file outside storage
+  root (/)` (§F31).
+A client that treats every 403 as "token expired" logs in again, loses the broker's text, and —
+with a second such 403 inside the 30 s lock window — trips its own anti-lockout cooldown with a
+message about failed logins although none failed. Fixed in uxc by §F22's rule.
+- The BODY of the authed `/api/broker/health` 403 is **not recorded** (A0 §b). Spring Boot ≥ 2.3
+  omits `message` by default, so a role 403 may be byte-identical to the "no token" envelope. uxc
+  therefore never re-logs-in for a 403 on a token the broker has already accepted, whatever the
+  body; the generic-403 re-auth only applies to a token not yet proven.
+
+## §F24 — Version detection needs the token on rc5
+- `GET /actuator/info` → 200 `{"build":{"artifact":"fast2-broker-rest-server","name":"Fast2 REST
+  Server","time":"2026-09-14T…","version":"2026.0.0-rc5","group":"com.fast2"}}` **with** the token;
+  **anonymous → 403** (generic envelope). So version detection must run after login (uxc does).
+- There is no anonymous version surface: `/v3/api-docs` is public but carries `servers[]`, no
+  version.
+- `uxc doctor --f2` on rc5 detects `fast2 2026.0.0-rc5 -> f2-2026 [actuator]`, and every f2-2026
+  capability flag (`apiPrefix`, `actuatorInfo`, `mapJsonCrud`, `uploadAutoRenames`) was confirmed
+  true by §F25–§F27.
+- `GET /api/config` → 200 `{"dashboards":{…},"uxopian-ai":{"url":…},"server":{…}}` with the token.
+
+## §F25 — XML upload answers 201 + the full map, and `_new1` is confirmed on rc5
+- `POST /api/maps/upload/{mapName}` (multipart field `file`) → **201 Created** (not 200), body =
+  the **full map JSON** (`id`, `name`, `mapVersionsSerieId`, `mapVersion{versionNumber,
+  displayName, lastModificationDate{value,type,format}}`, `mapDescription`, `steps`). Read the new
+  id from `.id`; no follow-up search is needed.
+- The `<id>` inside the XML is ignored: the broker assigns a new one (as on rc4, §F7).
+- **`_new1` re-confirmed**: a second upload under the same name → 201 and a NEW map
+  `<name>_new1` with a new id and a new `mapVersionsSerieId`. No 409, no overwrite.
+  `GET /api/maps/name-availability?mapName=` reads `true` before the first upload and `false`
+  after it — it remains the clean pre-create check.
+
+## §F26 — JSON create is accepted on rc5, and it never updates
+- `POST /api/maps` with a JSON body → **201** + the map JSON. "Please import XML map only" never
+  appears on rc5 (`mapJsonCrud` holds).
+- It **ignores a supplied `id` / `mapVersionsSerieId`**: posting the full identity block of an
+  EXISTING map under another name created a NEW map (new id, new serie) — no overwrite, no 409.
+  So `POST` is create-only; an update must go through `PUT` (§F27). This is why `f2.map` is
+  `createOnly + inPlaceUpdate`.
+
+## §F27 — `PUT /api/maps` in place on rc5; a description-only edit keeps the version
+- `PUT /api/maps` with the body of `GET /api/maps/{id}` (identity block included, §F16) and
+  `mapDescription.content` changed → **200** + the updated map JSON. Same `id`, same
+  `mapVersionsSerieId`; only `lastModificationDate` moves.
+- The **description-only** change did NOT mint a version: still `v1`, and
+  `search-by-version` → total 1. Do not expect a version bump on every PUT.
+- Whether a STRUCTURAL `PUT` mints a new version on rc5 (§F16, rc4: yes) was not re-tested.
+
+## §F28 — Link conditions: the XML tag and the rc5 JSON echo
+- XML: a link is `<com.fast2.model.taskflow.design.TaskLink>` holding `<name>`, `<target><id>` and
+  **`<taskLinkCondition class="com.arondor.common.reflection.bean.config.ObjectConfigurationBean">`**
+  with `<className>`, `<fields/>`, `<singleton>`, `<fullyConfigured>`. 19 occurrences across 6 of
+  the 9 maps exported via `GET /api/maps/download/{id}` (200, `application/octet-stream`); e.g. the
+  shipped `DefaultMap` routes `Success` with `com.fast2.taskflow.conditions.Otherwise` and `Fail`
+  with `…PunnetInException`.
+- JSON (`GET /api/maps/{id}`): `steps[].links[] = {name, target, condition:{objectConfiguration:
+  {className, singleton, fullyConfigured, fields[]}}}` (as §F19). On these rc5 exports an
+  unconditioned link came back as just `{target}`; keep authoring §F19's empty form, which the
+  broker accepts, and let canonicalization absorb the difference if a hash drift ever shows up.
+
+## §F29 — `DELETE /api/maps/{id}` → 200 with an EMPTY body
+- **200, empty body, no content-type.** A JSON accessor gets nothing (uxc: `undefined`); that is success, not an error.
+  Afterwards `GET /api/maps/{id}` → 404 and the pattern search → `{"total":0}`.
+- A malformed id (e.g. an object stringified into the path) → **400 with an HTML Tomcat error
+  page**, not JSON. Do not assume error bodies are JSON on the maps routes.
+
+## §F30 — Map id shape differs between the summary and the body
+- `GET /api/maps/summary/search-by-pattern` → `{total, collection:[{id:{mapId}, name,
+  versionNumber}]}` — **`id` is NESTED `{mapId}`**.
+- `GET /api/maps/{id}`, and the upload/POST/PUT bodies → **`id` is a flat string**.
+- Any new code path that reads a summary row must normalise `id.mapId` (`uxc f2 ls` does).
+- `GET /api/maps/{id}` keys: `isReadOnly, id, name, mapVersionsSerieId, mapVersion,
+  mapDescription, steps`; step keys: `id, name, queue, taskType, graphic, objectConfiguration,
+  links`.
+
+## §F31 — `broker/contents` is not a directory browser
+- The path is resolved **under a storage root**; it lists nothing, and that root is not the
+  install's `files/` directory under that name.
+- `?path=/` → **403** `Access denied: Attempt to access file outside storage root (/)` (§F23).
+  `?path=` and `?path=.` → **500** with a generic `An unexpected error occurred…` (text/plain).
+  `files`, `files/`, `logs`, `maps`, `config`, `exceptions.csv`, `output_<run>.csv`,
+  `files/output_<run>.csv`, `./files/output_<run>.csv` → **404** `Content not found: <path>`
+  (text/plain).
+- Which file a CSVWriter `./files/x.csv` lands on is still unproven (see the list below).
+
+## §F32 — Workers and libraries (read-only)
+- `GET /api/workers` → `{total, collection:[{embedded, hostname, jdkVersion, lastSeen, pid,
+  processingSpeed, queueFilter, tenantId, totalProcessed, workerId}]}`. The id field is
+  **`workerId`**; there is **no status field** (liveness = `lastSeen`). `lastSeen` is an **age in
+  ms**, not a timestamp (broker source: `WorkerRegistry` sets it from `LastActivity.age()`), so
+  `2667` = seen 2.7 s ago. `uxc doctor --f2` prints it as such.
+- `GET /api/workers/{id}/logs?results=<n>` → 200, a bare JSON **array** of events with keys
+  including `campaign`, `category` (`<logger>:<line>`), `exception` (full stack trace as a string).
+- `GET /api/workers/libraries?size=<n>` → `{total, collection:[{jarName, groupId, artifactId,
+  version, source, lastModificationDate, creationDate, fileSize, versionsLibs}]}`.
+- **Paging, verified live** (2026-10-01, uxc `6fcf1a1`, `uxc f2 lib ls --json`): **401 of 401**
+  jars returned (401 unique names) in 3 `GET /api/workers/libraries` calls, all 200, and the
+  "did not page as expected" warning did not fire. The byte counts (50'104, 50'104, 98'335) fit
+  page 0, a page 1 that repeats page 0 (`page` not honoured), then the one `?size=<total>`
+  fallback — so that fallback is what reads past the first 200 on rc5.
+- From the OpenAPI only (not called): `POST /api/workers/upload-library` (multipart, required field
+  `file`; 200 / 400 "Invalid file provided" / 500 — no "campaign running" code documented),
+  `POST /api/workers/restore-library?jarToVersion=&jarToRestore=`,
+  `GET /api/workers/library-versions/{libraryName}`, `POST /api/workers/generate-token?workerLogin=`,
+  `POST|DELETE /api/workers`.
+- Broker source (`LibraryManagementService`): upload-library and restore-library refuse while
+  `CampaignService.isAnyCampaignRunning()`, which looks for a campaign in **`Started`** only
+  ("At least one campaign is currently running, upload library not allowed"). The HTTP status of
+  that refusal is unverified (see below). `uxc doctor --f2` is stricter and also counts `Starting`.
+- `OPTIONS /api/workers/upload-library` → 403 with or without CORS preflight headers: that is the
+  security filter, so OPTIONS proves nothing about a route. The OpenAPI is the source of truth.
+- How `uxc f2 lib push|restore` confirms the swap (worker identity proves nothing: an **embedded**
+  worker runs in the broker JVM, so its `pid` is the broker's and its `workerId` may stay): the jar
+  is listed — for a push with `lastModificationDate` ≥ the upload start (30 s clock-skew
+  allowance; a restore moves a file, which keeps its date, so only the name is checked) — **and** a
+  worker was heard from after the call returned (asked-at − `lastSeen` > the 200, `lastSeen` < 5 s).
+  The pre-swap `GET /api/workers` must answer, or uxc does not send the write.
+
+## §F33 — Campaigns and catalog (read-only)
+- `GET /api/campaigns/search-by-pattern` → `{total, collection:[<names>]}` — names only, no
+  status. `GET /api/campaigns/{name}/status` → 200, a bare JSON string (`"Finished"`), as §F9.
+- `GET /api/catalog` → a bare array of **163** classes; `?allTask=true` → **1'511** (§F15 counted
+  161 / 1505 on rc4 — the counts move with the installed jars, never hard-code them).
+
+## §F34 — Campaign status and stats, as `uxc f2 status` reads them (rc5, 2026-10-01)
+Verified read-only on the rc5 broker, on two existing `Finished` campaigns.
+- `GET /api/campaigns/{c}/status` → 200, a bare JSON string (`"Finished"`), as §F9/§F33.
+- `GET /api/campaigns/{c}/stats` → 200 `{campaign, taskFlowMapRef:{mapId}, campaignStatus,
+  startDate, finishDate, stopDate, taskStepStat, tenantId}`. Dates are ISO strings
+  (`"2026-09-15T12:50:31.767Z"`), `stopDate` is `null` on a finished run. `taskStepStat` is keyed
+  by step id, each `{paused, stats:{<PunnetState>:{speed, timeframe:5000, total}}}`, and **a state
+  with no punnet is absent** (a step that only succeeded carries `ProcessedOK` alone) — read a
+  missing state as 0.
+- Unknown campaign: **both** `/status` and `/stats` answer **400 `text/plain`** `Could not find
+  campaign with name <c>` (not 404). uxc shows that text and exits 2.
+- uxc maps step ids to names with `GET /api/maps/{taskFlowMapRef.mapId}` (`steps[].id/name`),
+  read once per process; `elapsedSec` = `finishDate|stopDate` − `startDate` (now while running).
+  `--watch` polls status + stats on one client, so a whole watch costs one login.
+
+## §F35 — The exceptions export: a CSV for one campaign, a ZIP for several (rc5, 2026-10-01)
+Verified read-only on the rc5 broker, on two existing `Finished` campaigns (1 exception each).
+- `GET /api/campaigns/download-exceptions?campaigns=<c>&mapIds=<m>` (the mapId from
+  `stats.taskFlowMapRef`) → **200 `application/octet-stream`**, `Content-Disposition: attachment;
+  filename=<c>_exceptions.csv`. The body is a CSV: **every field double-quoted, LF line ends,
+  one header line**. Fixed leading columns `"Campaign","Step","TraceId","Status","ExceptionType",
+  "Message","Punnet Id","Document Id"`, then one `punnet.….value` / `punnet.documents.data.…`
+  column per punnet/document property (they vary with the map). **`Step` is the step NAME**
+  (not the id) and `ExceptionType` the exception class
+  (`com.fast2.model.task.exception.TaskProcessException`). `Message` can be long; quote-aware
+  parsing is required (it may hold commas, quotes, newlines). 1 exception → 1 data row.
+- **Two campaigns** (`campaigns=<c1>,<c2>&mapIds=<m1>,<m2>`, comma lists paired in order) →
+  200 octet-stream with a **`.zip`** filename: a deflated zip (general-purpose flag `0x0808`: data
+  descriptor + UTF-8 names) holding **one `<campaign>_exceptions.csv` per campaign**. Read the body
+  as bytes, never as text — a UTF-8 decode corrupts it.
+- **Zip content, verified live** (2026-10-01, uxc `6fcf1a1`, `uxc f2 exceptions <c1> <c2>` on two
+  `Finished` rc5 campaigns, 1 exception each): `unzip` lists 2 entries, and each CSV is
+  **byte-identical** (`cmp`) to the single-campaign export of that campaign — the same
+  **27-column** header (`Campaign, Step, TraceId, Status, ExceptionType, Message, Punnet Id,
+  Document Id, punnet.data.….value, punnet.documents.data.…`). uxc counted 2 rows, as Python `csv`
+  did (1 + 1; 3 physical lines each because of a multi-line `Message`).
+- An export with **no entry** is a 22-byte EOCD-only zip (it starts with `PK\x05\x06`, not
+  `PK\x03\x04`): uxc reads either signature (and a `.zip` filename) as a zip and reports 0 rows.
+- It is a file, never a count: `uxc f2 exceptions` counts rows and (step, class) pairs client-side.
+
+## §F36 — `uxc add f2.map --from-xml`: the broker conversion, end to end (rc5, 2026-10-01)
+Verified through `importXml()` (lib/kinds/f2-map.mjs) on a broker `2026.0.0-rc5`, one login:
+- The shipped `DefaultMap` XML (`GET /api/maps/download/{id}`, every UUID regenerated, `<name>`
+  replaced) uploaded multipart (`file`, `application/xml`) → **201** + the full map; `DELETE` → 200;
+  `GET /api/maps/{id}` afterwards → 404; the pattern search finds nothing. No follow-up search needed.
+- Preserved in the JSON: all 6 step ids (in order), every step's `graphic.x/y`, both link
+  conditions (`…conditions.Otherwise`, `…conditions.PunnetInException`).
+- **Shared objects survive in the JSON**, under the top-level key **`sharedObjectConfigurations`**
+  (verified live 2026-10-01, broker `2026.0.0-rc5`, uxc `6fcf1a1`: `GET /api/maps/download/{id}`
+  vs `GET /api/maps/{id}` on all 9 maps of the broker). On the **5 maps that carry shared objects**
+  (DEMO-OPBank-1-Migration and DEMO-OPBank-2-Delta-Migration, 2 entries each, `DctmConnectionProvider`;
+  TEMPLATE-Documentum-multi-target, `DctmConnectionProvider`; TEMPLATE-FileNet-To-OpenText,
+  `p8.FileNetConnectionProvider`; TEMPLATE-Flower-archiving, `FlowerDocsConnectionProvider`) the
+  JSON array `[{name, objectConfiguration{className, scope, singleton, fullyConfigured, fields[]}}]`
+  has **the same entry names, classes and field names** as the XML
+  `<sharedObjectConfigurations><map class="linked-hash-map"><entry>…`. Encoded `xr1c/` passwords
+  appear in both forms. **DefaultMap has none**: its XML has no `<sharedObjectConfigurations>`
+  element at all and its JSON no `shared` key — which is why the first check, on DefaultMap,
+  found nothing. `--from-xml` therefore keeps map-scoped shared objects.
+- A hand-written minimal XML (the guide's `Random.map.xml` shape + an `Otherwise` condition) got
+  **500** with the generic "An unexpected error occurred. Check logs…" text and no field-level
+  message; nothing was created. Start from a downloaded/shipped XML, not a hand-written one.
+
+## Unverified on rc5 (open after the 2026-10-01 probe)
+Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
+- What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
+  that writes a known CSV.
+- The `upload-library` / `restore-library` refusal status while a campaign is running (FAST-5880
+  asks for 409 + `{code:"CAMPAIGN_RUNNING"}`). Until it is recorded, `uxc f2 lib push|restore`
+  checks for a Started/Starting campaign first and shows any non-2xx verbatim (`classifyRefusal`).
+- The `library-versions/{name}` element shape (uxc reads `jarName|name|fileName|basename(path)`,
+  prints an unknown element raw and does not block on it; `--force` skips the candidate check),
+  the name a restored `.old` jar is listed under, and whether a respawned worker keeps its
+  `workerId` (uxc no longer relies on it, §F32).
+- The worker-restart response (200 vs 207 multi-status).
+- The results file format of a run (`step/{stepId}/download-result`). The exceptions export,
+  multi-campaign zip content included, is §F35.
+- Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
+- A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
+- The shape of a library's `lastModificationDate` in `GET /api/workers/libraries` (review N1):
+  the one live `lib ls --json` was not recorded past `jarName`. `dateMs` now accepts epoch
+  seconds (a number below 1e12 is ×1000), epoch ms, an ISO string or `{value|date}`, so a
+  seconds-epoch no longer turns a good `lib push` into `stale` (exit 1). One live push of a
+  throwaway jar with `--json` is still needed to record the real format in §F32.
+

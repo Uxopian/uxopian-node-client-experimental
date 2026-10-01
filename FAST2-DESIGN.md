@@ -1,7 +1,8 @@
 # FAST2-DESIGN — fast2 as a third product surface in uxc
 
-Status: **plan** (Phase 1). Every mechanic cited here was verified live on a local
-`fast2-complete-package-2026` broker `2026.0.0-rc4` on 2026-08-04 and recorded in
+Status: **shipped** in 0.14.0 (`f2.map`, the `f2` target surface, `uxc f2 ls|run`, `doctor --f2`);
+re-verified on `2026.0.0-rc5` on 2026-10-01 (§F21–§F33). Every mechanic cited here was verified
+live on a local `fast2-complete-package-2026` broker `2026.0.0-rc4` on 2026-08-04 and recorded in
 [docs/FAST2-LEARNINGS.md](./docs/FAST2-LEARNINGS.md) (§F1–§F12). Nothing below is guessed.
 
 **Goal**: a uxopian package can hold **fast2 maps** alongside its FlowerDocs and Uxopian-AI
@@ -13,8 +14,8 @@ map that feeds it.
 
 ## 1. Why this fits the existing architecture (and where it does not)
 
-fast2 is the **third product**, after `flowerdocs` and `uxopian-ai`. The reserved slots already
-exist: `DIALECTS.fast2` (`lib/dialects.mjs:46`), the `FAST2-LEARNINGS.md` slot (now filled), and
+fast2 is the **third product**, after `flowerdocs` and `uxopian-ai`. Its slots
+are filled: `DIALECTS.fast2` (`lib/dialects.mjs:46`), `docs/FAST2-LEARNINGS.md`, and
 `manifest.products`. Three things are genuinely new:
 
 | | flowerdocs / uxopian-ai | fast2 |
@@ -44,6 +45,12 @@ uxc target add local --core https://host/core --ai …/uxopian-ai --scope IRIS -
   resources, and `push` says so instead of failing obscurely. No derivation from the Core host:
   fast2 is usually a different machine entirely, and §61's split-port lesson says derivation lies.
 - Password handling follows the fd.demo precedent: injected via env, never committed.
+- **Fast2-only target** (FAST-5875): `--f2 <url> --f2-user <email> --f2-password <p>` and NO
+  FlowerDocs flag at all is a valid target (`fd: false`, `core`/`gui`/`gateway` = `null`), also
+  from the `UXC_F2_*` env vars alone. `uxc f2 …` and `doctor` (which then runs the f2 leg and skips
+  the FlowerDocs / AI checks) work; a FlowerDocs / AI client refuses through one guard
+  (`lib/http.mjs` `noSurface`) with "target <name> has no FlowerDocs surface" before any request.
+  A target with SOME FlowerDocs field must still have all of them.
 
 ## 3. New client surface: `ctx.clients.f2`
 
@@ -153,11 +160,14 @@ broker do it** — a proven composition of two verified mechanics:
 
 ```
 uxc add f2.map <Name> --from-xml path/to/foo.map.xml
-  → POST /api/maps/upload/ZzUxcConv<rand>   (broker parses the XML)
-  → GET  /api/maps/{newId}                  (broker emits the JSON)
-  → canonicalize, write f2/maps/<Name>.json
-  → DELETE /api/maps/{newId}                (never-run map deletes cleanly — verified)
+  → refuse if <Name> already exists on the target (an upload would `_new1`, never collide)
+  → POST /api/maps/upload/ZzUxcConv<rand>   (broker parses the XML; 201 + the full map JSON, §F25)
+  → DELETE /api/maps/{newId}                (in a `finally`; 200 empty, §F29)
+  → canonicalize + variable-ize like `add --from`, write + register f2/maps/<Name>.json
 ```
+
+A failed upload is swept too (any map carrying the throwaway name is deleted) before the broker's
+message is shown verbatim. Implemented in `lib/kinds/f2-map.mjs` `importXml()` (FAST-5877).
 
 The reverse (`uxc get f2.map <Name> --xml`) is just `GET /api/maps/download/{mapId}`, which returns
 the `.map.xml` the UI expects. Both directions are server-authoritative, so uxc never owns a
@@ -184,12 +194,23 @@ uxc f2 run <MapName> [--campaign <name>] [--wait <s>] [--expect-ok <n>] [--json]
 The fast2 leg of the pre-install gate, because two of the failure modes found in one afternoon are
 invisible from the UI:
 
+Probe order (FAST-5876, rc5): anonymous `GET /api/auth/is-authentication-required` → login →
+authed `/actuator/info` → maps → campaigns → workers → catalog gate. `/api/broker/health` is never
+used (403 even for a super-admin on rc5, FAST2-LEARNINGS §F23). Read-only; a 5xx on the login or
+the first list call is reported as "store down — only a broker restart clears it", not as bad
+credentials. `--json` adds `{auth, version, dialect, maps, campaigns:{total, running}, workers,
+deploySafe}` to the result.
+
 1. auth + `/actuator/info` version + dialect resolution;
 2. map list / catalog reachable (`GET /api/catalog` → 161 entries here);
+2b. **deploy readiness** — any campaign in `Started`/`Starting` prints
+   `deploy-safe: NO (campaign <name> running) — lib push would be refused` and exits 1; otherwise
+   `deploy-safe: yes` with the worker count and each worker's `lastSeen` age (§F32);
 3. **the connector-jar gate** — is `com.fast2.flowerdocs.FlowerInjector` (and
    `com.fast2.uxopianai.UxopianAIRequest`, if the map uses it) present in the catalog? If not, the
    worker lacks the connector jar and every FlowerDocs injection will fail at run time, not push
-   time (§F12). This is a package **dependency** in the #46 sense, declarable as
+   time (§F12). The advice is `uxc f2 lib push <jar> --yes` (refused while a campaign runs; the broker
+   restarts the workers itself), never "restart the worker". This is a package **dependency** in the #46 sense, declarable as
    `requires.f2TaskClasses`.
 4. **the OpenSearch `create_index` block** — if `cluster.blocks.create_index: true` is set, EVERY
    campaign start fails with a generic 500 and wedges a campaign in `Starting`, which then blocks

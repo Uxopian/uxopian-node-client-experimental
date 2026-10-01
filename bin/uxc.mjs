@@ -108,7 +108,8 @@ function makeCtx({ args, flags }) {
       if (ctx._conn) return ctx._conn;
       const target = resolveTarget(flags.target);
       ctx.target = target;
-      ctx.clients = createClients(target);
+      // --no-token-cache: this process neither reads nor writes the shared f2 token (FAST-5884)
+      ctx.clients = createClients(target, { f2TokenCache: flags['no-token-cache'] === undefined });
       ctx._conn = ctx.clients;
       return ctx._conn;
     },

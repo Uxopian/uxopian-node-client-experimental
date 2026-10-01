@@ -6,8 +6,8 @@ Uxopian AI customizations** (packages, registry, hash-based bidirectional sync, 
 ## Read this FIRST before touching any FlowerDocs / Uxopian AI API
 
 **`docs/FLOWERDOCS-LEARNINGS.md`** (FlowerDocs Core/GUI) and **`docs/UXOPIAN-AI-LEARNINGS.md`**
-(the AI gateway) are the operational knowledge base — one file per product, `FAST2-LEARNINGS.md`
-will follow when fast2 support lands. They hold every verified API
+(the AI gateway) are the operational knowledge base — one file per product, with
+**`docs/FAST2-LEARNINGS.md`** for the Fast2 broker (§F1–§F33). They hold every verified API
 mechanic, error code, and hard-won gotcha (array bodies, id-in-path updates, cache-clear
 protocol, handler version rotation, taskclass delete hazards, search eventual-consistency,
 server dialects…). It is numbered (§1–§25+) and the code comments cite those sections.
