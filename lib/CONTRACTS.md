@@ -387,7 +387,7 @@ Subcommand verbs (a new two-word subcommand uses one of these, or joins VERB_EXC
 | `run` | execute/start on the server | `run`, `f2 run` | — |
 
 Allow-listed non-canonical verbs: `show` (-> `get`), `delete` (-> `rm`), `use`, `answer`, `init`,
-`login`, `publish`, `install`, `deprecate`, `versions`, `categories` — reasons in
+`login`, `publish`, `install`, `deprecate`, `versions`, `categories`, `status` (`f2 status`) — reasons in
 `VERB_EXCEPTIONS`. Top-level commands (`status`, `diff`, `verify`, `doctor`, …) are not verbs
 of a family and are not linted for verb choice.
 
@@ -571,7 +571,8 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | scope create       | `{action:'created'|'updated', scope}`                                   |
 | scope delete       | `{id, deleted:true}`                                                    |
 | f2 ls              | `{maps, campaigns}`                                                     |
-| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, steps?, waited?}` |
+| f2 run             | `{map, mapId, campaign, status, elapsedSec?, ok?, exception?, queued?, processing?, steps?, waited?}` (the `f2 status` shape + `map`) |
+| f2 status          | `{campaign, mapId, status, elapsedSec, ok, exception, queued, processing, steps:[{step, ok, exception, queued, processing, speed}]}` |
 | mp ls / categories / versions / deprecate / rm | marketplace response as-is                  |
 | mp show            | addon detail, or the version detail with `@version`                     |
 | mp init            | `{path, marketplace, errors, warnings}`                                 |

@@ -479,6 +479,21 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
 - `GET /api/catalog` → a bare array of **163** classes; `?allTask=true` → **1'511** (§F15 counted
   161 / 1505 on rc4 — the counts move with the installed jars, never hard-code them).
 
+## §F34 — Campaign status and stats, as `uxc f2 status` reads them (rc5, 2026-10-01)
+Verified read-only on the rc5 broker, on two existing `Finished` campaigns.
+- `GET /api/campaigns/{c}/status` → 200, a bare JSON string (`"Finished"`), as §F9/§F33.
+- `GET /api/campaigns/{c}/stats` → 200 `{campaign, taskFlowMapRef:{mapId}, campaignStatus,
+  startDate, finishDate, stopDate, taskStepStat, tenantId}`. Dates are ISO strings
+  (`"2026-09-15T12:50:31.767Z"`), `stopDate` is `null` on a finished run. `taskStepStat` is keyed
+  by step id, each `{paused, stats:{<PunnetState>:{speed, timeframe:5000, total}}}`, and **a state
+  with no punnet is absent** (a step that only succeeded carries `ProcessedOK` alone) — read a
+  missing state as 0.
+- Unknown campaign: **both** `/status` and `/stats` answer **400 `text/plain`** `Could not find
+  campaign with name <c>` (not 404). uxc shows that text and exits 2.
+- uxc maps step ids to names with `GET /api/maps/{taskFlowMapRef.mapId}` (`steps[].id/name`),
+  read once per process; `elapsedSec` = `finishDate|stopDate` − `startDate` (now while running).
+  `--watch` polls status + stats on one client, so a whole watch costs one login.
+
 ## Unverified on rc5 (open after the 2026-10-01 probe)
 Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
 - What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
