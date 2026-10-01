@@ -12,7 +12,7 @@
     "legacy": {
       "type": "array",
       "x-uxc-severity": "error",
-      "description": "Unprefixed values (e.g. \"ORDER\") the extension inherited under their old codes: exempt from the prefix check, removed by rm --server only because declared here. Each must also be listed in allowedValues.",
+      "description": "Unprefixed values (e.g. \"ORDER\") the extension inherited under their old codes: exempt from the prefix check. A declaration never makes a value removable: rm --server removes one only if this package's push added it to the server. Each must also be listed in allowedValues; uxc keeps this key across push/pull rewrites (not hashed).",
       "items": { "type": "string", "minLength": 1 }
     },
     "allowedValues": {

@@ -567,6 +567,10 @@ test/output-mode.test.mjs lints that every command module except help calls `.re
 Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:
     mergeOnPush=true + onlyMissing(local, server) -> bool   skip collision/conflict refusals ONLY when true
     baseState(local) -> {ownValues, legacyValues}    merged into state wherever sync records a base without push()
+                                                     (never legacyAdded: only push() records what it ADDED — §30;
+                                                     pull passes the file as written, so kept keys count)
+    keepLocal(prevFileObj, canon) -> {key: value}   jsonLayout.writeLocal re-attaches these unhashed keys (`legacy`)
+    push() -> {ownValues, legacyValues, legacyAdded}  legacyAdded = declared legacy values a push of this package added
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
     presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
 

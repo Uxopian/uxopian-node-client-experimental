@@ -1102,13 +1102,26 @@ them: `{ "tagclass": "CmCaseType", "legacy": ["ORDER"], "allowedValues": [ {ORDE
   `EXT_TAG_LEGACY`. `legacy` not an array of strings is the same code.
 - **Lint** (`lintTagDeltas`, `verify`, push validation): `EXT_TAG_VALUE_PREFIX` skips declared legacy
   values; every other value still needs the prefix. `legacyOf(delta)` is the pure accessor.
-- **Push**: unchanged merge (`mergeTagDelta`): a legacy value the server lacks is appended; one it has
-  keeps its product labels untouched (it is the product's value too, never relabelled).
-- **Ownership is only what is declared**: `rm --server`, upgrade pruning and orphan detection remove an
-  unprefixed value ONLY when it is declared legacy (in the file, or in the `legacyValues` recorded in
-  state at the last push / base record when the file is gone or the value was dropped from it). An
-  unprefixed name that is merely in `allowedValues` or in a stray `ownValues` is never removed.
-- State: `fd.tagclass-delta` records `{ownValues, legacyValues}` per target (`baseState` too).
+- **Push**: unchanged merge (`mergeTagDelta`): a legacy value the server lacks is appended; one the
+  server already holds is left byte for byte (never relabelled).
+- **Declared ≠ removable.** The declaration only exempts a value from the prefix lint. uxc removes an
+  unprefixed value (`rm --server`, upgrade pruning, orphan removal on push) ONLY when it is in the
+  state's `legacyAdded`: the declared legacy values that a push of THIS package actually ADDED to the
+  server (`added ∩ legacy` of the write, accumulated across pushes, narrowed to what the delta still
+  declares). A declared value already on the server when the package arrived (adopted, or present at
+  merge time) is never recorded there: it is the product's value. `status --remote` and `rm --server`
+  print it as `kept: <V> — legacy value present before this package`. No base record (adopted /
+  rebased / pulled — `baseState`) ever writes `legacyAdded`.
+- **Dropping a legacy value** from both `legacy` and `allowedValues`: if it is in `legacyAdded` it is an
+  orphan and the next push removes it; otherwise uxc just stops tracking it (`ownValues` loses it,
+  the server keeps it) and push prints `no longer tracked: <V> — … left on the server`.
+- **The key survives rewrites, unhashed.** The canonical (hashed) form stays `{tagclass, allowedValues}`
+  — a delta hashes identically with or without `legacy`, and as before §30. The push echo leg and pull
+  rewrite the file through `jsonLayout.writeLocal`, whose `keepLocal(prevFile, canon)` hook re-attaches
+  the file's `legacy` (narrowed to the names still listed — a pull never leaves `EXT_TAG_LEGACY`), the
+  way `$schema` is kept (§29). Pull records its base extras from the file AS WRITTEN.
+- State per target: `{ownValues, legacyValues (declared, informational), legacyAdded (removable)}`;
+  `baseState` records the first two only.
 - Schema `schemas/tagclass-delta.schema.json` documents `legacy`; `uxc explain EXT_TAG_LEGACY`.
 
 ## 31. `data push --prune` and row ownership across installed packages
