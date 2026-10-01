@@ -15,8 +15,9 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
 - Gotcha: VF/aggregation pivot tags MUST be CHOICELIST. choicelist symbolicNames are UPPER_SNAKE.
 - Shared with extensions (0.25.1, #126): values an installed extension's delta contributed (receipt
   `tagContributions` + its prefix) are NOT hashed — `status --remote` shows a note `+n values of po`, `pull`
-  never writes them into the product file. Push removes a server value ONLY if this package pushed it before
-  (state `ownValues`) and nobody else lists it — everything else is kept, also under `--force`.
+  never writes them into the product file. Push is a full replace EXCEPT values another installed package
+  lists/prefixes (or may own: receipts unreadable, or its receipt predates 0.25.1) — those are kept, also
+  under `--force`.
   Receipts unreadable: they count as drift and pull refuses (fail safe) — fix the receipt read, don't force.
   Note `n unattributed values … uxc < 0.25.1` ⇒ re-push that extension with `uxc push --all`.
 

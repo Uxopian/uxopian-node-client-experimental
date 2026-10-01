@@ -210,7 +210,21 @@ test('#126 product pull never absorbs the extension\'s values (also --force); a 
   assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
 });
 
-test('#126 item 4: product push MERGES — removes only values it pushed before; keeps the extension\'s and any value it never pushed (plain and --force)', async () => {
+test('#126 removal rule: a value missing from the file is removed unless (possibly) another package\'s — alone from a fresh dir = full replace', async () => {
+  // product alone, installed from a .uxpkg: a fresh directory with NO state for the resource
+  const core = fakeCore();
+  const first = ctxFor(makeProduct(), core);
+  await pushResources(first.ctx, first.pkg.entries());
+  await receiptOf(core, first);
+  const freshDir = makeProduct([d('CM_CLAIM', 'Claim'), d('PROJECT', 'Project')]); // CM_INCIDENT dropped
+  const F = ctxFor(freshDir, core);
+  assert.equal(F.pkg.resState('t1', 'fd.tagclass', TC), null);
+  await pushResources(F.ctx, F.pkg.entries(), { force: true });
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT'], 'as main: the dropped value is removed');
+  assert.ok(F.lines.some((l) => /removing CM_INCIDENT — no longer in the file/.test(l)), F.lines.join('\n'));
+});
+
+test('#126 removal rule with an extension installed: its values survive (plain and --force), the product\'s dropped and hand-added values go', async () => {
   const { core, cmDir, P, E } = await bothInstalled();
   core.tcs.get(TC).allowedValues.push({ type: FQ, ...d('GUI_ADDED') }); // added on the server by hand
   for (const force of [false, true]) {
@@ -222,32 +236,40 @@ test('#126 item 4: product push MERGES — removes only values it pushed before;
     const [r] = await pushResources(P.ctx, P.pkg.entries(), { force: true });
     assert.equal(r.action, 'updated', JSON.stringify(r));
   }
-  assert.ok(P.lines.some((l) => /removing CM_INCIDENT — pushed by this package before/.test(l)), P.lines.join('\n'));
-  assert.ok(P.notes.some((n) => /keeping 3 server value\(s\) this package does not own \(PO_ORDER, ORDER, GUI_ADDED\)/.test(n)), P.notes.join('\n'));
-  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA', 'PO_ORDER', 'ORDER']);
-  // the first echo brought GUI_ADDED (nobody else's) into the file; never another package's values
-  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA']);
-  assert.deepEqual(P.pkg.resState('t1', 'fd.tagclass', TC).ownValues, ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA']);
+  assert.ok(P.lines.some((l) => /removing CM_INCIDENT, GUI_ADDED — no longer in the file/.test(l)), P.lines.join('\n'));
+  assert.ok(P.notes.some((n) => /keeping 2 server value\(s\) not in the file \(PO_ORDER, ORDER\) — another installed package's/.test(n)), P.notes.join('\n'));
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'CM_EXTRA', 'PO_ORDER', 'ORDER']);
+  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'CM_EXTRA'], 'never another package\'s values in the file');
   assert.equal((await statusAll(P.ctx, { remote: true })).rows[0].state, 'insync');
   assert.equal((await statusAll(E.ctx, { remote: true })).rows[0].state, 'insync');
 });
 
-test('#126 item 4: no recorded ownValues (base from uxc 0.25.0) — removal only when the server still hashes as the base', async () => {
+test('#126 removal rule: an UNKNOWN receipt (uxc < 0.25.1) keeps every unprefixed value missing from the file, with a note', async () => {
   const { core, cmDir, P } = await bothInstalled();
-  const drop = () => { delete P.pkg.targetState('t1').resources[`fd.tagclass/${TC}`].ownValues; };
-  drop();
+  const po = core.rcpt.get('UXC_PKG_PO');
+  po.content = null; po.doc.files = [];
+  po.doc.tags.push(tag('UxcResources', `fd.tagclass-delta/${TC}`));
   const f = localFile(cmDir);
-  f.allowedValues = f.allowedValues.filter((v) => v.symbolicName !== 'CM_INCIDENT');
+  f.allowedValues = f.allowedValues.filter((v) => v.symbolicName !== 'PROJECT' && v.symbolicName !== 'CM_INCIDENT');
   writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
-  await pushResources(P.ctx, P.pkg.entries());
-  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'PO_ORDER', 'ORDER'], 'view == base: CM_INCIDENT was ours');
-  // server changed since the base AND no record: nothing removed, said so
-  drop();
-  core.tcs.get(TC).allowedValues.push({ type: FQ, ...d('CM_SERVER') });
-  writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify({ ...f, allowedValues: f.allowedValues.slice(1) }));
   await pushResources(P.ctx, P.pkg.entries(), { force: true });
-  assert.deepEqual(names(core.tcs.get(TC)), ['PROJECT', 'CM_CLAIM', 'PO_ORDER', 'ORDER', 'CM_SERVER']);
-  assert.ok(P.notes.some((n) => /no record of what this package pushed before, so nothing is removed/.test(n)), P.notes.join('\n'));
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'PO_ORDER', 'ORDER'], 'own-prefixed CM_INCIDENT goes; unprefixed values stay');
+  assert.ok(P.notes.some((n) => /keeping 3 server value\(s\) not in the file \(PROJECT, PO_ORDER, ORDER\) — the receipt of po predates uxc 0\.25\.1/.test(n)), P.notes.join('\n'));
+});
+
+test('#126 a previous receipt that cannot be read: tagContributions left ABSENT (unknown), never a list missing carried values; refresh writes nothing', async () => {
+  const { core, P } = await bothInstalled();
+  const E2 = ctxFor(makeExtension(), core, { gateway: { get: async () => { throw new Error('HTTP 503'); } } });
+  await pushResources(E2.ctx, E2.pkg.entries());
+  const r = await receiptOf(core, E2);
+  assert.equal(r.tagContributions, undefined);
+  assert.equal(core.rcpt.get('UXC_PKG_PO').content?.tagContributions, undefined, 'the previous field is not replaced by a partial list');
+  assert.ok(E2.warns.some((w) => /tag contributions NOT recorded — this package's previous receipt could not be read \(uxopian-ai: HTTP 503\)/.test(w)), E2.warns.join('\n'));
+  // the product now sees po as UNKNOWN: ORDER kept in its hash and never pulled/removed — not absorbed
+  assert.match((await statusAll(P.ctx, { remote: true })).rows[0].note, /unattributed value: ORDER/);
+  const before = structuredClone(core.rcpt.get('UXC_PKG_PO'));
+  assert.deepEqual(await refreshTagContributions(E2.ctx, E2.pkg), [{ surface: 'receipts', ok: false, reason: 'could not read the receipts (uxopian-ai: HTTP 503)' }]);
+  assert.deepEqual(core.rcpt.get('UXC_PKG_PO'), before);
 });
 
 test('#126 item 3: shared claim — a value the product file lists stays in its view; the extension\'s rm/prune never removes a value the product lists', async () => {
@@ -301,12 +323,12 @@ test('#126 receipts unreadable: values stay in the hash (drift), are never pulle
     assert.match(r.detail, /PO_ORDER, ORDER may be another installed package's values: not pulled \(fail safe\)/);
   }
   assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
-  // a forced product push keeps the prefixed value AND the legacy one recorded at the last good read
+  // a forced product push keeps every value that may be another package's (unreadable receipts)
   const f = localFile(cmDir);
   f.allowedValues = f.allowedValues.slice(0, 2);
   writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
   await pushResources(P.ctx, P.pkg.entries(), { force: true });
-  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PO_ORDER', 'ORDER']);
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT', 'PO_ORDER', 'ORDER'], 'unprefixed PROJECT possibly foreign: kept');
   assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT'], 'the echo never writes them locally');
 });
 

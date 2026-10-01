@@ -123,7 +123,8 @@ export function receiptFromFdDoc(doc, content = null)   // tags + the content fi
 //   receipt.tagContributions = [{tagClass, values:[symbolicName]}] — per fd.tagclass-delta: own PREFIXED values +
 //     state legacyAdded + values the PREVIOUS receipt recorded that the delta still declares (carried forward,
 //     seeded back into state legacyAdded); per owned fd.tagclass: its whole local value list. ALWAYS written
-//     (even []) by writeReceipts (default from ctx.pkg + readReceipts(code) for `previous`); absent = unknown.
+//     (even []) by writeReceipts (default from ctx.pkg + readReceiptsChecked for `previous`; previous unreadable
+//     -> field left ABSENT + warning); absent = unknown. refreshTagContributions: unreadable -> no write.
 //     The content file is written when any of the three keys is carried (or the doc had one); a refused
 //     upload retries without all three (warning).
 export function receiptDataSets(manifest)               // PURE
@@ -733,8 +734,9 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
       obj = the class minus other installed packages' values, never a value the local file lists (alone: the
       object as read, byte-identical); unknown contributions: exclude + pullNote for unattributed values;
       unreadable receipts: obj as read + refusePull/exclude for values absent locally that may be foreign
-    update(ctx, id, local) -> {ownValues}   removes a server value only if in previous ownValues (state, or the
-      view when it hashes as the base) and listed by no other package; keeps every other one
+    update(ctx, id, local) -> {ownValues}   removes a server value missing from the file UNLESS another installed
+      package's (contributions / prefix) or possibly so (receipts unreadable; an UNKNOWN receipt for the class ->
+      every non-own-prefixed value kept). Alone = full replace (as 0.25.0); ownValues informational
     create(ctx, local) -> {ownValues} · baseState(local) -> {ownValues}
   fd.tagclass-delta: remove / push (dropped values) / orphans never remove a value another installed
     package's receipt lists for the class (readable receipts).

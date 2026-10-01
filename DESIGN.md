@@ -1162,6 +1162,9 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
     legacy values already on the server (`legacyAdded` = []), so the writer reads this package's
     PREVIOUS receipt and keeps the values it recorded that the delta still declares (allowedValues or
     `legacy`), and seeds them back into state `legacyAdded` so `rm --server` still removes them.
+    The previous receipt must be PROVABLY read (`readReceiptsChecked`): when it cannot be, the receipt is
+    written with `tagContributions` ABSENT (unknown — products keep the values, fail safe) and a warning,
+    never a definite list that may miss carried values; `refreshTagContributions` then writes nothing.
   - **Unknown contributions**: an installed package whose receipts carry no `tagContributions` and
     whose resource list holds `fd.tagclass-delta/<this class>` -> the unprefixed values absent from the
     product's file are UNATTRIBUTED: kept in the hash (drift shown), never pulled (pull writes the rest
@@ -1172,14 +1175,14 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
     drift)`), even in sync. Both packages settle in sync after both pushed.
   - **Pull** never writes them into the product's file (the server form it writes is the view; the
     push echo too). A value the product file already lists stays the product's (shared claim).
-  - **Push MERGES — the removal rule** (`update`): a server value absent from the local file is
-    removed ONLY when this package pushed it before — state `ownValues`, recorded at every push, pull,
-    adopt and rebase (`baseState`) — and no other installed package lists it in its receipt. Every
-    other server value is kept (named in a note), receipts readable or not, `--force` or not. A base
-    written by uxc 0.25.0 has no `ownValues`: the current view stands for them when it still hashes as
-    the base (the server is exactly what this package last synced); otherwise nothing is removed and
-    the note says so. (A value added on the server by hand is therefore kept by a forced push and comes
-    back into the file through the echo.)
+  - **Push MERGES — the removal rule** (`update`): a server value missing from the local file is
+    REMOVED unless it is (a) another installed package's — listed in its receipt `tagContributions` or
+    carrying its prefix (longest match, §31) — or (b) POSSIBLY another package's: receipts unreadable
+    (guard rule below), or an installed package's receipt is UNKNOWN for this class (uxc < 0.25.1): every
+    value without the product's own prefix is then kept. Readable receipts or not, `--force` or not.
+    Alone on the target this is the plain full replace of 0.25.0 (also from a fresh directory / a
+    `.uxpkg` install with no sync state); kept values are named in a note. State `ownValues`
+    (recorded at push, pull, adopt, rebase — `baseState`) is informational, never required.
   - **Extension side (shared claim)**: `rm --server`, upgrade prune and a value dropped from a delta
     never remove a value another installed package lists in its receipt (the owner's list or another
     extension's delta) — `kept: … — also listed by another installed package`.
