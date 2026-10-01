@@ -14,6 +14,7 @@ import "./destroy.test.mjs";
 import "./doctor-ai-smoke.test.mjs";
 import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
+import "./export.test.mjs";
 import "./extension.test.mjs";
 import "./f2map.test.mjs";
 import "./ft5.test.mjs";

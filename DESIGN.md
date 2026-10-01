@@ -106,7 +106,8 @@ transparently accept a deployed `_vN` id by stripping the suffix.
 
 ## 6. Package format
 
-A package is a plain directory; `.uxpkg` is a zip of it (export excludes `.uxc/`).
+A package is a plain directory; `.uxpkg` is a zip of its own files (export excludes `.uxc/`,
+tooling dirs and `.gitignore`'d files — §10).
 
 ```
 <package>/
@@ -352,8 +353,19 @@ Tombstoned (`retired`) resources never push by default; `push <id> --revive` un-
 
 ## 10. import / export / code-remap
 
-- `uxc export [-o name.uxpkg]` — zip of the package minus `.uxc/`; refuses if status vs the
-  default target is dirty unless `--allow-dirty`; scrubs `ai.mcp` secret fields.
+- `uxc export [-o name.uxpkg]` — zip of the package's own files; refuses if status vs the
+  default target is dirty unless `--allow-dirty`; scrubs secret fields (`ai.mcp` headers, LLM
+  keys, agent secrets, f2 map credentials) on the staged copy. `mp publish` ships this same
+  archive (it calls `exportPackage`).
+  - **File list** (issue #100): inside a git work tree it is `git ls-files --cached --others
+    --exclude-standard` run in the package dir, so `.gitignore` is honoured; without git (or
+    outside a work tree, or when git lists nothing on disk) the directory is walked.
+  - **Always excluded**, on both paths and even if git tracks them: `.uxc/`, `.git` (dir or
+    file), `marketplace/` (listing assets, uploaded separately), `node_modules/`, `.claude/`
+    (incl. `.claude/worktrees/`), `*.uxpkg`, and any subdirectory holding its own `.git` (a
+    nested worktree or repository). Tracked files under those are reported with a warning.
+  - export prints what it left out (grouped by excluded root, with sizes; `.uxc`/`.git` are
+    not listed) and warns when the archive exceeds `UXC_EXPORT_WARN_MB` (default 25).
 - `uxc import <pkg.uxpkg|dir> [--code-remap ct=xy]` —
   1. unpack;
   2. **pre-flight the whole package**: list/GET every target id, classify against the no-base

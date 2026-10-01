@@ -92,7 +92,7 @@ scopes provider/model/tools for a calling surface — smoke with `uxc run <promp
 
 ```
 uxc status --remote                       # must be clean (export refuses dirty unless --allow-dirty)
-uxc export -o ct-1.0.0.uxpkg              # zip minus .uxc/, ai.mcp secrets scrubbed
+uxc export -o ct-1.0.0.uxpkg              # package files only (git list / .gitignore; never .uxc node_modules .claude), secrets scrubbed
 uxc target add stage --url https://stage.example.com --scope STAGE --user system --password '…'
 uxc import ct-1.0.0.uxpkg --target stage
 ```
