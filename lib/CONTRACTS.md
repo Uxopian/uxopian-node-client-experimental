@@ -309,6 +309,9 @@ export function resolvePinnedTarget({pin, pinFrom, requested, ambient, write, ov
 //   -> {use, refuse:string|null, warn:string|null}   (refuse => the caller must fail())
 export function forbiddenBy(policy, {command, args, flags})   // -> [{pattern, reason}]
 export function partitionProtected(patterns, entries)         // -> {allowed, blocked:[{entry,pattern}]}
+export function firstContactGuard({inPackage, pin, source, target, hasState, mode})
+//   -> {refuse:string|null, note:string|null}   (#110, DESIGN §25.5) — refuse only an unpinned,
+//   stateless package's WRITE to the GLOBAL default target; note (stderr) the same READ
 ```
 
 `.uxc/target` (one line) overrides `manifest.agent.target`. An absent block = empty policy: uxc
@@ -322,7 +325,8 @@ export async function openSession(ctx, {command, modName, mod})
 ```
 
 Runs before every `run()`: enforces `agent.forbid`, resolves the target pin (mutating
-`ctx.flags.target`), waits out a prior handler window, and takes the lock. Sets `ctx.policy` and
+`ctx.flags.target`), applies the first-contact guard (DESIGN §25.5: `targetSource()` from
+lib/config.mjs -> 'flag'|'env'|'global'|null, and `hasTargetState(dir, name)` exported here), waits out a prior handler window, and takes the lock. Sets `ctx.policy` and
 `ctx.lockKey` for commands that need them (push/pull consult protect/neverPull; push records the
 handler window).
 
@@ -421,11 +425,14 @@ Flag semantics:
 | `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
 | `--fields a,b` | project columns | `ls`, `get`, `search`, `watch` |
 | `--full` | no truncation / include informational lines | `diff`, `get`, `context`, `verify` |
+| `--offline` | touch no server: no target, no client, lock `none` | `verify` (`--static` alias), `test` |
+| `--write-probes` | let a diagnostic change the instance | `doctor` (`DELETE /gui/rest/caches`); makes it a `write` |
 | `--version v` | an ADDON version | `mp *`; the CLI version is `uxc --version` |
 | `-o <file>` | output file | `export`, `mp pull` (`--output` legacy) |
 
 `FLAG_ALIASES` (applied by the dispatcher; giving both spellings with different values is an
-error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`.
+error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`;
+`verify` `--static` -> `--offline`.
 `LEGACY_FLAG_ALIASES` records older in-module spellings (`--page-size`, `--fd`/`--uxai` ->
 `--compat` on `mp ls`, `--notes`, `--output`, `--classId`, `--families`); do not add more.
 
@@ -442,6 +449,15 @@ alias resolves to a real module and shadows none; every flag a module reads (`fl
 `flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
 `--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
 every alias.
+
+Unknown flags (#110): the dispatcher calls `unknownFlags(modName, mod, flags, {srcFlags,
+helperFlags})` (lib/cli-meta.mjs) after the flag aliases. Known = `GLOBAL_FLAGS` (`help dir json
+human target no-lock lock-timeout allow-target-mismatch`) ∪ what the module (+ sibling command
+modules it imports) reads (`flagsReadBy`, the lint's forms + `collectRepeatedFlag('x')`) ∪ the
+`--flags` its summary/help names (`flagsInHelp`, `--ignore-*` = prefix) ∪ its aliases ∪ an optional
+`mod.flags` array ∪ — only when still unknown — what lib/*.mjs + lib/kinds/*.mjs read. Each leftover
+prints `! unknown flag --x for <cmd> (ignored)` on stderr; the command still runs (a WARNING:
+no set is provably complete). A test holds every completion flag to "known".
 
 ## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
 
@@ -526,7 +542,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | destroy            | steps `[…]` (dry run) · `{steps, failures, kept}`                       |
 | export             | `{file, …}` (packageio result)                                          |
 | import             | packageio result · `{src, report:true, written:false, upgrade, collisions}` (--report) |
-| verify             | `{resources, checks, failures:[string]}`                                |
+| verify             | `{resources, checks, failures:[string], offline:boolean}`               |
 | data pull / push   | row actions `[…]` or `{dataset}`                                        |
 | refs               | `[hit]`                                                                 |
 | enable / disable   | `{id, disabled}`                                                        |
