@@ -16,6 +16,7 @@ import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
 import "./extension.test.mjs";
 import "./f2-auth.test.mjs";
+import "./f2-auth-state.test.mjs";
 import "./f2-doctor.test.mjs";
 import "./f2-exceptions.test.mjs";
 import "./f2-lib.test.mjs";
