@@ -348,15 +348,23 @@ used a throwaway `UXC_A0_probe_*` map, and all of them were deleted afterwards (
   **`accessToken`** (unchanged from §F3). Roles come back as `ROLE_*` plus `*_PRIVILEGE` entries.
 - The access JWT is RS256 with claims `role, tenantId, email, sub, iat, exp`; **`exp - iat` =
   14'400 s (4 h)**. The refresh JWT also lives **4 h** (claims `tenantId, sub, iat, exp`). Refresh
-  endpoint: **`POST /api/auth/refresh-token`** (exists in the OpenAPI; not exercised by uxc yet).
+  endpoint: **`POST /api/auth/refresh-token`**, the REFRESH token as `Authorization: Bearer`, no
+  body → 200 with a new access token and the SAME refresh token (broker
+  `AuthenticationService.refreshToken`, read on `origin/develop`; used by uxc since FAST-5884, not
+  yet exercised live). It is not a login: it never touches the failed-login counter.
 - Anonymous (public) endpoints: `GET /api/auth/is-authentication-required` → `true`,
   `/api/auth/is-authenticated` → `false`, `/api/auth/max-failed-attempts` → `3`,
   `/api/auth/lock-time-duration` → `30`, `/v3/api-docs` → 200 (OpenAPI 3.1, 113 paths / 140
   operations, global `Bearer Token` scheme), `/swagger-ui/index.html` → 200.
-- Only FAILED logins count toward the lockout (§F3). Each `uxc` process logs in once on its own;
-  that is noisy in the broker's auth log but harmless for the lockout counter. uxc's own 30 s
-  cooldown matches: it counts failed logins only, and `login()` reuses a fresh token, so one
-  process sharing one client (`connect()`, then `f2 ls`, `f2 status`, `doctor --f2`) logs in once.
+- Only FAILED logins count toward the lockout (§F3). uxc's own 30 s cooldown matches: it counts
+  failed logins only, and `login()` reuses a fresh token, so one process sharing one client
+  (`connect()`, then `f2 ls`, `f2 status`, `doctor --f2`) logs in once.
+- Across processes (FAST-5884): the token is cached in `~/.uxopian/f2-tokens/` (0600 files in a
+  0700 dir, one per broker URL + user, atomic rename, never the password) and reused until 10 min
+  before its JWT `exp`, then refreshed; so a chain of `uxc` commands logs in once per 4 h instead
+  of once per process (A0 friction #5). A 401 on the cached token or a failed login deletes the
+  entry. Off with `UXC_F2_TOKEN_CACHE=0` / `--no-token-cache`; `uxc target logout` clears it. The
+  failed-login cooldown itself is still per process (cross-process: A04).
 
 ## §F22 — 401 vs 403: what each one means on rc5 (updates §F3 and §F14)
 - **No token → 403** with the generic Spring envelope

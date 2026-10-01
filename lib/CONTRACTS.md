@@ -336,7 +336,7 @@ findings are warnings BY DESIGN — a prompt may be called from outside the pack
 
 ## Commands (lib/commands/<name>.mjs) — export default { name, summary, help, lock?, run(ctx) }
 
-Names: init, target-add, target-ls, target-use, status, diff, pull, push, add, adopt, rm,
+Names: init, target-add, target-ls, target-use, target-logout, status, diff, pull, push, add, adopt, rm,
 destroy, export, import, verify, data-pull, data-push, refs, disable, enable, ls, get, schema,
 search, doc-create, doc-rm, task-ls, task-answer, watch, recent, run, test, cache-clear, explain,
 doctor, install-claude, context, size, api, help.
@@ -403,6 +403,7 @@ Flag semantics:
 | `--json` | machine output via `ctx.out.result()` | global |
 | `--target <name>` | which instance | global; checked against the package pin (DESIGN §25) |
 | `--dir <path>` | which package | global |
+| `--no-token-cache` | this process neither reads nor writes the shared fast2 token | global; = `UXC_F2_TOKEN_CACHE=0` (FAST-5884) |
 | `--kind k1,k2` / `--prefix P` | filters on a package sweep | `status`, `adopt --scan`; `ls` takes the kind positionally |
 | `--max n` | at most n items back | `search`, `recent`, `task ls`; `--limit` is an alias |
 | `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
@@ -434,17 +435,19 @@ every alias.
 ## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
 
 ```js
-export function f2Surface(target, {loginCooldownMs = 30_000}?)  // target.f2 + f2User/f2Password -> client
+export function f2Surface(target, {loginCooldownMs = 30_000, tokenCache = false}?)  // target.f2 + f2User/f2Password -> client
+export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache}; the CLI passes false for --no-token-cache
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
-//   {base, login({force}?) -> token, hasToken() -> bool, anonymous(method, path, opts?) -> response,
+//   {base, login({force}?) -> token, hasToken() -> bool, tokenSource() -> 'login'|'cache'|'refresh'|null,
+//    anonymous(method, path, opts?) -> response,
 //    req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
 //    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
 //    on a status; opts.binary -> response.bytes, a Buffer), text(path) -> string}
 ```
 
 Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. `login()`
-returns the token in hand while it is fresh (3.5 h) and only `login({force:true})` always calls the
+returns the token in hand while it is fresh (JWT `exp` − 10 min, else 3.5 h; then the cache below) and only `login({force:true})` always calls the
 broker, so any caller (doctor, a library driver on `connect()`) may call it safely. The anti-lockout
 cooldown (30 s) counts FAILED logins only (a failed status or a transport error on the login):
 inside it, `login()` throws `UXC_F2_COOLDOWN` without a request. Re-auth rule (§F22/§F23): a 401 ->
@@ -461,6 +464,24 @@ body (`get`/`post`/`put`/`del`/`req`/`text`). Poll loops (`f2 status --watch`, `
 `DELETE /api/maps/{id}` answers **200 with an empty body** (§F29), so `del()` resolves to `undefined`
 on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
 call site. Upload answers 201 + the full map (§F25).
+
+Token cache (FAST-5884, `lib/f2/token-cache.mjs`). On for `createClients` (CLI and `connect()`),
+off for a bare `f2Surface()` unless `{tokenCache: true}`, and off whenever `UXC_F2_TOKEN_CACHE=0`
+(also `false|off|no`) or the CLI gets `--no-token-cache` — then nothing is read or written.
+One file per identity: `<UXC_HOME|~>/.uxopian/f2-tokens/<sha256(broker URL \n user \n tenant)[0..32]>.json`,
+directory 0700, file 0600, written to a `.<key>.<pid>.<rand>.tmp` in the same directory then
+`rename()`d (atomic; concurrent writers = last one wins). A file with group/other bits or another
+owner is ignored and removed. Format (v1, one JSON line):
+`{v:1, broker, user, tenant:null, accessToken, refreshToken|null, refreshExpiresAt:ms|null,
+expiresAt:ms, expSource:'jwt'|'ttl', savedAt:ms}` — `expiresAt` = the JWT `exp` (decoded without
+verification) or login + 3.5 h; never the password. `login()` without `force`: the token in hand
+while fresh → the cached token while `now < expiresAt − 10 min` (`ttl`: `< expiresAt`) → inside that
+margin `POST /api/auth/refresh-token` with `Authorization: Bearer <refreshToken>` (not a login: never
+counts towards the lockout, never inside the cooldown logic) → a broker login. Every successful
+login/refresh writes the entry; a failed login (any status, or a transport error) deletes it; a 401
+deletes it when it still holds the refused token. `uxc target logout [name] [--all]` and
+re-registering a name with `target add` delete entries. No token is ever printed (`--json`,
+messages, the `UXC_HTTP_LOG` journal — it logs method, path, status, time, size only).
 
 Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`). A stored
 target is judged on its STORED fields: saved with `f2` and no FlowerDocs field, it stays Fast2-only
@@ -585,6 +606,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | target add         | `{name, core, ai, gui, f2, scope, default}` (Fast2-only: core/ai/gui/scope `null`) |
 | target ls          | `[{def, name, core, ai, scope, user, password:'••••••', f2}]` (masked)  |
 | target use         | `{default}`                                                             |
+| target logout      | `{target, f2, removed}` · `--all` `{all:true, removed:<count>}` (local; no broker call) |
 | scope get          | scope object · `{id, exists:false}` (exit 1)                            |
 | scope create       | `{action:'created'|'updated', scope}`                                   |
 | scope delete       | `{id, deleted:true}`                                                    |

@@ -23,6 +23,7 @@ import "./f2-lib.test.mjs";
 import "./f2-only-target.test.mjs";
 import "./f2-poll-auth.test.mjs";
 import "./f2-status.test.mjs";
+import "./f2-token-cache.test.mjs";
 import "./f2-xml-import.test.mjs";
 import "./f2map.test.mjs";
 import "./ft5.test.mjs";

@@ -205,7 +205,18 @@ function ctxOn(clients, target, { args = [], flags = {} } = {}) {
   return ctx;
 }
 
-test('regression (live rc5): one client runs f2 ls, f2 status, then doctor --f2 — one login, no cooldown error', async () => {
+/** createClients() caches the f2 token under UXC_HOME (FAST-5884): never under the real home. */
+async function isolatedHome(fn) {
+  const saved = process.env.UXC_HOME;
+  const dir = mkdtempSync(join(os.tmpdir(), 'uxc-f2state-home-'));
+  process.env.UXC_HOME = dir;
+  try { return await fn(); } finally {
+    if (saved === undefined) delete process.env.UXC_HOME; else process.env.UXC_HOME = saved;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('regression (live rc5): one client runs f2 ls, f2 status, then doctor --f2 — one login, no cooldown error', () => isolatedHome(async () => {
   const b = await stubBroker();
   const saved = { exitCode: process.exitCode, v: process.env.UXC_F2_VERSION, os: process.env.UXC_F2_OPENSEARCH };
   delete process.env.UXC_F2_VERSION;
@@ -237,9 +248,9 @@ test('regression (live rc5): one client runs f2 ls, f2 status, then doctor --f2 
     if (saved.os !== undefined) process.env.UXC_F2_OPENSEARCH = saved.os;
     b.close();
   }
-});
+}));
 
-test('doctor --f2 on a client whose token the broker no longer accepts: re-logs-in once and passes', async () => {
+test('doctor --f2 on a client whose token the broker no longer accepts: re-logs-in once and passes', () => isolatedHome(async () => {
   const b = await stubBroker();
   const saved = process.exitCode;
   try {
@@ -253,7 +264,7 @@ test('doctor --f2 on a client whose token the broker no longer accepts: re-logs-
     assert.doesNotMatch(all, /FAIL|refusing/);
     assert.equal(b.state.logins, 2);
   } finally { process.exitCode = saved; b.close(); }
-});
+}));
 
 // ---- #10: FlowerDocs env vars never turn a named Fast2-only target into an FD target ---------
 
