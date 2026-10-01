@@ -10,6 +10,7 @@ import "./compat.test.mjs";
 import "./config.test.mjs";
 import "./dependencies.test.mjs";
 import "./data-prune-ownership.test.mjs";
+import "./data-shared-class.test.mjs";
 import "./destroy.test.mjs";
 import "./doctor-ai-smoke.test.mjs";
 import "./dialects.test.mjs";

@@ -609,7 +609,7 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     keepLocal(prevFileObj, canon) -> {key: value}   jsonLayout.writeLocal re-attaches these unhashed keys (`legacy`)
     push() -> {ownValues, legacyValues, legacyAdded}  legacyAdded = declared legacy values a push of this package added
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
-    presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
+    presence(ctx, entry) -> string | {state?, detail?, note?}   status --remote detail (and state override); note = informational
 
 ## lib/jsonschema.mjs + lib/schemas.mjs (DESIGN §29) — JSON Schemas of the package files
     validateSchema(schema, value, {registry: Map($id -> schema)}) -> [{path, message, keyword, severity}]
@@ -623,7 +623,7 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
 
-## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune` and fd.dataset remove()
+## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune`, fd.dataset remove() and the dataset's own view
     rowOwners(ctx, manifest) -> {owners:[{code, forms, source:'receipt'|'dependency'}], receiptsReadable, receiptErrors:[string]}
     foreignOwners(ctx, manifest) -> owners                                             (rowOwners(...).owners)
     prefixMatchLength(forms, id, {strict?}) -> n   longest carried prefix form, 0 = none   PURE
@@ -632,4 +632,14 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
       receiptsReadable, else unproven (kept)
     pushRows(...) report gains keptForeign: [{id, code}], keptUnproven: [id]
     fd.dataset remove(ctx, id) -> {deleted:[id], keptForeign, keptUnproven}   (rm --server, destroy, generic prune)
+    fd.dataset readServer(ctx, id) -> {obj, contents, rows, foreign?:[{id, code}]}   rows/contents = OWN view only
+      (#114: another installed package's rows excluded from the hash; alone on the target = full class, byte-identical;
+      receipts unreadable -> unprefixed rows stay in, dependency rows out). foreign is never hashed.
+    fd.dataset presence(ctx, entry) -> {note} | undefined   "+n rows of <code> (…not drift)" from the last readServer
+    rowStatus(...) gains foreign?: [{id, code}], skippedForeign?: [id]
+    pushRows(...) report gains skippedForeign: [{id, code}] (local rows/tombstones of another package: never
+      upserted nor deleted, also under --force), foreign: [{id, code}]; serverOnly = OUR server-only rows only
+    pullRows(...) report gains foreign?: [{id, code}]; never writes another package's rows to the local file
+    foreignNote(foreign) -> string | null   (exported from fd-dataset.mjs)
+  sync.mjs statusAll rows carry note?: string (informational, never drift); status prints in-sync rows that have one.
   lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged
