@@ -271,8 +271,8 @@ test('checkRequires #125: a dependency\'s dataset resolves through its receipt �
   // only the extension's own rows in the class: the dependency's dataset is not there
   const onlyOurs = await checkRequires(dsCtx({ content: DEFS, rows: ['PomTransitions_A', 'POM_B'] }), extDs, { resources: [DS_KEY] });
   assert.equal(onlyOurs.reason, 'requires fd.dataset/CmTransitions: class CmTransitionsClass holds no rows of dependency cm@0.5.0 on gfdefault — push the dependency\'s dataset');
-  // an unprefixed row is the dependency's (§31: unprefixed -> the owner reading it)
-  assert.equal((await checkRequires(dsCtx({ content: DEFS, rows: ['LEGACY_ROW'] }), extDs, { resources: [DS_KEY] })).ok, true);
+  // only rows carrying the dependency's prefix count: an unprefixed row proves nothing
+  assert.match((await checkRequires(dsCtx({ content: DEFS, rows: ['LEGACY_ROW'] }), extDs, { resources: [DS_KEY] })).reason, /holds no rows of dependency/);
   // the class itself is absent
   const noClass = await checkRequires(dsCtx({ content: DEFS, classes: [] }), extDs, { resources: [DS_KEY] });
   assert.match(noClass.reason, /class CmTransitionsClass \(dataset of dependency cm@0\.5\.0\) is not on gfdefault/);

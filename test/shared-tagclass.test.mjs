@@ -12,8 +12,9 @@ import { openPackage } from '../lib/registry.mjs';
 import { pushResources, pullResources, statusAll, serverHash } from '../lib/sync.mjs';
 import { hashResource } from '../lib/canonical.mjs';
 import {
-  buildReceipt, tagContributionsFromPkg, receiptFromFdDoc, receiptFromAiPrompt, FD_CONTENT_KIND,
+  buildReceipt, receiptFromFdDoc, receiptFromAiPrompt, writeReceipts, refreshTagContributions, FD_CONTENT_KIND, FD_TAGS,
 } from '../lib/receipt.mjs';
+import delta from '../lib/kinds/fd-tagclass-delta.mjs';
 import { splitTagValues } from '../lib/ownership.mjs';
 import { tag } from '../lib/util.mjs';
 
@@ -31,9 +32,18 @@ function fakeCore() {
     tcs, rcpt, log,
     get: async (path) => (path === '/rest/tagclass' ? [...tcs.values()].map((t) => structuredClone(t)) : null),
     getOne: async (path) => {
+      if (path.startsWith('/rest/tagclass/Uxc')) return { id: idOf(path) }; // receipt infra already there
       if (path.startsWith('/rest/tagclass/')) return structuredClone(tcs.get(idOf(path)) ?? null);
-      if (path.startsWith('/rest/documentclass/')) return rcpt.size ? { id: 'UxcPackage' } : null;
+      if (path.startsWith('/rest/documentclass/')) return { id: 'UxcPackage', tagReferences: [...FD_TAGS, 'UxcCompat'].map((tagName) => ({ tagName })) };
       return null;
+    },
+    upsertDoc: async (doc, files = []) => {
+      const prev = rcpt.get(doc.id);
+      rcpt.set(doc.id, {
+        doc: { ...(prev?.doc ?? {}), ...doc, files: files.length ? [{ id: 'f' }] : (prev?.doc?.files ?? []) },
+        content: files.length ? JSON.parse(String(files[0].bytes)) : (prev?.content ?? null),
+      });
+      log.receipts = (log.receipts ?? 0) + 1;
     },
     post: async (path, body) => {
       assert.ok(Array.isArray(body), 'array body');
@@ -53,18 +63,11 @@ function fakeCore() {
   };
 }
 
-/** Write the receipt a `push --all` would leave (tags + content file), computed from the package. */
+/** The receipt a `push --all` leaves: the REAL writeReceipts (FD doc + content file). */
 async function receiptOf(core, X) {
-  const m = X.pkg.manifest;
-  const tagContributions = await tagContributionsFromPkg(X.pkg, 't1');
-  const r = buildReceipt(m, { resources: X.pkg.entries().map((e) => `${e.kind}/${e.id}`), tagContributions });
-  const id = `UXC_PKG_${m.code.toUpperCase()}`;
-  const content = r.tagContributions || r.dataSets ? { kind: FD_CONTENT_KIND, ...(r.tagContributions ? { tagContributions: r.tagContributions } : {}), ...(r.dataSets ? { dataSets: r.dataSets } : {}) } : null;
-  core.rcpt.set(id, {
-    doc: { id, tags: [tag('UxcPackageCode', m.code), tag('UxcPackageVersion', m.version)], ...(content ? { files: [{ id: 'f' }] } : {}) },
-    content,
-  });
-  return r;
+  const res = await writeReceipts(X.ctx, X.pkg.manifest, { resources: X.pkg.entries().map((e) => `${e.kind}/${e.id}`) });
+  assert.equal(res[0].ok, true, JSON.stringify(res));
+  return res[0].receipt;
 }
 
 function makeProduct(values = [d('CM_CLAIM', 'Claim'), d('CM_INCIDENT', 'Incident'), d('PROJECT', 'Project')]) {
@@ -115,19 +118,67 @@ async function bothInstalled({ gateway } = {}) {
   return { core, cmDir, poDir, P, E };
 }
 
-test('#126 receipts record tagContributions: own prefixed values + legacyAdded only (never a pre-existing legacy value)', async () => {
-  const { E, core } = await bothInstalled();
+test('#126 receipts record tagContributions: delta = own prefixed values + legacyAdded (never a pre-existing legacy value); owner = its list; [] = none', async () => {
+  const { E, P, core } = await bothInstalled();
   assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT', 'PO_ORDER', 'ORDER']);
   assert.deepEqual(E.pkg.resState('t1', 'fd.tagclass-delta', TC).legacyAdded, ['ORDER']);
   const r = await receiptOf(core, E);
   assert.deepEqual(r.tagContributions, [{ tagClass: TC, values: ['ORDER', 'PO_ORDER'] }]);
-  // both carriers round-trip it; an older receipt reads as null (tolerated)
+  assert.deepEqual(core.rcpt.get('UXC_PKG_PO').content.tagContributions, r.tagContributions, 'in the content file');
+  // the owner lists its own values (shared-claim source for the extension's rm/prune)
+  assert.deepEqual((await receiptOf(core, P)).tagContributions, [{ tagClass: TC, values: ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT'] }]);
+  // both carriers round-trip it; an older receipt reads as null (= unknown), [] stays [] (= none)
   assert.deepEqual(receiptFromAiPrompt({ id: 'uxcPkgPo', content: JSON.stringify(r) }).tagContributions, r.tagContributions);
   assert.deepEqual(receiptFromFdDoc({ id: 'X', tags: [] }, { kind: FD_CONTENT_KIND, tagContributions: r.tagContributions }).tagContributions, r.tagContributions);
   assert.equal(receiptFromFdDoc({ id: 'X', tags: [] }).tagContributions, null);
+  assert.deepEqual(receiptFromFdDoc({ id: 'X', tags: [] }, { kind: FD_CONTENT_KIND, tagContributions: [] }).tagContributions, []);
   assert.equal(receiptFromAiPrompt({ id: 'uxcPkgPo', content: JSON.stringify({ ...r, tagContributions: undefined }) }).tagContributions, null);
-  // a package without deltas records none (the receipt is unchanged)
-  assert.equal(buildReceipt({ code: 'cm' }, { tagContributions: [] }).tagContributions, undefined);
+  assert.deepEqual(buildReceipt({ code: 'cm' }, { tagContributions: [] }).tagContributions, [], 'written even when empty');
+  assert.equal(buildReceipt({ code: 'cm' }, {}).tagContributions, undefined, 'unknown when not computed');
+});
+
+test('#126 item 1: an extension upgrade from a FRESH directory keeps the legacy attribution (carried from the previous receipt) and seeds legacyAdded', async () => {
+  const { core, P } = await bothInstalled();
+  const E2 = ctxFor(makeExtension(), core); // mp install / import upgrade: no state, ORDER already on the server
+  const [pushed] = await pushResources(E2.ctx, E2.pkg.entries());
+  assert.notEqual(pushed.action, 'refused');
+  assert.equal(E2.pkg.resState('t1', 'fd.tagclass-delta', TC)?.legacyAdded?.length ?? 0, 0, 'the push alone cannot know');
+  const r = await receiptOf(core, E2);
+  assert.deepEqual(r.tagContributions, [{ tagClass: TC, values: ['ORDER', 'PO_ORDER'] }], 'ORDER carried forward');
+  assert.deepEqual(E2.pkg.resState('t1', 'fd.tagclass-delta', TC).legacyAdded, ['ORDER'], 'seeded for rm --server');
+  // the product still sees ORDER as the extension's
+  const row = (await statusAll(P.ctx, { remote: true })).rows[0];
+  assert.equal(row.state, 'insync');
+  assert.match(row.note, /^\+2 values of po/);
+  // rm --server with the seeded state removes the extension's values, never PROJECT (pre-existing legacy)
+  await delta.remove(E2.ctx, TC);
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
+  // a value the delta no longer declares is not carried forward
+  const p = join(E2.pkg.dir, `fd/tagclass-deltas/${TC}.delta.json`);
+  const f = JSON.parse(readFileSync(p, 'utf8'));
+  f.allowedValues = f.allowedValues.filter((v) => v.symbolicName !== 'ORDER'); f.legacy = ['PROJECT'];
+  writeFileSync(p, JSON.stringify(f));
+  assert.deepEqual((await receiptOf(core, E2)).tagContributions, [{ tagClass: TC, values: ['PO_ORDER'] }]);
+});
+
+test('#126 item 2: a receipt from uxc < 0.25.1 (no tagContributions) -> its unprefixed values are UNATTRIBUTED: in the hash, never pulled, never removed', async () => {
+  const { core, cmDir, P } = await bothInstalled();
+  const po = core.rcpt.get('UXC_PKG_PO');
+  po.content = null; po.doc.files = []; // what uxc 0.25.0 left: no content file, resources tag only
+  po.doc.tags.push(tag('UxcResources', `fd.tagclass-delta/${TC}`));
+  const row = (await statusAll(P.ctx, { remote: true })).rows[0];
+  assert.equal(row.state, 'server', 'conservative: kept in the hash, drift shown');
+  assert.match(row.note, /\+1 value of po .*1 unattributed value: ORDER \(receipt written by uxc < 0\.25\.1 — re-push po to attribute them; counted in the hash, never pulled\)/);
+  const [r] = await pullResources(P.ctx, P.pkg.entries(), { force: true });
+  assert.equal(r.action, 'pulled');
+  assert.match(r.detail, /not pulled: ORDER — unattributed/);
+  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
+  await pushResources(P.ctx, P.pkg.entries(), { force: true });
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT', 'PO_ORDER', 'ORDER'], 'never removed');
+  // a package whose resources hold no delta for this class is "none", not unknown
+  po.doc.tags = po.doc.tags.filter((t) => t.name !== 'UxcResources');
+  po.doc.tags.push(tag('UxcResources', 'fd.tagclass-delta/OtherClass'));
+  assert.doesNotMatch((await statusAll(P.ctx, { remote: true })).rows[0].note ?? '', /unattributed/);
 });
 
 test('#126 status --remote is quiet on BOTH sides after both pushed; the product notes the extension\'s values', async () => {
@@ -159,35 +210,80 @@ test('#126 product pull never absorbs the extension\'s values (also --force); a 
   assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
 });
 
-test('#126 product push MERGES: keeps the extension\'s values, removes the product\'s own deleted value (plain and --force)', async () => {
+test('#126 item 4: product push MERGES — removes only values it pushed before; keeps the extension\'s and any value it never pushed (plain and --force)', async () => {
   const { core, cmDir, P, E } = await bothInstalled();
+  core.tcs.get(TC).allowedValues.push({ type: FQ, ...d('GUI_ADDED') }); // added on the server by hand
   for (const force of [false, true]) {
     const f = localFile(cmDir);
     f.allowedValues = force
       ? [...f.allowedValues, d('CM_EXTRA', 'Extra')]
       : [f.allowedValues[0], f.allowedValues[2], d('CM_NEW', 'New')]; // CM_INCIDENT deleted locally
     writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
-    const [r] = await pushResources(P.ctx, P.pkg.entries(), { force });
+    const [r] = await pushResources(P.ctx, P.pkg.entries(), { force: true });
     assert.equal(r.action, 'updated', JSON.stringify(r));
-    assert.ok(P.notes.some((n) => /keeping 2 value\(s\) of other installed packages on the server \(PO_ORDER, ORDER\)/.test(n)), P.notes.join('\n'));
   }
-  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'CM_EXTRA', 'PO_ORDER', 'ORDER']);
-  // the echo write never brought them into the product file; both sides quiet again
-  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'CM_EXTRA']);
+  assert.ok(P.lines.some((l) => /removing CM_INCIDENT — pushed by this package before/.test(l)), P.lines.join('\n'));
+  assert.ok(P.notes.some((n) => /keeping 3 server value\(s\) this package does not own \(PO_ORDER, ORDER, GUI_ADDED\)/.test(n)), P.notes.join('\n'));
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA', 'PO_ORDER', 'ORDER']);
+  // the first echo brought GUI_ADDED (nobody else's) into the file; never another package's values
+  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA']);
+  assert.deepEqual(P.pkg.resState('t1', 'fd.tagclass', TC).ownValues, ['CM_CLAIM', 'PROJECT', 'CM_NEW', 'GUI_ADDED', 'CM_EXTRA']);
   assert.equal((await statusAll(P.ctx, { remote: true })).rows[0].state, 'insync');
   assert.equal((await statusAll(E.ctx, { remote: true })).rows[0].state, 'insync');
 });
 
-test('#126 a product file that absorbed extension values (0.25.0 pull) self-heals: push keeps them on the server, the echo drops them locally', async () => {
+test('#126 item 4: no recorded ownValues (base from uxc 0.25.0) — removal only when the server still hashes as the base', async () => {
   const { core, cmDir, P } = await bothInstalled();
+  const drop = () => { delete P.pkg.targetState('t1').resources[`fd.tagclass/${TC}`].ownValues; };
+  drop();
   const f = localFile(cmDir);
-  f.allowedValues.push(d('PO_ORDER', 'Purchase order'), d('ORDER', 'Order'));
+  f.allowedValues = f.allowedValues.filter((v) => v.symbolicName !== 'CM_INCIDENT');
   writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
-  assert.equal((await statusAll(P.ctx, { remote: true })).rows[0].state, 'local');
   await pushResources(P.ctx, P.pkg.entries());
-  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT', 'PO_ORDER', 'ORDER']);
-  assert.deepEqual(names(localFile(cmDir)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
-  assert.equal((await statusAll(P.ctx, { remote: true })).rows[0].state, 'insync');
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'PROJECT', 'PO_ORDER', 'ORDER'], 'view == base: CM_INCIDENT was ours');
+  // server changed since the base AND no record: nothing removed, said so
+  drop();
+  core.tcs.get(TC).allowedValues.push({ type: FQ, ...d('CM_SERVER') });
+  writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify({ ...f, allowedValues: f.allowedValues.slice(1) }));
+  await pushResources(P.ctx, P.pkg.entries(), { force: true });
+  assert.deepEqual(names(core.tcs.get(TC)), ['PROJECT', 'CM_CLAIM', 'PO_ORDER', 'ORDER', 'CM_SERVER']);
+  assert.ok(P.notes.some((n) => /no record of what this package pushed before, so nothing is removed/.test(n)), P.notes.join('\n'));
+});
+
+test('#126 item 3: shared claim — a value the product file lists stays in its view; the extension\'s rm/prune never removes a value the product lists', async () => {
+  const { core, cmDir, P, E } = await bothInstalled();
+  const f = localFile(cmDir);
+  f.allowedValues.push(d('ORDER', 'Order')); // the product claims ORDER too (e.g. absorbed by a 0.25.0 pull)
+  writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
+  const row = (await statusAll(P.ctx, { remote: true })).rows[0];
+  assert.equal(row.state, 'rebased', 'same content already on the server: ORDER is in the product view');
+  assert.match(row.note, /^\+1 value of po/);
+  await receiptOf(core, P); // the product's receipt now lists ORDER
+  await delta.remove(E.ctx, TC);
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT', 'ORDER'], 'PO_ORDER removed, ORDER kept');
+  assert.ok(E.lines.some((l) => /kept: ORDER — also listed by another installed package/.test(l)), E.lines.join('\n'));
+  // the product dropping it later: it holds ORDER in ownValues and nobody else lists it any more -> removed
+  core.rcpt.get('UXC_PKG_PO').content.tagContributions = [];
+  f.allowedValues.pop();
+  writeFileSync(join(cmDir, `fd/tagclasses/${TC}.json`), JSON.stringify(f));
+  await pushResources(P.ctx, P.pkg.entries(), { force: true });
+  assert.deepEqual(names(core.tcs.get(TC)), ['CM_CLAIM', 'CM_INCIDENT', 'PROJECT']);
+});
+
+test('#126 item 5: a partial push of a delta refreshes the receipt\'s tagContributions (only that key)', async () => {
+  const { core, P, E } = await bothInstalled();
+  const p = join(E.pkg.dir, `fd/tagclass-deltas/${TC}.delta.json`);
+  const f = JSON.parse(readFileSync(p, 'utf8'));
+  f.allowedValues.push(d('SHIPMENT', 'Shipment')); f.legacy.push('SHIPMENT');
+  writeFileSync(p, JSON.stringify(f));
+  await pushResources(E.ctx, E.pkg.entries());
+  const before = structuredClone(core.rcpt.get('UXC_PKG_PO').doc.tags);
+  const res = await refreshTagContributions(E.ctx, E.pkg);
+  assert.deepEqual(res, [{ surface: 'flowerdocs', ok: true, action: 'updated' }]);
+  assert.deepEqual(core.rcpt.get('UXC_PKG_PO').content.tagContributions, [{ tagClass: TC, values: ['ORDER', 'PO_ORDER', 'SHIPMENT'] }]);
+  assert.deepEqual(core.rcpt.get('UXC_PKG_PO').doc.tags, before, 'version/resources untouched');
+  assert.deepEqual(await refreshTagContributions(E.ctx, E.pkg), [{ surface: 'flowerdocs', ok: true, action: 'unchanged' }]);
+  assert.match((await statusAll(P.ctx, { remote: true })).rows[0].note, /^\+3 values of po/);
 });
 
 test('#126 receipts unreadable: values stay in the hash (drift), are never pulled, and push never removes them', async () => {

@@ -1146,30 +1146,51 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
   file, and a forced product push wiped them. Now the product's **view** of the class (`lib/kinds/
   fd-tagclass.mjs` `readServer` + the `serverView` hook `statusAll` applies to batch-listed objects)
   leaves out the values contributed by OTHER installed packages, exactly as shared dataset rows (§31):
-  - **Attribution** (`lib/ownership.mjs` `tagValueOwners` / `splitTagValues`, pure): a value recorded in
-    another installed package's receipt `tagContributions` for this class is that package's; otherwise
-    the §31 longest-prefix rule against the installed packages' prefix forms (`PO_X` is po's, `CM2_X`
-    cm2's over cm); an unprefixed value is the product's. `tagContributions` (receipt content file /
-    AI receipt JSON, written by every `push --all` / import / `installed --write` from uxc 0.25.1,
-    `tagContributionsFromPkg`) = per delta the package's own PREFIXED values + the legacy values its push
-    ADDED (`legacyAdded`, §30) — never a declared legacy value that pre-existed: the only way to
-    attribute an unprefixed value.
+  - **Attribution** (`lib/ownership.mjs` `tagValueOwners` / `splitTagValues`, pure): a value the
+    product's OWN file lists is the product's, even when an extension also contributes it (shared
+    claim); else a value recorded in another installed package's receipt `tagContributions` for this
+    class is that package's; otherwise the §31 longest-prefix rule against the installed packages'
+    prefix forms (`PO_X` is po's, `CM2_X` cm2's over cm); an unprefixed value is the product's.
+  - **`tagContributions`** (receipt content file / AI receipt JSON, `tagContributionsFromPkg`), written
+    by every `push --all` / import / `mp install` / `installed --write` from uxc 0.25.1 and REFRESHED
+    after a partial `push` that wrote a tag class or a delta (`refreshTagContributions`: that key only —
+    version, installedAt and resources do not move): one entry per delta = own PREFIXED values + the
+    legacy values its push ADDED (`legacyAdded`, §30), never a declared legacy value that pre-existed;
+    one entry per OWNED `fd.tagclass` = its whole value list (the owner's claim). Always written, even
+    empty: `[]` = contributes nothing; ABSENT (uxc < 0.25.1) = unknown. **Carried forward**: an upgrade
+    from a fresh directory (`mp install`/import) or `installed --write` from a fresh clone finds its
+    legacy values already on the server (`legacyAdded` = []), so the writer reads this package's
+    PREVIOUS receipt and keeps the values it recorded that the delta still declares (allowedValues or
+    `legacy`), and seeds them back into state `legacyAdded` so `rm --server` still removes them.
+  - **Unknown contributions**: an installed package whose receipts carry no `tagContributions` and
+    whose resource list holds `fd.tagclass-delta/<this class>` -> the unprefixed values absent from the
+    product's file are UNATTRIBUTED: kept in the hash (drift shown), never pulled (pull writes the rest
+    and says `not pulled: … — unattributed`), never removed by push; the row note says
+    `n unattributed values: … (receipt written by uxc < 0.25.1 — re-push <code> to attribute them)`.
   - **Hash/status**: the extension's values are not hashed; `status --remote` prints them as a row
     `note` (`+2 values of po (another installed package's values in this tag class — not hashed, not
     drift)`), even in sync. Both packages settle in sync after both pushed.
   - **Pull** never writes them into the product's file (the server form it writes is the view; the
-    push echo too, so a product file that absorbed them under 0.25.0 self-heals on the next push).
-  - **Push MERGES** (`update`): the full replace sends the local values PLUS the other packages' values
-    present on the server (named in a note), also under `--force`; the product's own values deleted
-    locally still go.
+    push echo too). A value the product file already lists stays the product's (shared claim).
+  - **Push MERGES — the removal rule** (`update`): a server value absent from the local file is
+    removed ONLY when this package pushed it before — state `ownValues`, recorded at every push, pull,
+    adopt and rebase (`baseState`) — and no other installed package lists it in its receipt. Every
+    other server value is kept (named in a note), receipts readable or not, `--force` or not. A base
+    written by uxc 0.25.0 has no `ownValues`: the current view stands for them when it still hashes as
+    the base (the server is exactly what this package last synced); otherwise nothing is removed and
+    the note says so. (A value added on the server by hand is therefore kept by a forced push and comes
+    back into the file through the echo.)
+  - **Extension side (shared claim)**: `rm --server`, upgrade prune and a value dropped from a delta
+    never remove a value another installed package lists in its receipt (the owner's list or another
+    extension's delta) — `kept: … — also listed by another installed package`.
   - **Receipts unreadable — fail safe**: nothing is attributed, every value stays in the hash (false
     drift rather than a silent drop; the row note says why). A value absent from the local file that
     may be another package's — carries a `guardOwners` prefix (§31: installed at the last read, or a
     declared dependency), was recorded as another package's at the last successful read
     (`foreignTagValues` per target in sync state, written only on change), or lacks the product's own
     prefix while another package may be installed (or no read ever succeeded) — makes `pull` REFUSE the
-    resource (also `--force`), and the echo write leaves it out. Push keeps every value carrying a
-    guard prefix or recorded as another package's.
+    resource (also `--force`), and the echo write leaves it out. Push never removes a value carrying a
+    guard prefix or recorded as another package's (on top of the removal rule).
   - **Hash stability**: alone on the target (or with installed packages that contribute nothing to the
     class and whose prefixes no value carries) the view is the object as read — byte-identical to 0.25.0
     (verified for every resource's local hash and every tag class's server-form hash on
@@ -1344,6 +1365,7 @@ from MY local file" — in a shared dataset that is the OTHER package's rows. It
 - **A dependency's dataset in `uxc test` requires (#125, 0.25.1)**: receipts record the package's manifest
   `dataSets` DEFINITIONS (`{name, classId, path?, content?}`, never rows) in the content file / AI JSON.
   `checkRequires` resolves `fd.dataset/<Name>` that the running package does not define through the
-  dependency's receipt (§26 #115 path), then checks the class exists and holds at least one row of the
-  dependency (this split, from the dependency's side). A receipt written before 0.25.1 skips with
+  dependency's receipt (§26 #115 path), then checks the class exists and holds at least one row carrying the
+  dependency's prefix (longest match against this package and every installed one — an unprefixed row,
+  or another package's, proves nothing about the dependency's dataset). A receipt written before 0.25.1 skips with
   "dependency cm@x installed by a uxc older than 0.25.1: re-push it to record its datasets".
