@@ -81,6 +81,13 @@ extensions installed on top of it (their `compat.json` `requires`, DESIGN §26) 
 holds / review / breaks + a remedy per reason; **exit 3** when something breaks (2 = uxc failed).
 Without `--report` a `breaks` refuses the install (`--force` overrides).
 
+**Upgrading over an installed version** (`mp install` / `import`, issue #52): no `--force` needed —
+objects the installed receipt lists as this package's own upgrade as `upgrade` rows (unchanged since
+install) or refuse as `conflict` "edited on the server since <code>@<v> was installed" (a real edit:
+diff it, `--force` only with approval). Old receipts (no per-resource hashes) upgrade with a WARN
+listing the resources. Foreign same-id objects still refuse as `collision`. `--report` and the JSON
+result carry `owned: {receipt, upgraded, unknownBase, edited}`. Pass `--yes-removals` for the prune.
+
 ## Lifecycle
 ```
 uxc mp deprecate <slug> --version v [--reason "…"]   # deprecate (still listed/downloadable)
