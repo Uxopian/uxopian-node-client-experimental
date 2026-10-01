@@ -333,3 +333,34 @@ A link is `{name, target, condition}` where `condition` wraps an objectConfigura
 - `com.fast2.filesystem.DeleteFileFromSystem` (`pathOfFileToDelete`) deletes the source outright.
 - Remember `security.allowed.directories` in `config/application.properties`: when set, the worker
   may only touch listed directories — a move to an unlisted folder fails at run time.
+
+## §F21 — #84 live attempt: preflight gate, and what is still owed (2026-10-01, local rc4 + fd.demo)
+Instance: local broker `fast2-complete-package-2026` (2026.0.0-rc4, embedded OpenSearch :1790),
+FlowerDocs `fd.demo.uxopian.com` (target `fddemo`, scope IRIS). The attempt STOPPED at preflight —
+nothing was started, written or deleted. Verified facts:
+- **Disk is the gate, check it before starting the broker.** The data volume was at **94%** (12 GiB
+  free of 228). That is above OpenSearch's default 90% high watermark, so a freshly started broker
+  would re-apply `cluster.blocks.create_index` (§F10) and every campaign start would 500 and wedge a
+  campaign in `Starting` (§F8) — i.e. starting the broker to "just try" can leave an undeletable Zz*
+  map behind. Rule: `df -h` must show < 90% used on the volume holding the fast2 install before any
+  campaign run. Freeing disk is the user's call (raising the dev cluster's
+  `cluster.routing.allocation.disk.watermark.*` is the alternative, also the user's call).
+- **`uxc doctor --f2 --f2-opensearch URL` checks nothing on OpenSearch when the target has no fast2
+  URL** — it fails at `f2 surface` and the create_index probe never runs. With the broker stopped,
+  OpenSearch (a child of the broker) is down too, so the probe could not answer anyway. Doctor has
+  no disk-usage check; the watermark risk is only visible via `df -h` while the broker is down.
+- **No uxc target carries fast2 credentials** on this machine (`uxc target list`: no target with an
+  `f2` block, no `fddemo-f2`; no `UXC_F2_*` env). fast2's user store has a 3-strike lockout (§F3), so
+  credentials must never be guessed — the user has to add them
+  (`uxc target add fddemo-f2 … --f2 http://localhost:1789 --f2-user <email> --f2-password <p>`).
+- **The scaffold already encodes everything §F17/§F18 learned** (`uxc add f2.map`: punnet `category`
+  via `AlterPunnetProperties`, `classid` via `AlterDocumentProperties`, the `category` step field, and
+  the `xr1c/` lint in `lib/kinds/f2-map.mjs`). What remains unproven is only the live run.
+
+Remaining for #84 (in order): (1) free disk below 90% on the Data volume; (2) add a fast2 target with
+real credentials; (3) in the fast2 UI, create or edit a map's FlowerDocs connection
+(`FlowerDocsConnectionProvider`, endpoint `https://fd.demo.uxopian.com/core/services`, user, scope
+IRIS), type the FlowerDocs password, save, and copy the resulting `xr1c/…` token from the map JSON
+(`GET /api/maps/{id}`) into the package variable uxc substitutes for the password; (4) run the
+scaffolded map against one `Zz*` file, assert with a FlowerDocs search (not campaign stats), then
+delete the document and the Zz* map. Only then does the scaffold count as proven.
