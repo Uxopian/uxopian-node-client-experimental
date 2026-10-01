@@ -562,6 +562,7 @@ test/output-mode.test.mjs lints that every command module except help calls `.re
     sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)
     checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
     lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN, EXT_TAG_LEGACY
+      (also folded into extension.mjs lintExtension(pkg) -> [{code, where, message}]; findingKey(f) = code|id dedupes the two)
     valuePrefix(manifest) -> 'ACME_'
     onlyMissing(deltaValues, serverValues) -> bool   (server differs only by absent values)
 Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:

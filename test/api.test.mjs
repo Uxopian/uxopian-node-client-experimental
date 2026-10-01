@@ -73,6 +73,12 @@ test('query and header pairs; credentials are redacted in anything printable', (
     redactHeaders({ Authorization: 'Bearer abc', token: 'abc', Cookie: 'c', Accept: 'x' }),
     { Authorization: '<redacted>', token: '<redacted>', Cookie: '<redacted>', Accept: 'x' },
   );
+  // user --header values: any NAME that looks secret, substring + case-insensitive (#103)
+  const user = { 'X-Auth-Token': 's1', 'x-api-key': 's2', 'Client-Secret': 's3', 'X-Password': 's4', 'X-Session-Id': 's5', 'X-AUTHORIZATION-EXTRA': 's6', 'Content-Type': 'application/json', 'X-Trace': 't' };
+  const red = redactHeaders(user);
+  for (const k of Object.keys(user).slice(0, 6)) assert.equal(red[k], '<redacted>', k);
+  assert.equal(red['Content-Type'], 'application/json');
+  assert.equal(red['X-Trace'], 't');
   const h = new Headers({ 'content-type': 'application/json', 'set-cookie': 'SESSION=1', location: '/y' });
   assert.deepEqual(responseHeaderSubset(h), { 'content-type': 'application/json', location: '/y' });
 });

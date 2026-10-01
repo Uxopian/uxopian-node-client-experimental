@@ -125,6 +125,12 @@ test('validator: additionalProperties (false / schema), propertyNames, allOf, an
   const one = { oneOf: [{ type: 'integer' }, { type: 'number' }] };
   assert.equal(validateSchema(one, 1.5).length, 0);
   assert.equal(validateSchema(one, 2)[0].keyword, 'oneOf');
+  // a node with BOTH keywords honours both (#103) — anyOf no longer hides oneOf
+  const both = { anyOf: [{ type: 'number' }, { type: 'string' }], oneOf: [{ type: 'integer' }, { minimum: 0 }] };
+  assert.deepEqual(validateSchema(both, -1.5).map((e) => e.keyword), ['minimum'], 'anyOf passes, oneOf matches none (its closest branch speaks)');
+  assert.deepEqual(validateSchema(both, 3).map((e) => e.keyword), ['oneOf'], 'oneOf matches two');
+  assert.deepEqual(validateSchema(both, 1.5), []);
+  assert.deepEqual(validateSchema(both, true).map((e) => e.keyword), ['anyOf'], 'oneOf passes (minimum ignores non-numbers), anyOf fails');
   assert.match(validateSchema({ not: { const: 'Script' } }, 'Script')[0].message, /must not be "Script"/);
 });
 

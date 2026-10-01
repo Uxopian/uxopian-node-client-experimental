@@ -931,6 +931,9 @@ the generic built-ins.
 ### 27.2 The prefix control (`lib/extension.mjs`, run by `verify`, `push` and `mp publish`)
 
 `lintExtension(pkg)` is pure and offline; findings are blocking (`push --ignore-lint` overrides).
+It also carries the tag-class delta lint (`lintTagDeltas`, §28: `EXT_TAG_*`, `where` =
+`fd.tagclass-delta/<id>`), so `push` and `mp publish` refuse a bad delta in the same pass; `verify`,
+which runs `lintTagDeltas` on its own as well, skips the duplicates by `findingKey` (code + id) (#93).
 Two tiers, so a package that merely depends on another (for instance on a provider bundle) is not
 broken by a rule it never opted into:
 
@@ -1033,7 +1036,7 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
   `EXT_TAG_VALUE_PREFIX` (value lacks the manifest's uppercase prefix), `EXT_TAG_CLASS_UNKNOWN`
   (no/mismatched `tagclass`; online: class absent or not a CHOICELIST), `EXT_TAG_DELTA_OWN` (the target is a
   tag class this package owns). They live in `lib/tagdelta.mjs`, not `lib/extension.mjs`, so this PR has no
-  file in common with #87; once #87 merges, its extension verify can call `lintTagDeltas` too.
+  file in common with #87; the extension prefix control (§27.2) now calls `lintTagDeltas` too (#93).
 - Not done on purpose: no cache clear (tag classes are read live), no version bump, no GUI refresh hook —
   the product regenerates its own label catalogue after a delta (`CAPABILITIES`).
 

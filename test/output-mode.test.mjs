@@ -7,7 +7,8 @@ import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
-import { agentDetected, outputMode, out, errorEnvelope } from '../lib/output.mjs';
+import { agentDetected, outputMode, out, errorEnvelope, flagOn } from '../lib/output.mjs';
+import { rawTagAsJson } from '../lib/commands/get.mjs';
 import { CLIENT_VERSION } from '../lib/version.mjs';
 
 test('agentDetected: UXC_AGENT wins both ways, else CLAUDECODE=1', () => {
@@ -183,4 +184,17 @@ test('uxc help stays text in agent mode and documents the env vars', () => {
   assert.match(r.stdout, /^uxc — /);
   assert.match(r.stdout, /UXC_AGENT=1/);
   assert.match(r.stdout, /--human/);
+});
+
+test('get --raw-tag: --json=false reads as OFF, the same way outputMode reads it (#103)', () => {
+  assert.equal(flagOn('false'), false);
+  assert.equal(flagOn(false), false);
+  assert.equal(flagOn(undefined), false);
+  assert.equal(flagOn(true), true);
+  const agent = { CLAUDECODE: '1' };
+  assert.equal(outputMode({ json: 'false' }, agent).json, true, 'agent mode stays JSON');
+  assert.equal(rawTagAsJson(true, { json: 'false' }), false, 'but --raw-tag stays raw: no explicit --json');
+  assert.equal(rawTagAsJson(true, {}), false);
+  assert.equal(rawTagAsJson(true, { json: true }), true);
+  assert.equal(rawTagAsJson(false, { json: 'false' }), false);
 });
