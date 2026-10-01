@@ -460,7 +460,9 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
 ## §F32 — Workers and libraries (read-only)
 - `GET /api/workers` → `{total, collection:[{embedded, hostname, jdkVersion, lastSeen, pid,
   processingSpeed, queueFilter, tenantId, totalProcessed, workerId}]}`. The id field is
-  **`workerId`**; there is **no status field** (liveness = `lastSeen`).
+  **`workerId`**; there is **no status field** (liveness = `lastSeen`). `lastSeen` is an **age in
+  ms**, not a timestamp (broker source: `WorkerRegistry` sets it from `LastActivity.age()`), so
+  `2667` = seen 2.7 s ago. `uxc doctor --f2` prints it as such.
 - `GET /api/workers/{id}/logs?results=<n>` → 200, a bare JSON **array** of events with keys
   including `campaign`, `category` (`<logger>:<line>`), `exception` (full stack trace as a string).
 - `GET /api/workers/libraries?size=<n>` → `{total, collection:[{jarName, groupId, artifactId,
@@ -470,6 +472,10 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
   `POST /api/workers/restore-library?jarToVersion=&jarToRestore=`,
   `GET /api/workers/library-versions/{libraryName}`, `POST /api/workers/generate-token?workerLogin=`,
   `POST|DELETE /api/workers`.
+- Broker source (`LibraryManagementService`): upload-library and restore-library refuse while
+  `CampaignService.isAnyCampaignRunning()`, which looks for a campaign in **`Started`** only
+  ("At least one campaign is currently running, upload library not allowed"). The HTTP status of
+  that refusal is unverified (see below). `uxc doctor --f2` is stricter and also counts `Starting`.
 - `OPTIONS /api/workers/upload-library` → 403 with or without CORS preflight headers: that is the
   security filter, so OPTIONS proves nothing about a route. The OpenAPI is the source of truth.
 

@@ -52,6 +52,7 @@ async function stubBroker() {
     const path = req.url.split('?')[0];
     seen.push(path);
     if (path === '/api/auth/login') return json(res, 200, { accessToken: 'T1', refreshToken: 'R', tokenType: 'BEARER' });
+    if (path === '/api/auth/is-authentication-required') return json(res, 200, true);
     if (req.headers.authorization !== 'Bearer T1') return json(res, 403, { status: 403, error: 'Forbidden', path });
     if (path === '/actuator/info') return json(res, 200, { build: { version: '2026.0.0-rc5', artifact: 'fast2-broker-rest-server' } });
     if (path === '/api/maps/summary/search-by-pattern') {
@@ -59,6 +60,7 @@ async function stubBroker() {
     }
     if (path === '/api/catalog') return json(res, 200, [{ name: 'com.fast2.filesystem.LocalSource' }]);
     if (path === '/api/campaigns/search-by-pattern') return json(res, 200, { total: 0, collection: [] });
+    if (path === '/api/workers') return json(res, 200, { total: 0, collection: [] });
     return json(res, 404, { error: 'Not Found', path });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

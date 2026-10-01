@@ -191,12 +191,23 @@ uxc f2 run <MapName> [--campaign <name>] [--wait <s>] [--expect-ok <n>] [--json]
 The fast2 leg of the pre-install gate, because two of the failure modes found in one afternoon are
 invisible from the UI:
 
+Probe order (FAST-5876, rc5): anonymous `GET /api/auth/is-authentication-required` → login →
+authed `/actuator/info` → maps → campaigns → workers → catalog gate. `/api/broker/health` is never
+used (403 even for a super-admin on rc5, FAST2-LEARNINGS §F23). Read-only; a 5xx on the login or
+the first list call is reported as "store down — only a broker restart clears it", not as bad
+credentials. `--json` adds `{auth, version, dialect, maps, campaigns:{total, running}, workers,
+deploySafe}` to the result.
+
 1. auth + `/actuator/info` version + dialect resolution;
 2. map list / catalog reachable (`GET /api/catalog` → 161 entries here);
+2b. **deploy readiness** — any campaign in `Started`/`Starting` prints
+   `deploy-safe: NO (campaign <name> running) — lib push would be refused` and exits 1; otherwise
+   `deploy-safe: yes` with the worker count and each worker's `lastSeen` age (§F32);
 3. **the connector-jar gate** — is `com.fast2.flowerdocs.FlowerInjector` (and
    `com.fast2.uxopianai.UxopianAIRequest`, if the map uses it) present in the catalog? If not, the
    worker lacks the connector jar and every FlowerDocs injection will fail at run time, not push
-   time (§F12). This is a package **dependency** in the #46 sense, declarable as
+   time (§F12). The advice is `uxc f2 lib push <jar>` (refused while a campaign runs; the broker
+   restarts the workers itself), never "restart the worker". This is a package **dependency** in the #46 sense, declarable as
    `requires.f2TaskClasses`.
 4. **the OpenSearch `create_index` block** — if `cluster.blocks.create_index: true` is set, EVERY
    campaign start fails with a generic 500 and wedges a campaign in `Starting`, which then blocks
