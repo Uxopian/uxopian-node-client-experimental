@@ -318,6 +318,45 @@ test('uxc verify fails offline on a prefix violation (no server involved for the
   assert.ok(result.failures.some((m) => m.startsWith('EXT_PRODUCT_ROW:')), lines.join('\n'));
 });
 
+// ---------------------------------------------------------------- tag-class deltas in the same pass (#93)
+
+function addDelta(dir, tag, obj) {
+  mkdirSync(join(dir, 'fd/tagclass-deltas'), { recursive: true });
+  const path = `fd/tagclass-deltas/${tag}.delta.json`;
+  writeFileSync(join(dir, path), JSON.stringify(obj));
+  const pkg = openPackage(dir);
+  pkg.addEntry({ kind: 'fd.tagclass-delta', id: tag, path, policy: 'managed' });
+  pkg.saveRegistry();
+}
+const dv = (n) => ({ symbolicName: n, labels: [{ language: 'EN', value: n }] });
+
+test('lint: the prefix control carries the tag-delta lint (EXT_TAG_*), keyed by the delta id', () => {
+  const dir = initGeneric();
+  addDelta(dir, 'CmTaskType', { tagclass: 'CmTaskType', allowedValues: [dv('ACME_QC')] });
+  assert.deepEqual(codes(dir), [], 'a well-prefixed delta on the dependency\'s class is clean');
+  addDelta(dir, 'CmPriority', { tagclass: 'CmOther', allowedValues: [dv('ACME_X'), dv('BAD'), dv('WORSE')] });
+  const fs = lintExtension(openPackage(dir));
+  assert.deepEqual(fs.map((f) => f.code).sort(), ['EXT_TAG_CLASS_UNKNOWN', 'EXT_TAG_VALUE_PREFIX', 'EXT_TAG_VALUE_PREFIX']);
+  for (const f of fs) assert.equal(f.where, 'fd.tagclass-delta/CmPriority');
+  assert.ok(fs.every((f) => f.message.startsWith(f.code)));
+});
+
+test('uxc verify reports each delta finding once although it runs both lints', async () => {
+  const dir = initGeneric();
+  writeFileSync(join(dir, 'registry.json'), JSON.stringify({ resources: [] }));
+  addDelta(dir, 'CmTaskType', { tagclass: 'CmTaskType', allowedValues: [dv('BAD'), dv('WORSE')] });
+  const ctx = {
+    args: [], flags: {},
+    out: { line() {}, note() {}, warn() {}, result: (o) => { ctx.res = o; } },
+    requirePkg: () => openPackage(dir), connect() {},
+  };
+  const prev = process.exitCode;
+  await verifyCmd.run(ctx);
+  process.exitCode = prev;
+  const hits = (ctx.res?.failures ?? []).filter((m) => m.startsWith('EXT_TAG_VALUE_PREFIX'));
+  assert.equal(hits.length, 2, JSON.stringify(ctx.res)); // each value once — not 4 (both lints), not 1 (over-dedupe)
+});
+
 // ---------------------------------------------------------------- review fixes (#87)
 
 test('lint: a self-reference in dependencies is tolerated without an extension block', () => {

@@ -137,6 +137,20 @@ test('flag aliases: canonical is read by the module, the alias is not; both-give
   assert.deepEqual(applyFlagAliases('ls', { limit: '3' }), { limit: '3' }, 'untouched where not declared');
   assert.deepEqual(applyFlagAliases('search', { limit: '5', max: '5' }), { max: '5' });
   assert.throws(() => applyFlagAliases('search', { limit: '5', max: '9' }), /--limit is an alias of --max/);
+  // a legacy in-module spelling given WITH its canonical flag is the same conflict (#103)
+  assert.throws(() => applyFlagAliases('mp-ls', { max: '10', 'page-size': '20' }), /--page-size is an older spelling of --limit \(= --max\)/);
+  assert.throws(() => applyFlagAliases('mp-ls', { limit: '10', 'page-size': '20' }), /--page-size/);
+  assert.deepEqual(applyFlagAliases('mp-ls', { 'page-size': '20' }), { 'page-size': '20' }, 'alone it is left for the module');
+  assert.deepEqual(applyFlagAliases('mp-ls', { max: '20', 'page-size': '20' }), { limit: '20', 'page-size': '20' }, 'agreeing values pass');
+});
+
+test('--help wins over a flag-alias conflict (#103)', () => {
+  const r = spawnSync(process.execPath, [UXC, 'search', '--limit', '1', '--max', '2', '--help'], { encoding: 'utf8', env: { ...process.env, UXC_AGENT: '0' } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /usage: uxc search/);
+  const c = spawnSync(process.execPath, [UXC, 'search', '--limit', '1', '--max', '2'], { encoding: 'utf8', env: { ...process.env, UXC_AGENT: '0' } });
+  assert.equal(c.status, 2);
+  assert.match(c.stderr, /--limit is an alias of --max/);
 });
 
 test('help mentions every flag the command reads (introspectable forms)', () => {
