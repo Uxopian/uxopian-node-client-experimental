@@ -108,6 +108,10 @@ handler-touching write waits it out.
 **The pin.** `uxopian-project.json` `agent.target` (or a one-line `.uxc/target`) names the only
 instance this checkout deploys to. `--target` may CONFIRM it; anything else is refused. A differing
 CLI default blocks writes (confirm with `--target <pin>`) and only warns reads.
+**No pin = first contact (#110).** A package that pins nothing AND has no sync state for the global
+default target (`targets.json` default) refuses writes to it — `--target <name>` or `UXC_TARGET`
+chooses explicitly, a pin chooses for good; a package already used there passes. Reads run with a
+one-line stderr note. A flag the command does not read is warned about (`unknown flag --x`).
 
 **Guardrails as data**, all in the `agent` block, all enforced before the command runs:
 
@@ -126,3 +130,5 @@ server copy is parked in `.uxc/pulled/` so you can still compare. Only `--flatte
 constrained tag values (BLOCKING — the `F00020` that kills a push mid-run, `--ignore-lint` to
 override), the declared `includeOrder` (BLOCKING), and prompt variables no caller provides
 (WARNING, never blocking: a prompt can be called from outside the package).
+`uxc verify --offline` (= `--static`) runs ONLY these lints (plus schemas, EXT_* prefixes, tag
+deltas) — no target, no connection, no lock.

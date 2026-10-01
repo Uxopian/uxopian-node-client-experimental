@@ -96,7 +96,11 @@ Full rationale + more rules: `references/policies.md`.
   out. Don't defeat that by racing pushes.
 - Cheap tier first: `uxc test --offline` runs `offline: true` books with no server and no lock.
 - `uxc verify` also runs the offline lints (constrained tag values, include order, prompt
-  variables). Run it BEFORE a push, not only after.
+  variables). Run it BEFORE a push, not only after; `uxc verify --offline` runs ONLY them, with
+  no target and no connection.
+- A package that pins no target and never synced with the global default refuses WRITES to it
+  (#110): pin it (`echo <target> > .uxc/target`) or pass `--target`. `uxc doctor` is read-only;
+  its cache-clear probe needs `--write-probes`.
 
 ## Token-economy habits (you are the primary user — keep outputs small)
 

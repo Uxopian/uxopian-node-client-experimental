@@ -12,6 +12,7 @@ import os from 'node:os';
 import {
   COMMANDS, TWO_WORD, VERBS, VERB_EXCEPTIONS, COMMAND_ALIASES, SUBCOMMAND_ALIASES,
   FLAG_ALIASES, LEGACY_FLAG_ALIASES, DESTRUCTIVE, resolveAliases, applyFlagAliases, aliasesOf,
+  flagsReadBy, GLOBAL_FLAGS,
 } from '../lib/cli-meta.mjs';
 import help from '../lib/commands/help.mjs';
 import { completionArgs, bashCompletion } from '../lib/commands/completion.mjs';
@@ -35,19 +36,11 @@ const twoWordOf = (base) => {
   return fam ? { family: fam, verb: base.slice(fam.length + 1) } : null;
 };
 
-/** The flags a module reads — the introspectable forms used across lib/commands. */
-function parsedFlags(src) {
-  const s = new Set();
-  for (const re of [
-    /\bflags\.([a-zA-Z][\w]*)/g,
-    /\bflags\[['"]([a-zA-Z0-9-]+)['"]\]/g,
-    /reclaim\(\s*flags\s*,\s*\w+\s*,\s*'([a-z0-9-]+)'/g,
-    /collectFlag\('([a-z0-9-]+)'\)/g,
-  ]) for (const m of src.matchAll(re)) s.add(m[1]);
-  return s;
-}
+/** The flags a module reads — the introspectable forms used across lib/commands. Shared with the
+ *  dispatcher's unknown-flag warning (#110), so the lint and the runtime agree on "reads". */
+const parsedFlags = flagsReadBy;
 
-const GLOBAL = new Set(['help', 'dir', 'json', 'target', 'no-lock', 'lock-timeout', 'allow-target-mismatch']);
+const GLOBAL = GLOBAL_FLAGS;
 
 function captureHelp() {
   const lines = [];

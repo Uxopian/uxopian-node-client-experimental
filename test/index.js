@@ -44,3 +44,4 @@ import "./version.test.mjs";
 import "./http-rate-limit.test.mjs";
 import "./http-redirect.test.mjs";
 import "./help-search.test.mjs";
+import "./first-contact.test.mjs";

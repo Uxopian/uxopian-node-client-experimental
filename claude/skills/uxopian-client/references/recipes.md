@@ -11,8 +11,13 @@ uxc target ls                                   # check the instance is register
 uxc target add iris --url https://iris.demos.uxopian.com --scope IRIS --user system --password '…'
 uxc init --name "Contract Management" --code ct ./contracts-pkg
 cd contracts-pkg
-uxc doctor                                      # connectivity + endpoint gauntlet — run BEFORE building
+echo iris > .uxc/target                         # pin it: a NEW unpinned package refuses writes to the global default (#110)
+uxc doctor                                      # connectivity + endpoint gauntlet, read-only — run BEFORE building
 ```
+A package with no pin and no sync state for the global default target refuses WRITES to it
+("pins no target and has never been used with …") until you choose: `--target <name>` or a pin.
+Reads run with a one-line stderr note. `uxc verify --offline` (= `--static`) lints with no target
+at all; `uxc doctor --write-probes` adds the `DELETE /gui/rest/caches` probe (a real cache clear).
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
 dirs, a tool-neutral `AGENTS.md` (package map, operating rules, cheat-sheet, tests) and a short
 CLAUDE.md stanza pointing to it. Refresh the AGENTS.md block later: `uxc context --agents-md --write`.

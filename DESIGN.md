@@ -829,6 +829,32 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
   enumerating, `get <id>` falling back to the virtual folder, and `get --raw-tag <name>` printing
   one TEXT tag verbatim for a pipe (LEARNINGS §39).
 
+### 25.5 First contact with an unpinned package (#110)
+
+The global default target (`targets.json` `default`) is chosen once for every package on the
+machine. A NEW package that pins nothing silently inherited it — `uxc doctor` in a fresh extension
+cleared the GUI caches of a server nobody chose for it. The preamble (`lib/session.mjs`,
+`firstContactGuard` in `lib/agent.mjs`) now asks one question before a command runs: did anyone
+choose this instance for this package? Yes when ANY of: a pin (`agent.target`, `.uxc/target`), an
+explicit `--target`, an env target (`UXC_TARGET`, `UXC_URL`/`UXC_CORE_URL`), or sync state already
+recorded for that target in `.uxc/state.json` (the package was used there before — existing
+checkouts are never blocked). Otherwise:
+
+- a **write** (the command's declared mode, `--no-lock` notwithstanding) is refused before any
+  request, naming the global target and the two ways to choose (`--target <name>`, or a pin);
+- a **read** runs, with one stderr line naming the target and its origin (stdout and JSON mode
+  untouched);
+- an offline command (mode `none`: `verify --offline`, `test --offline`, `context`…) is unaffected.
+
+The same review made the read-only paths actually read-only: `verify --offline` (= `--static`)
+creates no client at all, `doctor`'s default gauntlet no longer sends `DELETE /gui/rest/caches`
+(`--write-probes` does; it, `--roundtrip`, `--sandbox` and `--ai-smoke` make doctor a `write` —
+`doctorLockMode`), and a flag the command does not read is WARNED about on stderr instead of being
+dropped in silence (`unknownFlags` in `lib/cli-meta.mjs`, from the same introspection the #99 lint
+uses, plus the helper modules a command hands its flags to). A warning, not a refusal: no
+per-command flag set is provably complete (`uxc add` passes every flag to a kind template), and a
+command that works today with a valid flag must keep working.
+
 ## 26. Upgrade report and compatibility (`compat.json`, `--report`)
 
 Before a new version of a product lands, say for each installed extension that depends on it:
