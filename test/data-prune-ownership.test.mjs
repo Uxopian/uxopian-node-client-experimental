@@ -125,11 +125,12 @@ test('receipts unreadable: the declared dependency still protects its rows', asy
   assert.deepEqual(core.log.deleted, ['PO_STALE']);
 });
 
-test('without --prune nothing changes: foreign rows are just serverOnly', async () => {
+test('without --prune nothing changes: our server-only rows are serverOnly, foreign rows are reported apart (#114)', async () => {
   const core = fakeCore({ docs: [row('CM_SUPPLY'), row('PO_STALE')], receipts: ['cm'] });
   const { ctx } = ctxFor(makePkg({ rows: [row('PO_KEEP')] }), core);
   const rep = await pushRows(ctx, ctx.pkg, 'CmTeams', {});
-  assert.deepEqual(rep.serverOnly.sort(), ['CM_SUPPLY', 'PO_STALE']);
+  assert.deepEqual(rep.serverOnly, ['PO_STALE']);
+  assert.deepEqual(rep.foreign, [{ id: 'CM_SUPPLY', code: 'cm' }]);
   assert.deepEqual(core.log.deleted, []);
 });
 

@@ -146,6 +146,10 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
   `{"_id": "...", "_deleted": true}` or `data push --prune` (prints kill list, needs confirm).
 - Gotcha (search lag): server rows known from sync state / the local JSONL but invisible to search
   are recovered by direct GET — pull no longer drops rows as "deleted on server" during index lag.
+- Shared class (product + extension both feed one class, DESIGN §31): each package hashes, pulls and
+  pushes only ITS rows (own prefix, + unprefixed ones no other installed package claims). Another
+  installed package's rows are never a collision, never overwritten or deleted (not even by
+  `--force` or a tombstone); `status --remote` shows them as a note (`+381 rows of po`), not drift.
 
 ## ai.prompt — managed
 - Storage: `ai/prompts/<id>.json` (meta) + `<id>.content.md` (content VERBATIM; camel ids `ctFoo`)

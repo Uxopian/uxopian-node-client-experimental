@@ -1229,7 +1229,7 @@ them: `{ "tagclass": "CmCaseType", "legacy": ["ORDER"], "allowedValues": [ {ORDE
   `baseState` records the first two only.
 - Schema `schemas/tagclass-delta.schema.json` documents `legacy`; `uxc explain EXT_TAG_LEGACY`.
 
-## 31. `data push --prune` and row ownership across installed packages
+## 31. Row ownership across installed packages (`data push --prune`, shared dataset classes)
 
 A dataset can be fed by several installed packages: the Case Management product and an extension (the
 Purchase Order Management `po`) both contribute rows to `CmTeams`. `--prune` deletes "server rows absent
@@ -1266,6 +1266,26 @@ from MY local file" — in a shared dataset that is the OTHER package's rows. It
   A package alone on the target (readable receipts, no dependency) deletes every row, as before.
 - Unchanged: tombstone rows (`{"_id":…,"_deleted":true}`) are explicit and still delete; without
   `--prune` nothing is deleted.
+- **The package's view of a shared class (#113/#114)**: the same split decides what a package SEES, not
+  only what it may delete. `fd.dataset` `readServer` — the server form status/push/pull hash — and the
+  row helpers (`load()` -> `rowStatus`/`pullRows`/`pushRows`) keep only the rows that are not provably
+  another package's (`ownedView`): own-prefixed rows plus unprefixed ones (receipts read; receipts
+  unreadable, unprefixed rows stay in the hash exactly as before so a flapping gateway causes no false
+  drift — they are still never deleted on that ground). Rows of another installed package or declared
+  dependency are left out. Consequences: a product and its extension feeding one class each hash only
+  their own rows, so `status --remote` settles for both after both pushed (the other package's rows
+  print as an informational `note` on the row — `+381 rows of po (… not hashed, not drift)` — even
+  when in sync); `push`/`push --all`/import of the extension classifies only its own rows (no whole-class
+  "collision"; absent own rows read `new` and push creates them); `pull` never copies the other
+  package's rows into the local file (a stale copy with a base is dropped with a note naming the owner).
+  A local row or tombstone whose id belongs to another installed package is SKIPPED by push — never
+  upserted, never deleted, also under `--force` (`--force` overrides conflicts on own rows only) — and
+  named in a warning (`skippedForeign`). `data push` reports `serverOnly` = OUR server-only rows and
+  `foreign: [{id, code}]` apart.
+- **Hash stability**: alone on the target (no other receipt, no dependency) nothing is foreign, the view
+  IS the full-class read and every server form/hash is byte-identical to before (asserted in
+  `test/data-shared-class.test.mjs`; verified on examples/ct-package and uxoai: 0 local or server hash
+  differences vs 0.24.0).
 - Limit: a row of another package that carries NO prefix of it (a legacy code such as `SUPPLY_PLANNING`)
   cannot be told from ours by id; keep such rows out of the prune by listing them in the local file or
   avoid `--prune` on shared datasets.
