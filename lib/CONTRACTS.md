@@ -435,7 +435,7 @@ every alias.
 ## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
 
 ```js
-export function f2Surface(target, {loginCooldownMs = 30_000, tokenCache = false}?)  // target.f2 + f2User/f2Password -> client
+export function f2Surface(target, {loginCooldownMs = 30_000, reloginIntervalMs = 30_000, tokenCache = false}?)  // target.f2 + f2User/f2Password -> client
 export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache}; the CLI passes false for --no-token-cache
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
@@ -452,7 +452,9 @@ broker, so any caller (doctor, a library driver on `connect()`) may call it safe
 cooldown (30 s) counts FAILED logins only (a failed status or a transport error on the login):
 inside it, `login()` throws `UXC_F2_COOLDOWN` without a request. Re-auth rule (§F22/§F23): a 401 ->
 one forced login + one replay, unless a re-login is skipped — inside the failed-login cooldown, or
-when the token the last 401 re-login minted is itself refused — and then the BROKER's 401 is
+within `reloginIntervalMs` (30 s) of the previous 401-forced re-login (the token it minted refused
+too, or a flapping topology; after the interval a long-lived client may re-log-in again, REVIEW
+N3) — and then the BROKER's 401 is
 returned (`req()` throws its `HttpError`, `explanation` = why the re-login was skipped, never the
 cooldown text). A GENERIC 403 -> one login + one replay, at most once per token, never inside the
 cooldown after any login, and never on a token the broker already accepted (a 403 on a proven

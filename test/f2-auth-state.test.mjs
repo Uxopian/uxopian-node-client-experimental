@@ -171,6 +171,40 @@ test('a 401 that survives a freshly minted token: one re-login, then the 401 is 
   } finally { b.close(); }
 });
 
+// ---- REVIEW N3: forced 401 re-logins are bounded in time, not per token forever --------------
+
+test('N3: a token refused right after its re-login is retried once the re-login interval has passed (liveness)', async () => {
+  const b = await stubBroker();
+  try {
+    const f2 = f2Surface(b.target, { loginCooldownMs: 0, reloginIntervalMs: 50 });
+    await f2.get('/api/ok');
+    b.state.valid.clear();
+    b.state.acceptNew = false; // a restart in progress: the first fresh token is refused too
+    await assert.rejects(f2.get('/api/ok'), (e) => e.status === 401);
+    assert.equal(b.state.logins, 2);
+    b.state.acceptNew = true; // the broker is back
+    await new Promise((r) => setTimeout(r, 80));
+    assert.deepEqual(await f2.get('/api/ok'), { ok: 'T3' }, 'a new re-login after the interval, not stuck on the refused token');
+    assert.equal(b.state.logins, 3);
+  } finally { b.close(); }
+});
+
+test('N3: a broker that 401s every other call (flapping keys) costs at most one re-login per interval', async () => {
+  const b = await stubBroker();
+  try {
+    const f2 = f2Surface(b.target, { loginCooldownMs: 0 }); // default 30 s interval
+    await f2.get('/api/ok');
+    let surfaced = 0;
+    for (let i = 0; i < 5; i++) {
+      b.state.valid.clear(); // the "other node" refuses whatever token we hold
+      const r = await f2.raw('GET', '/api/ok');
+      if (r.status === 401) { surfaced += 1; assert.match(r.reloginSkipped, /at most one per 30s|refused too/); }
+    }
+    assert.equal(b.state.logins, 2, 'the initial login + one re-login, not one per call');
+    assert.equal(surfaced, 4);
+  } finally { b.close(); }
+});
+
 // ---- #6: a 403 on an accepted token is real, whatever its body ------------------------------
 
 test('after a successful call, a 403 of ANY body shape is a real refusal: no login, no replay', async () => {
