@@ -24,7 +24,7 @@ without an LLM, Thymeleaf-rendered tool arguments, chat scoping).
 4. **One failed fan-out element fails the whole run, and nothing retries it.** That covers a transient provider
    error, an invented id (the Core returns 500), or an agent reporting itself "unmet" even without
    `successCriteria`. The prompt must say that returning the object IS success. Serialize heavy runs and retry
-   the run.
+   the run (`uxc run --plan <id> --retry`).
 5. **LLM reducers miscount and drop rows, and `successCriteria` is self-assessed.** Never ask an LLM for counts or
    complete lists. Pass the fan-out output through a DIRECT_TOOL `chunkText` leaf and compute exact numbers from
    it.
@@ -43,6 +43,18 @@ without an LLM, Thymeleaf-rendered tool arguments, chat scoping).
 12. **Don't let a chat assistant build a de-duplicated scope.** It took ids from the wrong documents, sent ids as
     names and misreported its steps. Pin the scope (or store it in FlowerDocs) and keep chat to a few items;
     run big fan-outs (62 families) from the admin Run button or uxc: the same request failed in chat after ~10 s.
+
+## Running, retrying, asserting
+- `uxc run --plan <id> --payload k=v [--expect re] [--json]` records every run (planId, executionId, payload,
+  per-node outcome) in `<package>/.uxc/runs/` (outside a package: `~/.uxopian/runs/`).
+- `uxc run --plan <id> --retry [<executionId>]` re-runs with that run's payload (default: the newest run of the
+  plan on this target) and prints both runs node by node (`--json`: `retry.nodes[{id, before, after}]`). It is a
+  FULL re-run: the gateway has no per-node or per-element re-run (§A16), and `resume` only resumes a PAUSED run.
+  It refuses `--payload`/`--payload-json`/`--fixture` (it replays) and errors clearly when nothing is recorded.
+- `--expect` matches the raw output first, then the JSON in each node output (strict, then repaired: ```json
+  fences, prose around it, trailing commas, smart/single quotes). A repaired pass prints
+  `matched after repairing the JSON (node x): …` (`--json`: `expectVia`, `expectNode`, `repaired`). Write the
+  regex against compact JSON (`"risk":"HIGH"`). The parser is `parseLooseJson` in `lib/jsonloose.mjs`.
 
 ## Useful facts
 - **Fan-out:** `listKey` accepts a JSON array, a JSON-array string, or an upstream output (including another

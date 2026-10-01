@@ -332,7 +332,9 @@ wall-clock from `uxc run --plan`-style polling; tokens are the node's `inputToke
   (`factSheets`, via `uxc run --plan --json` or the chat caller), not from the brief.
 - **No per-element retry**: one transient provider error on 1 of 15 gpt-4o-mini calls
   (`[facts] java.lang.reflect.UndeclaredThrowableException`) failed the whole 15-contract run after
-  30.7 s; the identical rerun completed. Callers should retry the RUN (uxc does not yet).
+  30.7 s; the identical rerun completed. Callers should retry the RUN: `uxc run --plan <id> --retry
+  [<executionId>]` replays a recorded run's payload as a full re-run and compares both runs per node (#122) —
+  no per-node re-run mechanic is recorded on the gateway (`resume` is for a PAUSED run only, §A14).
 
 **Recommendations (design)**
 1. Read documents with a DIRECT_TOOL (`extractDocumentText`), then give the text to a TOOL-LESS

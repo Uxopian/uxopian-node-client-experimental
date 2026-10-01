@@ -165,7 +165,8 @@ export async function runPrompt(ctx, idOrGoal, { payload = {}, goal = false, pro
 // images: data URIs only (`data:<mime>;base64,…`) appended as IMAGE content items — bare base64 is
 // REFUSED client-side (the gateway closes the socket instead of answering 400); gated on
 // caps.inlineImages (ft5+). UXOPIAN-AI-LEARNINGS §A19.
-// -> { answer, elapsedMs, pass: expect ? regex.test(answer) : null, error?: string }
+// -> { answer, elapsedMs, pass: expect ? matchLoose(expect, answer).pass : null, error?: string,
+//      expectVia?: 'json'|'json-repaired', repaired?: string[] }   (expectVia only when the raw text did not match)
 // lib/commands/versions.mjs (uxc versions <promptId> [--stats], read-only, caps.promptVersioning):
 //   GET …/prompts/{id}/versions (+ …/versions/{n}/statistics, …/{id}/statistics) -> rows
 //   {version, state served|draft|published, provider/model, size, local '= local'?, uses, feedback, saved (h)}
@@ -173,7 +174,32 @@ export async function runPlan(ctx, planId, { payload = {}, expect = null, maxCha
 // caps.agenticPlans required. POST /admin/plan-executions/run -> poll GET /{id} to
 // COMPLETED|FAILED|CANCELLED; 400/404 at submit -> status REJECTED; timeout -> POST /{id}/stop.
 // -> { executionId, status, answer (final nodes), nodes:[{id,type,status,outputKey,output,error?}],
-//      elapsedMs, pass (expect over every node output, false when error), error? }
+//      elapsedMs, pass (expect over every node output, false when error), error?,
+//      expectVia?, expectNode?, repaired? }   — --expect: regex on all outputs joined (raw text), else
+//      per node matchLoose (strict JSON, then repaired); the matching node + repairs are reported
+// Local run records (#122) — the gateway has NO per-node re-run (§A14/§A16), so --retry is a full
+// re-run with a recorded payload:
+export function runsDir(pkgDir = null)          // <pkg>/.uxc/runs | ~/.uxopian/runs (UXC_HOME)
+export function planRunRecord(planId, res, { payload, target, retryOf, now })
+// -> { planId, executionId, target, recordedAt, status, elapsedMs, payload, nodes:[{id,type,status,output(≤500),error?}], error?, retryOf? }
+export function recordPlanRun(dir, rec) -> path   // never overwrites; keeps the newest 50 per plan
+export function listPlanRuns(dir, { planId?, target? }) -> [{...record, path}]  // oldest first
+export function findPlanRun(dir, planId, { executionId?, target? }) -> record   // throws a clear Error when none
+export function comparePlanRuns(prev, next) -> [{ id, type, before:{status,error?,output}|null, after:… }]
+```
+
+## lib/jsonloose.mjs
+
+```js
+export function parseLooseJson(text) -> { value, repaired: string[] }   // throws Error(reason)
+// The FIRST JSON value of model output: strict whole text (repaired: []), else the first ``` fence,
+// else the first {…}/[…] that parses tolerantly. Tolerated + noted: fences, prose around, trailing
+// commas, smart-quote / single-quote delimiters (a ' closes only before , : } ] or the end),
+// unquoted keys, raw line breaks in strings, Python True/False/None. Never evals; an embedded
+// scalar is never guessed; __proto__ stays an own key.
+export function matchLoose(re, text) -> { pass, via: 'text'|'json'|'json-repaired'|null, repaired }
+// --expect: regex on the raw text, then on the strict JSON re-serialized (compact + 2-space),
+// then on the loosely parsed value. Package tests: testkit should re-export both (#122).
 ```
 
 ## lib/index.mjs (public lib)
