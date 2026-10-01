@@ -11,7 +11,7 @@ import { KINDS, PUSH_ORDER } from '../lib/kinds/index.mjs';
 import adapter from '../lib/kinds/fd-tagclass-delta.mjs';
 import { hashResource } from '../lib/canonical.mjs';
 import {
-  mergeTagDelta, removeOwnValues, sliceOwn, checkTagDelta, lintTagDeltas, valuePrefix,
+  mergeTagDelta, removeOwnValues, legacyOf, sliceOwn, checkTagDelta, lintTagDeltas, valuePrefix,
 } from '../lib/tagdelta.mjs';
 import { explainCode } from '../lib/explain.mjs';
 
@@ -133,7 +133,7 @@ test('lintTagDeltas reads the package; the codes are explained', () => {
   assert.equal(valuePrefix(pkg.manifest), 'ACME_');
   const codes = lintTagDeltas(pkg).map((e) => e.code).sort();
   assert.deepEqual(codes, ['EXT_TAG_DELTA_OWN', 'EXT_TAG_VALUE_PREFIX']);
-  for (const c of ['EXT_TAG_VALUE_PREFIX', 'EXT_TAG_CLASS_UNKNOWN', 'EXT_TAG_DELTA_OWN']) assert.equal(explainCode(c).length, 1);
+  for (const c of ['EXT_TAG_VALUE_PREFIX', 'EXT_TAG_CLASS_UNKNOWN', 'EXT_TAG_DELTA_OWN', 'EXT_TAG_LEGACY']) assert.equal(explainCode(c).length, 1);
 });
 
 // ---- registration ----------------------------------------------------------------------------
@@ -393,4 +393,87 @@ test('projectValues sorts by code unit (not locale) and labels by (language, val
   ]);
   assert.deepEqual(p.map((x) => x.symbolicName), ['B_y', 'a_x']);
   assert.deepEqual(p[1].displayNames.map((x) => x.language + x.value), ['DEz', 'ENa', 'ENb']);
+});
+
+// ---- legacy values (DESIGN §30) ----
+const LEG = (extra = {}) => ({ tagclass: 'CmCaseType', legacy: ['ORDER'], allowedValues: [d('ORDER'), d('ACME_QUOTE')], ...extra });
+
+test('legacy: the prefix check skips a declared value only; undeclared and malformed legacy are flagged', () => {
+  const opts = { id: 'CmCaseType', prefix: 'ACME_' };
+  assert.deepEqual(checkTagDelta(LEG(), opts), []);
+  assert.deepEqual(legacyOf(LEG()), ['ORDER']);
+  assert.deepEqual(legacyOf({}), []);
+  const undeclared = checkTagDelta(LEG({ legacy: [] }), opts);
+  assert.equal(undeclared.length, 1);
+  assert.equal(undeclared[0].code, 'EXT_TAG_VALUE_PREFIX');
+  assert.match(undeclared[0].message, /"ORDER".*legacy/);
+  assert.deepEqual(checkTagDelta(LEG({ legacy: ['GHOST'] }), opts).map((e) => e.code), ['EXT_TAG_LEGACY']);
+  assert.deepEqual(checkTagDelta(LEG({ legacy: 'ORDER' }), opts).map((e) => e.code), ['EXT_TAG_LEGACY', 'EXT_TAG_VALUE_PREFIX']);
+  // another unprefixed value stays flagged even when ORDER is declared
+  const other = checkTagDelta(LEG({ allowedValues: [d('ORDER'), d('CLAIM')] }), opts);
+  assert.deepEqual(other.map((e) => e.code), ['EXT_TAG_VALUE_PREFIX']);
+  assert.match(other[0].message, /"CLAIM"/);
+});
+
+test('legacy: lintTagDeltas on a package honours it (no EXT_TAG_VALUE_PREFIX)', () => {
+  const dir = makePkg({ CmCaseType: LEG() });
+  assert.deepEqual(lintTagDeltas(openPackage(dir)), []);
+  const bad = makePkg({ CmCaseType: LEG({ legacy: undefined }) });
+  assert.deepEqual(lintTagDeltas(openPackage(bad)).map((e) => e.code), ['EXT_TAG_VALUE_PREFIX']);
+});
+
+test('removeOwnValues: an unprefixed own name goes only when declared legacy', () => {
+  const server = [v('ORDER'), v('ACME_QUOTE'), v('CLAIM')];
+  assert.deepEqual(removeOwnValues(server, ['ORDER', 'ACME_QUOTE'], { prefix: 'ACME_' }).removed, ['ACME_QUOTE']);
+  const r = removeOwnValues(server, ['ORDER', 'ACME_QUOTE', 'CLAIM'], { prefix: 'ACME_', legacy: ['ORDER'] });
+  assert.deepEqual(r.removed, ['ORDER', 'ACME_QUOTE']);
+  assert.deepEqual(names(r.values), ['CLAIM']);
+});
+
+test('legacy: push adds a missing legacy value, leaves product labels alone, records legacyValues', async () => {
+  const dir = makePkg({ CmCaseType: LEG({ allowedValues: [d('ORDER', 'Order'), d('ACME_QUOTE')] }) });
+  const srv = fakeServer({ CmCaseType: [v('ORDER', 'Order'), v('CLAIM')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  const vals = srv.tcs.get('CmCaseType').allowedValues;
+  assert.deepEqual(names(vals), ['ORDER', 'CLAIM', 'ACME_QUOTE']);
+  assert.equal(vals[0].displayNames[0].value, 'Order', 'the product value is not rewritten');
+  const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
+  assert.deepEqual(st.ownValues, ['ACME_QUOTE', 'ORDER']);
+  assert.deepEqual(st.legacyValues, ['ORDER']);
+});
+
+test('legacy: rm --server removes the declared unprefixed value, never an undeclared one', async () => {
+  const dir = makePkg({ CmCaseType: LEG({ allowedValues: [d('ORDER'), d('CLAIM'), d('ACME_QUOTE')] }) });
+  const srv = fakeServer({ CmCaseType: [v('ORDER'), v('CLAIM'), v('ACME_QUOTE'), v('KEEP')] });
+  const { ctx } = ctxFor(dir, srv.core);
+  await adapter.remove(ctx, 'CmCaseType');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM', 'KEEP']);
+});
+
+test('legacy: file gone, rm uses the recorded legacyValues (and not an unrecorded unprefixed name)', async () => {
+  const dir = makePkg({ CmCaseType: LEG() });
+  const srv = fakeServer({ CmCaseType: [v('ORDER'), v('CLAIM'), v('ACME_QUOTE')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  pkg.setResState('t1', 'fd.tagclass-delta', 'CmCaseType', { ownValues: ['ORDER', 'CLAIM', 'ACME_QUOTE'], legacyValues: ['ORDER'] });
+  const { rmSync } = await import('node:fs');
+  rmSync(join(dir, 'fd/tagclass-deltas/CmCaseType.delta.json'));
+  await adapter.remove(ctx, 'CmCaseType');
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM']);
+});
+
+test('legacy: a legacy value dropped from the delta is an orphan and removed by push; an undeclared one is not', async () => {
+  const dir = makePkg({ CmCaseType: LEG({ allowedValues: [d('ORDER'), d('ACME_QUOTE')] }) });
+  const srv = fakeServer({ CmCaseType: [v('CLAIM')] });
+  const { ctx, pkg } = ctxFor(dir, srv.core);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  srv.tcs.get('CmCaseType').allowedValues.push(v('STRAY'));
+  const st = pkg.resState('t1', 'fd.tagclass-delta', 'CmCaseType');
+  pkg.setResState('t1', 'fd.tagclass-delta', 'CmCaseType', { ...st, ownValues: [...st.ownValues, 'STRAY'] });
+  writeFileSync(join(dir, 'fd/tagclass-deltas/CmCaseType.delta.json'), JSON.stringify({ tagclass: 'CmCaseType', allowedValues: [d('ACME_QUOTE')] }));
+  const s = await statusAll(ctx, { remote: true });
+  assert.match(s.rows[0].detail, /orphaned .*: ORDER — uxc push removes them/);
+  assert.doesNotMatch(s.rows[0].detail, /STRAY/);
+  await pushResources(ctx, pkg.entries('fd.tagclass-delta'));
+  assert.deepEqual(names(srv.tcs.get('CmCaseType').allowedValues), ['CLAIM', 'ACME_QUOTE', 'STRAY']);
 });

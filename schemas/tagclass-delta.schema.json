@@ -9,6 +9,12 @@
   "properties": {
     "$schema": { "type": "string", "description": "Editor hint only: uxc ignores it." },
     "tagclass": { "type": "string", "minLength": 1, "x-uxc-severity": "error", "description": "Target tag class id; must equal the file name (<Tag>.delta.json) and the registry id." },
+    "legacy": {
+      "type": "array",
+      "x-uxc-severity": "error",
+      "description": "Unprefixed values (e.g. \"ORDER\") the extension inherited under their old codes: exempt from the prefix check, removed by rm --server only because declared here. Each must also be listed in allowedValues.",
+      "items": { "type": "string", "minLength": 1 }
+    },
     "allowedValues": {
       "type": "array",
       "minItems": 1,

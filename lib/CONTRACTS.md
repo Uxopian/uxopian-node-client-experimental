@@ -557,15 +557,16 @@ test/output-mode.test.mjs lints that every command module except help calls `.re
 
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
-    removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
+    removeOwnValues(serverValues, names, {prefix, legacy}) -> {values, removed}
+    legacyOf(delta) -> [name]   the delta's declared unprefixed own values (DESIGN §30)
     sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)
     checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
-    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN
+    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN, EXT_TAG_LEGACY
     valuePrefix(manifest) -> 'ACME_'
     onlyMissing(deltaValues, serverValues) -> bool   (server differs only by absent values)
 Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:
     mergeOnPush=true + onlyMissing(local, server) -> bool   skip collision/conflict refusals ONLY when true
-    baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
+    baseState(local) -> {ownValues, legacyValues}    merged into state wherever sync records a base without push()
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
     presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
 

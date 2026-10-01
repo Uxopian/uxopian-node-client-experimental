@@ -1090,3 +1090,23 @@ so no package that works today is rejected by an editor or by verify. The other 
   (exit 1) and warnings as warnings (`lintSchemas(pkg)`, offline, with the other §25 lints).
 - Checked on every local package at implementation time (examples/, uxoai*, gerflor, cm, llm, qpins,
   pii-triage, eowin, demoseminaire, ct): no error, no warning.
+
+## 30. Legacy values in a tag-class delta (`"legacy": [...]`)
+
+An extension split out of a product sometimes inherits values that already live in a product tag class
+under UNPREFIXED codes (the Purchase Order Management extension `po` owns `ORDER` in the product's
+`CmCaseType`; renaming it `PO_ORDER` would touch every case, notebook and id prefix). A delta declares
+them: `{ "tagclass": "CmCaseType", "legacy": ["ORDER"], "allowedValues": [ {ORDER…}, {PO_QUOTE…} ] }`.
+
+- **Declared AND listed**: each `legacy` name must also be in `allowedValues` (with labels), else
+  `EXT_TAG_LEGACY`. `legacy` not an array of strings is the same code.
+- **Lint** (`lintTagDeltas`, `verify`, push validation): `EXT_TAG_VALUE_PREFIX` skips declared legacy
+  values; every other value still needs the prefix. `legacyOf(delta)` is the pure accessor.
+- **Push**: unchanged merge (`mergeTagDelta`): a legacy value the server lacks is appended; one it has
+  keeps its product labels untouched (it is the product's value too, never relabelled).
+- **Ownership is only what is declared**: `rm --server`, upgrade pruning and orphan detection remove an
+  unprefixed value ONLY when it is declared legacy (in the file, or in the `legacyValues` recorded in
+  state at the last push / base record when the file is gone or the value was dropped from it). An
+  unprefixed name that is merely in `allowedValues` or in a stray `ownValues` is never removed.
+- State: `fd.tagclass-delta` records `{ownValues, legacyValues}` per target (`baseState` too).
+- Schema `schemas/tagclass-delta.schema.json` documents `legacy`; `uxc explain EXT_TAG_LEGACY`.
