@@ -92,3 +92,10 @@ test('a Core write and a gateway GET refused with 429 ARE replayed', async () =>
     assert.deepEqual(s.calls, ['POST /rest/documents', 'POST /rest/documents', 'GET /api/v1/admin/prompts', 'GET /api/v1/admin/prompts']);
   } finally { s.close(); }
 });
+
+test('replayable429: an AI execution is never replayed (any method); other gateway writes are', () => {
+  for (const [m, u] of [['POST', 'http://h/gui/gateway/uxopian-ai/api/v1/requests?x=1'], ['GET', 'http://h/gw/api/v1/requests/stream?q=1'],
+    ['POST', 'http://h/gw/api/v1/admin/plan-executions/run']]) assert.equal(replayable429(m, u, true), false, `${m} ${u}`);
+  assert.equal(replayable429('PUT', 'http://h/gw/api/v1/admin/prompts/p1', true), true);       // ai.* admin push: front limiter
+  assert.equal(replayable429('GET', 'http://h/gw/api/v1/admin/plan-executions/abc', true), true); // polling a run is a read
+});

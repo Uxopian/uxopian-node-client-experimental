@@ -131,15 +131,14 @@ function fakePkg(entries, metas = {}) {
   };
 }
 
-test('classId: validate requires an fd.documentclass entry of the package (typo -> did-you-mean)', () => {
+test('classId: a case-only typo of a package class is refused; any other class passes (may live elsewhere)', () => {
   const mk = (o) => ({ obj: { name: 'X', contentFile: 'po-lib-a.js', registrationOrder: null, ...o }, contents: { 'po-lib-a.js': bytes } });
   const pkg = fakePkg([{ kind: 'fd.documentclass', id: 'PoServerLibrary', path: 'fd/classes/PoServerLibrary.json' }]);
   try {
     assert.deepEqual(script.validate(pkg, entry, mk({ classId: 'PoServerLibrary' })), []);
     assert.match(script.validate(pkg, entry, mk({ classId: 'PoServerlibrary' })).join('\n'), /not an fd\.documentclass.*did you mean "PoServerLibrary"/);
-    const unknown = script.validate(pkg, entry, mk({ classId: 'PoOther' })).join('\n');
-    assert.match(unknown, /not an fd\.documentclass of this package/);
-    assert.match(unknown, /uxc adopt fd\.documentclass PoOther --external/, 'a server-side class is registered, not pushed');
+    // a class of another package (or already on the server) is not refused offline: no new block
+    assert.deepEqual(script.validate(pkg, entry, mk({ classId: 'PoOther' })), []);
     // a class registered as external satisfies it
     const ext = fakePkg([{ kind: 'fd.documentclass', id: 'PoOther', policy: 'external' }]);
     assert.deepEqual(script.validate(ext, entry, mk({ classId: 'PoOther' })), []);
