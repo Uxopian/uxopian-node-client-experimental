@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
-import { seenSince, respawnKind, dateMs, installState, classifyRefusal, versionNames } from '../lib/commands/f2-lib.mjs';
+import { seenSince, respawnKind, dateMs, ageOf, EPOCH_MS_MIN, installState, classifyRefusal, versionNames } from '../lib/commands/f2-lib.mjs';
 
 const UXC = resolve('bin/uxc.mjs');
 const KEYS = ['UXC_TARGET', 'UXC_URL', 'UXC_CORE_URL', 'UXC_AI_URL', 'UXC_GUI_URL', 'UXC_SCOPE', 'UXC_USER',
@@ -577,6 +577,20 @@ test('N1 dateMs: epoch seconds, epoch ms and ISO all give the same instant', () 
   assert.equal(dateMs(999_999_999_999), 999_999_999_999_000, 'just below 1e12 -> seconds');
   assert.equal(dateMs(1e12), 1e12, '1e12 and above -> ms');
   assert.equal(dateMs(NaN), null);
+});
+
+test('P3-7 dateMs and ageOf share ONE boundary: 1e12 and above is an epoch in ms, below it is not', () => {
+  const now = 2_000_000_000_000;
+  assert.equal(EPOCH_MS_MIN, 1e12);
+  assert.equal(dateMs(EPOCH_MS_MIN), EPOCH_MS_MIN, 'dateMs: 1e12 -> ms');
+  assert.equal(ageOf(EPOCH_MS_MIN, now), now - EPOCH_MS_MIN, 'ageOf: 1e12 -> an epoch too (was an age before)');
+  assert.equal(dateMs(EPOCH_MS_MIN - 1), (EPOCH_MS_MIN - 1) * 1000, 'dateMs: below -> seconds');
+  assert.equal(ageOf(EPOCH_MS_MIN - 1, now), EPOCH_MS_MIN - 1, 'ageOf: below -> an age in ms');
+  assert.equal(ageOf(1500, now), 1500, 'rc5 age');
+  assert.equal(ageOf(now + 5000, now), 0, 'a future epoch is never a negative age');
+  assert.equal(ageOf('', now), null);
+  assert.equal(ageOf(null, now), null);
+  assert.equal(ageOf('n/a', now), null);
 });
 
 test('versionNames accepts strings, objects and a {collection} envelope', () => {
