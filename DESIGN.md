@@ -623,6 +623,31 @@ Written automatically after `uxc import` (with the artifact sha) and after a FUL
 the deploy. `uxc installed [--code c]` lists receipts from both surfaces; `--write` stamps them for
 the current package (backfill/repair).
 
+**Owned upgrades (issue #52, decided 2026-10-01).** An upgrade unpacks into a FRESH dir (no sync
+state), so every resource changed since the installed version used to classify as a no-base
+`collision` and `--force` became mandatory — blunting a guard meant for FOREIGN same-id objects.
+Decision: receipts now record **per-resource hashes** (`resourceHashes: {"kind/id": <first 16 hex
+of the sync hash>}` — AI receipt JSON; FD tag **`UxcResourceHashes`** = `kind/id=<hex>,…`, its
+tagclass created on demand like `UxcCompat`). The value is the sync base each resource has after the
+deploy (= what the server holds). `import` passes them explicitly; `writeReceipts` otherwise derives
+them from `ctx.pkg`'s sync state, so `push --all` and `installed --write` record them too. Backward
+compatible: older uxc ignore the field; a server refusing the tag costs the hashes (warned, retried
+without), never the receipt. 64-bit prefixes are ample to tell "unchanged" from "edited".
+Import pre-flight (`reclassifyOwned`, both `uxc import` and `uxc mp install`, `--report` included):
+a no-base `collision` whose kind/id is in the installed receipt for the SAME package code (any
+version; `ownedByReceipt` merges both surfaces) is ours —
+- recorded hash == server → state **`upgrade`** (base seeded = the server's current hash, pushed
+  without `--force`; the push's TOCTOU re-read still refuses if it changes in between);
+- recorded hash != server → **`conflict`** "edited on the server since <code>@<v> was installed",
+  refused like any collision (`--force` overwrites the edit);
+- receipt lists it but records no hash (written by an older uxc) → **`upgrade` with a warning**
+  listing those resources: edits since the install are undetectable, but the receipt PROVES the
+  object is ours, and refusing would keep `--force` mandatory for every pre-#52 install.
+Never weakened: an id NOT in our receipt (foreign, another package's code, no receipt, receipts
+unreadable, server re-read failed) keeps the plain collision refusal. A uxc release that changes
+canonical hashing makes untouched objects look edited (a safe false refusal — `--force`). Results
+carry `owned: {receipt, upgraded, unknownBase, edited}`.
+
 ## 20. Pre-install diagnostics (`uxc doctor --ready` / `--sandbox` / `--ai-smoke`)
 
 Before installing on a new/unknown scope, `docs/DIAGNOSTICS.md` is the runbook and doctor is the

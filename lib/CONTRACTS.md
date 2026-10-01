@@ -98,6 +98,18 @@ export async function importPackage(ctx, src, { remap = null, force = false, ign
 //   rewrite registry/manifest, lint residuals (abort if any) -> PRE-FLIGHT every resource vs server
 //   (no-base matrix) and print full collision list BEFORE any write (need --force to overwrite) ->
 //   pushResources in PUSH_ORDER -> verify summary.
+//   OWNED UPGRADES (issue #52, DESIGN §19): no-base 'collision' rows listed in THIS code's installed
+//   receipt are re-judged by reclassifyOwned -> 'upgrade' (pushable, no --force) | 'conflict'
+//   ("edited on the server since <code>@<v> was installed"); ids not in the receipt stay 'collision'.
+//   Result (and the --report result) carries owned: {receipt:'code@v', upgraded, unknownBase, edited}.
+export async function reclassifyOwned(ctx, pkg, rows, own)  // mutates rows; seeds base for 'upgrade' rows
+// lib/receipt.mjs
+export function ownedByReceipt(receipts, code)    // -> {code, version, keys:Set, hashes:{key:short}|null} | null
+export function resourceHashesFromState(pkg, targetName, resources)  // -> {"kind/id": shortHash(syncedHash)}
+export const shortHash                            // 'sha256:<hex>' -> first 16 hex
+// buildReceipt(..., { resourceHashes }) -> receipt.resourceHashes (sorted; absent when empty);
+// FD tag UxcResourceHashes 'kind/id=<hex>,…'; writeReceipts defaults resourceHashes from ctx.pkg state;
+// writeFdReceipt retries WITHOUT the hash tag on failure (receipt.warning says so)
 ```
 
 ## lib/compat.mjs — upgrade report (DESIGN §26)

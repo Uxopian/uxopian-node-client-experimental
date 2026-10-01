@@ -103,6 +103,11 @@ uxc import ct-1.0.0.uxpkg --target stage
 ```
 Import pre-flights EVERY resource and prints the full collision list BEFORE any write
 (`--force` to overwrite). A failed import is resumable: `uxc push --changed --target stage`.
+**Upgrades don't need `--force`:** same-id objects listed in the target's installed RECEIPT for the
+same package code are ours — state `upgrade` when unchanged since that install (pushed normally),
+`conflict` "edited on the server since <code>@<v> was installed" when someone edited them (show the
+diff, `--force` only with approval). Receipts from uxc older than per-resource hashes → `upgrade`
+plus a WARN listing the resources (edits undetectable). Ids NOT in our receipt stay `collision`.
 `--code-remap ct=xy` is EXPERIMENTAL: registry-driven token-boundary renaming across all four
 prefix forms + derived ids, then a residual lint — it ABORTS if any old-prefix token survives.
 Review the lint output with the user; never force past it.
