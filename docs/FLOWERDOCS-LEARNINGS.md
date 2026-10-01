@@ -317,12 +317,12 @@ Goal: a handler that injects a Word "suggestion mode" tracked change (`w:del`+`w
 - **Skip LDAP** for a test/non-LDAP scope: only `conf/LDAP.xml` has `${ldap.*}` variables — copy the template MINUS `conf/` into a scratch dir and point `--data.dir` there → no `--ldap.*` args needed; scope.xml + classes + acls have no variables. `update` then runs all 15 import ops (Scope, TagCategory, TagClass, DocumentClass, FolderClass, TaskClass, Workflow, VFClass, ACL, Document, cache-purge, …) in ~18 s.
 - **Result:** after the base layer is in, the FlowerDocs half of a package pushes fully via uxc (scripts/handlers/guiconfig/vfinstances). The remaining gap is **Uxopian-AI** — `ai.prompt`/`ai.goal` push through the AI gateway (`/gui/plugins/<plugin>/gateway/uxopian-ai`), which 404s until Uxopian-AI is provisioned for the scope (a SEPARATE product layer, NOT in flower-templates). See [[reference_iris_scope_and_task_delete]], [[project_ct_portability]].
 
-## §24 — Workflow + ACL REST: get-ALL is broken; write is by-id (partially verified 2026-07-01, IRIS)
+## §24 — Workflow + ACL REST: get-ALL is broken; write is by-id (get-all verified 2026-07-01, IRIS; write round-trip verified 2026-10-01, fd.demo/IRIS — see §48)
 - **`GET /core/rest/workflow` (get-all) → 500 `T00303`** "All workflows cannot be fetched"; **`GET /core/rest/acl` (get-all) → 500 `T01006`** "Could not get all ACLs" (both verified live on IRIS 2026-07-01). Unlike the other class LIST endpoints (§225: documentclass/taskclass/virtualfolderclass/tagcategory/tagclass all 200), these two have **no working list**. Read is **BY ID only** — `GET /rest/workflow/<ids>`, `GET /rest/acl/<ids>` (comma-sep list of ids), each an array. This is why uxc historically shipped both read-only/external.
-- **Write DTOs (documented pp.978-987, NOT yet live-verified — no server available at impl time):**
+- **Write DTOs (documented pp.978-987; live-verified for both kinds — ACL §37, both §48):**
   - **Workflow** — create `POST /rest/workflow` ARRAY `[{ id, startTaskClass, taskClasses:[...] }]`; update `POST /rest/workflow/<id>` ARRAY (FULL-REPLACE — p.986 "unset fields will be cleared"); delete `DELETE /rest/workflow/<id>` (p.987 "does NOT check for active instances — verify none before deleting"). No category/data/displayNames.
   - **ACL** — create `POST /rest/acl` ARRAY `[{ id, name, entries:[{ principal, permission, grant }] }]` (`principal:"*"` = everyone; `grant` = ALLOW|DENY); update `POST /rest/acl/<id>` ARRAY (full-replace); delete `DELETE /rest/acl/<id>`. No category/data block.
-- **uxc support:** `fd.workflow` + `fd.acl` are now `managed` (full write) as of uxc 0.3.0, modelled on the by-id pattern of `fd.vfinstance` (no `list()`/`scan()` — get-all 500s). **TODO when a server returns:** run `uxc doctor --roundtrip` (probes ACL; workflow needs a real taskclass so verify via `uxc push`) to confirm create/update/delete + canonical round-trip, then flip DESIGN §7 #7/#8 to ✅. Watch for: (a) does the create echo add a `data`/version block needing a canonical strip? (b) the taskclass↔workflow mutual reference — does taskclass create validate its `workflow` field exists? (uxc pushes taskclasses before workflows, so that ref is forward — revisit PUSH_ORDER if it rejects).
+- **uxc support:** `fd.workflow` + `fd.acl` are now `managed` (full write) as of uxc 0.3.0, modelled on the by-id pattern of `fd.vfinstance` (no `list()`/`scan()` — get-all 500s). **DONE 2026-10-01 (§48)** — was: run `uxc doctor --roundtrip` (probes ACL; workflow needs a real taskclass so verify via `uxc push`) to confirm create/update/delete + canonical round-trip, then flip DESIGN §7 #7/#8 to ✅. Watch for: (a) does the create echo add a `data`/version block needing a canonical strip? (b) the taskclass↔workflow mutual reference — does taskclass create validate its `workflow` field exists? (uxc pushes taskclasses before workflows, so that ref is forward — revisit PUSH_ORDER if it rejects).
 
 ## §25 — Uxopian AI `nu-extract` provider Base URL needs a TRAILING SLASH (verified 2026-06-23, IRIS)
 - Symptom: the `nu-extract` LLM provider returns **`405 Method Not Allowed from POST https://nuextract.ai/api/{uuid}/extract`** — the `projects/` path segment is **dropped**. The correct NuMind endpoint is `https://nuextract.ai/api/projects/{PROJECT_ID}/extract` (POST, `Authorization: Bearer`, body `application/octet-stream` = the document/image bytes).
@@ -491,6 +491,8 @@ deterministic per SOURCE (not per execution) wherever duplicates would hurt.
     existence/id/name level and preserves the package's entries via a readServer overlay
     (uxc ≥ 0.13.1); adopting a foreign ACL yields an entry-less stub to author;
   - `uxc doctor --roundtrip` compares fd.acl on the echoed keys only (write-only: entries).
+- **Corrected 2026-10-01 (§48):** "never echoed" holds only for an ACL the server has just written; an ACL
+  loaded from storage echoes a full `AccessControlList` WITH its entries.
 
 ## §38 — Task-answer completion UX, solution search screens, and home dashlets (customer PO POC, verified fd.demo/default, 2026-07-16)
 - **"I click Terminé and nothing happens" is usually NOT the answer handler** — verify the handler by inspecting side effects (here the order VF's `PoStateLog` proved a `DONE` answer transitioned it). The real cause: a **taskclass with `answers` but NO `workflow` never CLOSES an answered task** — it stays at `data.status: NEW`, keeps showing in backlogs (which filter only by `classid`), and FD's **first-answer-only** rule means re-answering "returns 200 but does NOT dispatch" → dead-feeling. The answered state is **opaque in search rows** (uxc: "status does not distinguish answered tasks"; the REST task object exposes no answer field). Fix pattern (no risky taskclass-workflow surgery): a **`PoTaskState` marker tag** — the create handler stamps `OPEN`; the ANSWER handler, after transitioning the order, does a mint-REST `POST /rest/tasks/{id}` setting `PoTaskState=<answer>`; operator VF searches add a criterion `PoTaskState EQUALS_TO OPEN`. Answered tasks then leave My-tasks/Team-backlog. Backfill existing tasks by scanning each order's `PoStateLog` for a `Tâche « <name> » : <answer>` entry (answered → mark done, else OPEN); order-less tasks → done. ⚠️ The answer handler's early-return-on-missing-order-VF means it won't mark a task done if its order VF is absent — keep operator-visible (OPEN) tasks only on real orders.
@@ -902,3 +904,43 @@ that is quiet today is a trap tomorrow.
 - **Handler bootstrap is class-agnostic:** a library a handler `load()`s is read with `GET /core/rest/documents/{id}` + `/files/{fid}/content` (a customer package's `po-boot.js`), which never looks at the class. So a server library can be any document class and the handlers see no difference.
 - **uxc 0.19:** an `fd.script` whose meta.json says `"registrationOrder": null` may add `"classId": "<PackageClass>"` (the class must be in the package; `fd.documentclass` pushes before `fd.script`). Same id, same `@include` composition, same hashing; `readServer` echoes the class when it is not `Script`. `validate` refuses `classId` on a browser script and refuses it spelled `Script`. Since 0.24 (#76) `validate` also requires `classId` to name an `fd.documentclass` entry of the package (pushed, or registered with `uxc adopt fd.documentclass <id> --external` when the class already exists on the server), and `list()` (so `uxc ls fd.script`, `adopt --scan`) searches `Script` plus every library class the package's fd.script metas declare — a library under a class the package does not mention is still invisible to `ls`. Pin `minClientVersion: "0.19.0"`: an older uxc ignores the key and pushes the library back as `Script`, silently.
 - **Migrating an existing Script doc in place** relies on the documented data update ("modify the data of a document (class identifier, document name, ACL, etc.)", PDF p. 805-806; uxc `upsertDoc` posts the merged doc to `/rest/documents/{id}`). **NOT yet observed live** at the time of writing: the first deploy (a customer package's `po-lib-*` → `PoServerLibrary`) is the proof, `uxc get po-lib-a` must answer `classId=PoServerLibrary`. If the server refused a class change, fall back to `uxc rm --server` + push (a handler run in the gap fails loud with `PO_LIB_LOAD_FAILED` and is replayable).
+
+## §48 — fd.workflow + fd.acl write round-trip through uxc, and the two ACL echo shapes (verified fd.demo/IRIS, Core 2026.0.0, 2026-10-01 — issues #12, #116)
+
+Throwaway package, every object `Zz*`-prefixed, created and deleted in the same session (deletion
+re-checked by GET): `ZzAclProbe20261001`, `ZzWfProbe20261001`, `ZzTcProbe20261001`.
+
+- **fd.workflow — full round-trip clean, no adapter change.**
+  - absent: `GET /rest/workflow/<id>` → **200 `[]`** (not a 500 code like ACL/classes) → getOne null.
+  - create `POST /rest/workflow` `[{id, startTaskClass, taskClasses[]}]` → 200; the echo adds
+    `data:{creationDate,lastUpdateDate}`, `displayNames:[]`, `descriptions:[]` — the generic canonical
+    rules (volatile data fields, empty arrays) strip them: status `insync`, diff empty.
+  - update `POST /rest/workflow/<id>` (new start + different list) → 200; FULL-REPLACE confirmed — the
+    echo is exactly the new list, and `data` comes back `{}` (the dates are cleared because we don't send them).
+  - delete `DELETE /rest/workflow/<id>` → 200; GET is `[]` again.
+  - **No referential validation either way**: the workflow was created with taskclass ids that do NOT
+    exist (no taskclass got created), and a taskclass `POST` with `workflow:"<non-existent id>"` was
+    accepted and echoed as-is. So taskclass-before-workflow PUSH_ORDER is safe (§24 question (b)).
+  - Not tested (no safe way): delete with running instances (docs p.987 say no check).
+- **fd.acl — create/update/delete fine; the adapter had two sync bugs, fixed in uxc 0.25:**
+  - The echo has **two shapes**. Right after a REST write (create or update) it is the lazy
+    `{type:"…acl.ACLProxy", rules:[], id, name}` (§37) — the new `name` IS echoed immediately, the
+    entries never. But an ACL the server has loaded from storage (`acl-readonly`, `acl-folder`, and
+    `CtContractAcl`, which uxc created over REST in July) echoes
+    `{type:"…acl.AccessControlList", entries:[{principal:[…], permission:[…], grant}], id, name}` —
+    **principal and permission always arrays** (a scalar is accepted on write). What turns a proxy into
+    a full ACL was not observed (hypothesis: a cache reload / restart; no cache clear was done).
+  - Bug 1 (#12): readServer completed the proxy with the CURRENT LOCAL entries, so the server side
+    "changed" with every local edit: an entries-only edit hashed local == server → `rebased`, base
+    re-recorded, **the edit was never pushed**; an entries+name edit → `conflict`, push refused. Fix:
+    create/update record the entries just written in the target state (`entries`, written BEFORE the
+    push echo leg re-reads); the proxy is completed from that record; the local file is only the
+    fallback when nothing is recorded; a full `AccessControlList` echo is authoritative. Entries are
+    normalized to arrays on both sides. Live after the fix: edit → `local` → push `updated` (no
+    `--force`) → `insync`; a base recorded by an older uxc re-classifies once as `rebased`.
+  - Bug 2 (#116): `status --remote` said `server-missing` for every tracked ACL/workflow while `diff`
+    said identical. `statusAll` batch-prefetches each kind that has a `restPath` with ONE `list()` —
+    and these two `list()` return `[]` (no get-all), so the empty prefetch meant "deleted". Reproduced
+    live with uxc 0.24.0 on `ZzAclProbe20261001`. Fix: no `restPath` on either adapter → per-id
+    `readServer`, the same path as diff/push.
+

@@ -2,7 +2,7 @@
 // `createOnly` kind (fd.taskclass) be UPDATED in place while its server-delete stays gated (§14/§20).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import os from 'node:os';
 import { classKindAdapter } from '../lib/kinds/base.mjs';
@@ -109,7 +109,7 @@ function recCtx(getReturn = null) {
 
 test('fd.workflow: managed, registered, no working list; pushes after taskclass', () => {
   assert.equal(workflow.kind, 'fd.workflow');
-  assert.equal(workflow.restPath, 'workflow');
+  assert.equal(workflow.restPath, undefined); // #116: no batch list in status --remote — per-id reads
   assert.equal(workflow.defaultPolicy, 'managed');       // was external/read-only — now writable
   assert.equal(KINDS['fd.workflow'], workflow);
   assert.ok(PUSH_ORDER.indexOf('fd.workflow') > PUSH_ORDER.indexOf('fd.taskclass')); // lists taskClasses
@@ -145,7 +145,7 @@ test('fd.workflow template + validate', () => {
 
 test('fd.acl: managed, registered, pushed before the classes that reference it', () => {
   assert.equal(acl.kind, 'fd.acl');
-  assert.equal(acl.restPath, 'acl');
+  assert.equal(acl.restPath, undefined); // #116: no batch list in status --remote — per-id reads
   assert.equal(acl.defaultPolicy, 'managed');
   assert.equal(KINDS['fd.acl'], acl);
   assert.ok(PUSH_ORDER.indexOf('fd.acl') < PUSH_ORDER.indexOf('fd.documentclass')); // classes' data.ACL refs it
@@ -165,18 +165,18 @@ test('fd.acl: get-all disabled (T01006); by-id CRUD with array bodies, no data b
 
 test('fd.acl template + validate; canonicalize keeps entries, strips nothing spurious', () => {
   const def = acl.template({}, 'CtAcl', {}).obj;
-  assert.deepEqual(def.entries, [{ principal: '*', permission: 'READ', grant: 'ALLOW' }]); // default entry
+  assert.deepEqual(def.entries, [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }]); // default entry (arrays, as echoed)
   const t = acl.template({}, 'CtAcl', { entries: '*:UPDATE_CONTENT:allow, role_x:READ:deny', title: 'Ct ACL' }).obj;
   assert.equal(t.name, 'Ct ACL');
   assert.deepEqual(t.entries, [
-    { principal: '*', permission: 'UPDATE_CONTENT', grant: 'ALLOW' }, // grant upper-cased
-    { principal: 'role_x', permission: 'READ', grant: 'DENY' },
+    { principal: ['*'], permission: ['UPDATE_CONTENT'], grant: 'ALLOW' }, // grant upper-cased
+    { principal: ['role_x'], permission: ['READ'], grant: 'DENY' },
   ]);
   assert.equal(acl.validate({}, { id: 'CtAcl' }, { obj: t }).length, 0);
   assert.ok(acl.validate({}, { id: 'CtAcl' }, { obj: { entries: [] } }).length);            // empty rejected
   assert.ok(acl.validate({}, { id: 'CtAcl' }, { obj: { entries: [{ principal: '*', permission: 'R', grant: 'MAYBE' }] } }).length); // bad grant
   // local-authored == server echo hashes identically (no data block, key order irrelevant)
-  const server = { name: 'Ct ACL', id: 'CtAcl', entries: [{ grant: 'ALLOW', permission: 'UPDATE_CONTENT', principal: '*' }, { principal: 'role_x', permission: 'READ', grant: 'DENY' }] };
+  const server = { name: 'Ct ACL', id: 'CtAcl', entries: [{ grant: 'ALLOW', permission: ['UPDATE_CONTENT'], principal: ['*'] }, { principal: ['role_x'], permission: ['READ'], grant: 'DENY' }] };
   assert.equal(hashResource('fd.acl', t), hashResource('fd.acl', server));
 });
 
@@ -360,27 +360,122 @@ test('fd.vfinstance create: no-slash first; falls back to the slash form on 404 
   assert.deepEqual(d.calls, ['/rest/virtualFolder']);
 });
 
-test('fd.acl readServer: overlays local entries onto the ACLProxy echo (entries are write-only, §37)', async () => {
+test('fd.acl readServer: ACLProxy echo completed from the entries LAST WRITTEN, else local (§37/§48)', async () => {
   const { KINDS } = await import('../lib/kinds/index.mjs');
   const acl = KINDS['fd.acl'];
   const proxy = { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: 'CtXAcl', name: 'CtXAcl' };
-  const entries = [{ principal: '*', permission: ['READ', 'UPDATE'], grant: 'ALLOW' }];
-  const mkCtx = (withLocal) => ({
+  const localEntries = [{ principal: '*', permission: 'READ', grant: 'ALLOW' }];           // scalars in the file
+  const written = [{ principal: ['*'], permission: ['READ', 'UPDATE'], grant: 'ALLOW' }]; // what uxc last pushed
+  const mkCtx = ({ withLocal, state }) => ({
     clients: { core: { getOne: async () => proxy } },
+    target: { name: 't1' },
     pkg: withLocal ? {
       entry: (kind, id) => (kind === 'fd.acl' && id === 'CtXAcl' ? { kind, id, path: 'fd/acls/CtXAcl.json' } : null),
+      resState: (t, kind, id) => (t === 't1' && kind === 'fd.acl' && id === 'CtXAcl' ? state ?? null : null),
     } : null,
   });
-  // with a local file: entries backfilled -> the echo-leg can never strip them
-  const withLocal = mkCtx(true);
   const origReadLocal = acl.readLocal;
-  acl.readLocal = () => ({ obj: { id: 'CtXAcl', name: 'CtXAcl', entries } });
+  acl.readLocal = () => ({ obj: { id: 'CtXAcl', name: 'CtXAcl', entries: localEntries } });
   try {
-    const r = await acl.readServer(withLocal, 'CtXAcl');
-    assert.deepEqual(r.obj.entries, entries);
-    assert.equal(r.obj.id, 'CtXAcl');
+    // recorded entries win over the local file (a local edit must NOT leak into the server side)
+    const r = await acl.readServer(mkCtx({ withLocal: true, state: { entries: written } }), 'CtXAcl');
+    assert.deepEqual(r.obj.entries, written);
+    // no record (base from an older uxc / adopt): fall back to the local file, normalized to arrays
+    const f = await acl.readServer(mkCtx({ withLocal: true, state: { syncedHash: 'x' } }), 'CtXAcl');
+    assert.deepEqual(f.obj.entries, [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }]);
     // without a package (doctor / adopt): the proxy passes through untouched
-    const bare = await acl.readServer(mkCtx(false), 'CtXAcl');
+    const bare = await acl.readServer(mkCtx({ withLocal: false }), 'CtXAcl');
     assert.equal(bare.obj.entries, undefined);
   } finally { acl.readLocal = origReadLocal; }
+});
+
+test('fd.acl readServer: a full AccessControlList echo is authoritative and hashes like the local file', async () => {
+  const echo = { type: 'com.flower.docs.domain.acl.AccessControlList', id: 'CtAcl', name: 'Ct',
+    entries: [{ principal: ['ADMIN', 'SYSTEM_ADMIN'], permission: ['READ', 'UPDATE'], grant: 'ALLOW' }] };
+  const ctx = {
+    clients: { core: { getOne: async () => structuredClone(echo) } }, target: { name: 't1' },
+    pkg: { entry: () => ({ kind: 'fd.acl', id: 'CtAcl', path: 'x' }), resState: () => ({ entries: [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }] }) },
+  };
+  const r = await acl.readServer(ctx, 'CtAcl');
+  assert.deepEqual(r.obj.entries, echo.entries, 'server entries, not the recorded ones');
+  // the FQCN `type` canonicalizes away: an authored file with the same entries is insync
+  const local = { id: 'CtAcl', name: 'Ct', entries: [{ grant: 'ALLOW', permission: ['READ', 'UPDATE'], principal: ['ADMIN', 'SYSTEM_ADMIN'] }] };
+  assert.equal(hashResource('fd.acl', r.obj), hashResource('fd.acl', local));
+});
+
+test('fd.acl readLocal normalizes scalar principal/permission to arrays (the echo form)', () => {
+  const dir = mkdtempSync(join(os.tmpdir(), 'uxc-acl-'));
+  try {
+    mkdirSync(join(dir, 'fd/acls'), { recursive: true });
+    writeFileSync(join(dir, 'fd/acls/A.json'), JSON.stringify({ id: 'A', name: 'A', entries: [{ principal: '*', permission: 'READ', grant: 'ALLOW' }] }));
+    const r = acl.readLocal({ dir }, { kind: 'fd.acl', id: 'A', path: 'fd/acls/A.json' });
+    assert.deepEqual(r.obj.entries, [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// #116 — `status --remote` called fd.acl/fd.workflow "server-missing" while `diff` said identical.
+// statusAll batch-prefetches every kind that carries `restPath` with ONE list() call; these two
+// kinds have no working get-all (T01006/T00303), so list() is [] and the empty prefetch was read
+// as "absent on the server". Even a non-empty list would bypass the ACL readServer overlay (§37).
+// They must go through the per-id readServer path, exactly like diff does.
+// ---------------------------------------------------------------------------
+
+test('#116: status --remote reads fd.acl + fd.workflow by id (not the empty batch list)', async () => {
+  const { openPackage } = await import('../lib/registry.mjs');
+  const { pushResources, statusAll } = await import('../lib/sync.mjs');
+  const dir = mkdtempSync(join(os.tmpdir(), 'uxc-116-'));
+  try {
+    writeFileSync(join(dir, 'uxopian-project.json'), JSON.stringify({ code: 'ct', name: 'x', format: 'uxopian-package/1', version: '1.0.0', products: ['flowerdocs'] }));
+    mkdirSync(join(dir, 'fd/acls'), { recursive: true });
+    mkdirSync(join(dir, 'fd/workflows'), { recursive: true });
+    const aclObj = { id: 'acl-secrets', name: 'acl-secrets', entries: [{ principal: '*', permission: ['READ'], grant: 'ALLOW' }] };
+    const wfObj = { id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA', 'CtB'] };
+    writeFileSync(join(dir, 'fd/acls/acl-secrets.json'), JSON.stringify(aclObj));
+    writeFileSync(join(dir, 'fd/workflows/CtWf.json'), JSON.stringify(wfObj));
+    writeFileSync(join(dir, 'registry.json'), JSON.stringify({ resources: [
+      { kind: 'fd.acl', id: 'acl-secrets', path: 'fd/acls/acl-secrets.json' },
+      { kind: 'fd.workflow', id: 'CtWf', path: 'fd/workflows/CtWf.json' },
+    ] }));
+    // a server with the FlowerDocs shapes: get-all 500s, the ACL echo is an entry-less ACLProxy
+    const store = new Map();
+    const calls = [];
+    const core = {
+      get: async (p) => { calls.push(['GET', p]); throw Object.assign(new Error(`GET ${p} -> 500`), { status: 500 }); },
+      getOne: async (p) => {
+        calls.push(['GETONE', p]);
+        const o = store.get(p);
+        if (!o) return null;
+        return p.startsWith('/rest/acl/') ? { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: o.id, name: o.name } : structuredClone(o);
+      },
+      post: async (p, b) => { calls.push(['POST', p]); store.set(`/rest/${p.split('/')[2]}/${b[0].id}`, structuredClone(b[0])); return b; },
+      del: async (p) => { calls.push(['DEL', p]); store.delete(p); return {}; },
+    };
+    const pkg = openPackage(dir);
+    const ctx = {
+      pkg, requirePkg: () => pkg, connect: () => {}, target: { name: 't1', user: 'admin' },
+      clients: { core, cacheClear: async () => {} }, out: { line() {}, note() {}, warn() {} },
+    };
+    const pushed = await pushResources(ctx, pkg.entries());
+    assert.deepEqual(pushed.map((r) => r.action).sort(), ['created', 'created']);
+    calls.length = 0;
+    const s = await statusAll(ctx, { remote: true });
+    assert.deepEqual(s.rows.map((r) => `${r.kind}/${r.id}:${r.state}`).sort(), ['fd.acl/acl-secrets:insync', 'fd.workflow/CtWf:insync']);
+    assert.ok(!calls.some(([m, p]) => m === 'GET' && /^\/rest\/(acl|workflow)\/?$/.test(p)), 'never calls the broken get-all');
+    // #12 (live fd.demo 2026-10-01): a LOCAL entry edit is a local edit, not a conflict — the proxy
+    // echo is completed from the entries last written, not from the (edited) local file
+    const edited = { ...aclObj, entries: [...aclObj.entries, { principal: ['ADMIN'], permission: ['UPDATE'], grant: 'ALLOW' }] };
+    writeFileSync(join(dir, 'fd/acls/acl-secrets.json'), JSON.stringify(edited));
+    const s1 = await statusAll(ctx, { remote: true });
+    assert.equal(s1.rows.find((r) => r.kind === 'fd.acl').state, 'local');
+    const up = await pushResources(ctx, pkg.entries().filter((e) => e.kind === 'fd.acl'));
+    assert.equal(up[0].action, 'updated', 'no --force needed');
+    assert.equal(store.get('/rest/acl/acl-secrets').entries.length, 2);
+    assert.equal((await statusAll(ctx, { remote: true })).rows.find((r) => r.kind === 'fd.acl').state, 'insync');
+    assert.equal(JSON.parse(readFileSync(join(dir, 'fd/acls/acl-secrets.json'), 'utf8')).entries.length, 2, 'echo leg kept the new entries');
+    // a genuinely deleted one still reads server-missing
+    store.delete('/rest/acl/acl-secrets');
+    const s2 = await statusAll(ctx, { remote: true });
+    assert.equal(s2.rows.find((r) => r.kind === 'fd.acl').state, 'server-missing');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

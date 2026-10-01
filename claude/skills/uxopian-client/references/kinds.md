@@ -70,22 +70,26 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
 - Gotcha: no server LIST endpoint — adopt by id. Left-menu visibility comes ONLY from a
   `tab.virtualfolder` scope property (fd.surfacing), never automatically.
 
-## fd.workflow — managed (🧪 write pending live verify)
+## fd.workflow — managed (✅ live-verified fd.demo 2026-10-01)
 - Storage: `fd/workflows/<Id>.json` (`POST /rest/workflow`)
-- Fields: `id, startTaskClass, taskClasses[]` (no category/data/displayNames)
+- Fields: `id, startTaskClass, taskClasses[]` (no category/data/displayNames to author)
 - Add: `uxc add fd.workflow CtApproval --steps CtStep0,CtStep1,CtStep2 [--start CtStep0]`
-- Gotcha: get-ALL 500s (T00303) → read BY ID only, no `list`/`scan` (adopt by id, like vfinstance).
-  Update is FULL-REPLACE (unset fields cleared). Delete does NO active-instance check. Pushes AFTER
-  taskclasses (workflow lists them); taskclass.workflow is a forward ref. create/update/delete are
-  documented but NOT yet live-verified — confirm with `uxc push` on a workflow scope.
+- Gotcha: get-ALL 500s (T00303) → read BY ID only, no `list`/`scan` (adopt by id, like vfinstance);
+  a missing workflow GETs as 200 `[]`. Update is FULL-REPLACE (unset fields cleared). Delete does NO
+  active-instance check — make sure no task of the workflow is running before `uxc rm --server`.
+  The server does not validate the taskclass ids, and a taskclass accepts a not-yet-existing
+  `workflow`, so pushing taskclasses first is safe.
 
-## fd.acl — managed (🧪 write pending live verify)
+## fd.acl — managed (✅ live-verified fd.demo 2026-07-15/16 + 2026-10-01)
 - Storage: `fd/acls/<Id>.json` (`POST /rest/acl`)
-- Fields: `id, name, entries[{principal, permission, grant}]` (`principal:"*"`=all, grant ALLOW|DENY; no category/data)
+- Fields: `id, name, entries[{principal[], permission[], grant}]` (`principal:["*"]`=all, grant ALLOW|DENY;
+  no category/data). Scalars are accepted and normalized to arrays (the server echoes arrays).
 - Add: `uxc add fd.acl CtRestricted --entries "*:READ:ALLOW,role_x:UPDATE_CONTENT:DENY"`
-- Gotcha: get-ALL 500s (T01006) → read BY ID only, no `list`/`scan`. Pushes BEFORE the classes that
-  reference it (`data.ACL`). Update FULL-REPLACE. create/update/delete documented (pp.978-982) but
-  NOT yet live-verified — confirm with `uxc doctor --roundtrip`.
+- Gotcha: get-ALL 500s (T01006) → read BY ID only, no `list`/`scan`; missing = 500 T01002. Pushes
+  BEFORE the classes that reference it (`data.ACL`). Update FULL-REPLACE. Right after a REST write the
+  GET is an entry-less `ACLProxy`: uxc then compares against the entries it LAST PUSHED to that target
+  (state), so server-side entry drift on a freshly written ACL is invisible; an ACL the server has
+  loaded from storage echoes its real entries and those are authoritative.
 
 ## fd.script — managed, cache-affecting
 - Storage: `fd/scripts/<id>/meta.json + <id>.js` (a Script-class document; kebab ids `ct-foo`)
