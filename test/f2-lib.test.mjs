@@ -66,6 +66,7 @@ async function stubBroker(opts = {}) {
         const names = Object.keys(st.campaigns);
         return json(res, 200, { total: names.length, collection: names });
       }
+      if (path === '/api/maps/summary/search-by-pattern') return json(res, 200, { total: 0, collection: [] });
       const cs = path.match(/^\/api\/campaigns\/([^/]+)\/status$/);
       if (cs) return json(res, 200, st.campaigns[decodeURIComponent(cs[1])] ?? 'Finished');
       if (path === '/api/workers') {
@@ -560,6 +561,17 @@ test('versionNames accepts strings, objects and a {collection} envelope', () => 
   assert.deepEqual(versionNames([{ version: '1', path: '/w/versions/d.jar.old' }, { version: '2', path: 'C:\\w\\e.jar.old' }]), ['d.jar.old', 'e.jar.old']);
   assert.deepEqual(versionNames([{ v: 1 }]), [], 'unknown shape -> nothing (the caller shows it raw)');
   assert.deepEqual(versionNames(null), []);
+});
+
+// #14: f2 ls --campaigns and f2 lib share one campaign-status loop (campaignStatuses)
+test('#14 f2 ls --campaigns lists every campaign with its status and flags a wedged Starting', async () => {
+  await withBroker({ campaigns: { Done_Run1: 'Finished', Wedged_Run2: 'Starting' } }, async (b, t, run) => {
+    const r = await run(['f2', 'ls', '--campaigns', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.deepEqual(JSON.parse(r.stdout).campaigns, ['Done_Run1', 'Wedged_Run2']);
+    assert.match(r.stderr, /campaign "Wedged_Run2" is wedged in Starting/);
+    assert.doesNotMatch(r.stderr, /Done_Run1/);
+  });
 });
 
 // --- lock mode: ls reads, a gated write locks only with --yes ------------------------------------
