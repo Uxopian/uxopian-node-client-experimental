@@ -109,7 +109,7 @@ function recCtx(getReturn = null) {
 
 test('fd.workflow: managed, registered, no working list; pushes after taskclass', () => {
   assert.equal(workflow.kind, 'fd.workflow');
-  assert.equal(workflow.restPath, 'workflow');
+  assert.equal(workflow.restPath, undefined); // #116: no batch list in status --remote — per-id reads
   assert.equal(workflow.defaultPolicy, 'managed');       // was external/read-only — now writable
   assert.equal(KINDS['fd.workflow'], workflow);
   assert.ok(PUSH_ORDER.indexOf('fd.workflow') > PUSH_ORDER.indexOf('fd.taskclass')); // lists taskClasses
@@ -145,7 +145,7 @@ test('fd.workflow template + validate', () => {
 
 test('fd.acl: managed, registered, pushed before the classes that reference it', () => {
   assert.equal(acl.kind, 'fd.acl');
-  assert.equal(acl.restPath, 'acl');
+  assert.equal(acl.restPath, undefined); // #116: no batch list in status --remote — per-id reads
   assert.equal(acl.defaultPolicy, 'managed');
   assert.equal(KINDS['fd.acl'], acl);
   assert.ok(PUSH_ORDER.indexOf('fd.acl') < PUSH_ORDER.indexOf('fd.documentclass')); // classes' data.ACL refs it
@@ -383,4 +383,60 @@ test('fd.acl readServer: overlays local entries onto the ACLProxy echo (entries 
     const bare = await acl.readServer(mkCtx(false), 'CtXAcl');
     assert.equal(bare.obj.entries, undefined);
   } finally { acl.readLocal = origReadLocal; }
+});
+
+// ---------------------------------------------------------------------------
+// #116 — `status --remote` called fd.acl/fd.workflow "server-missing" while `diff` said identical.
+// statusAll batch-prefetches every kind that carries `restPath` with ONE list() call; these two
+// kinds have no working get-all (T01006/T00303), so list() is [] and the empty prefetch was read
+// as "absent on the server". Even a non-empty list would bypass the ACL readServer overlay (§37).
+// They must go through the per-id readServer path, exactly like diff does.
+// ---------------------------------------------------------------------------
+
+test('#116: status --remote reads fd.acl + fd.workflow by id (not the empty batch list)', async () => {
+  const { openPackage } = await import('../lib/registry.mjs');
+  const { pushResources, statusAll } = await import('../lib/sync.mjs');
+  const dir = mkdtempSync(join(os.tmpdir(), 'uxc-116-'));
+  try {
+    writeFileSync(join(dir, 'uxopian-project.json'), JSON.stringify({ code: 'ct', name: 'x', format: 'uxopian-package/1', version: '1.0.0', products: ['flowerdocs'] }));
+    mkdirSync(join(dir, 'fd/acls'), { recursive: true });
+    mkdirSync(join(dir, 'fd/workflows'), { recursive: true });
+    const aclObj = { id: 'acl-secrets', name: 'acl-secrets', entries: [{ principal: '*', permission: ['READ'], grant: 'ALLOW' }] };
+    const wfObj = { id: 'CtWf', startTaskClass: 'CtA', taskClasses: ['CtA', 'CtB'] };
+    writeFileSync(join(dir, 'fd/acls/acl-secrets.json'), JSON.stringify(aclObj));
+    writeFileSync(join(dir, 'fd/workflows/CtWf.json'), JSON.stringify(wfObj));
+    writeFileSync(join(dir, 'registry.json'), JSON.stringify({ resources: [
+      { kind: 'fd.acl', id: 'acl-secrets', path: 'fd/acls/acl-secrets.json' },
+      { kind: 'fd.workflow', id: 'CtWf', path: 'fd/workflows/CtWf.json' },
+    ] }));
+    // a server with the FlowerDocs shapes: get-all 500s, the ACL echo is an entry-less ACLProxy
+    const store = new Map();
+    const calls = [];
+    const core = {
+      get: async (p) => { calls.push(['GET', p]); throw Object.assign(new Error(`GET ${p} -> 500`), { status: 500 }); },
+      getOne: async (p) => {
+        calls.push(['GETONE', p]);
+        const o = store.get(p);
+        if (!o) return null;
+        return p.startsWith('/rest/acl/') ? { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: o.id, name: o.name } : structuredClone(o);
+      },
+      post: async (p, b) => { calls.push(['POST', p]); store.set(`/rest/${p.split('/')[2]}/${b[0].id}`, structuredClone(b[0])); return b; },
+      del: async (p) => { calls.push(['DEL', p]); store.delete(p); return {}; },
+    };
+    const pkg = openPackage(dir);
+    const ctx = {
+      pkg, requirePkg: () => pkg, connect: () => {}, target: { name: 't1', user: 'admin' },
+      clients: { core, cacheClear: async () => {} }, out: { line() {}, note() {}, warn() {} },
+    };
+    const pushed = await pushResources(ctx, pkg.entries());
+    assert.deepEqual(pushed.map((r) => r.action).sort(), ['created', 'created']);
+    calls.length = 0;
+    const s = await statusAll(ctx, { remote: true });
+    assert.deepEqual(s.rows.map((r) => `${r.kind}/${r.id}:${r.state}`).sort(), ['fd.acl/acl-secrets:insync', 'fd.workflow/CtWf:insync']);
+    assert.ok(!calls.some(([m, p]) => m === 'GET' && /^\/rest\/(acl|workflow)\/?$/.test(p)), 'never calls the broken get-all');
+    // a genuinely deleted one still reads server-missing
+    store.delete('/rest/acl/acl-secrets');
+    const s2 = await statusAll(ctx, { remote: true });
+    assert.equal(s2.rows.find((r) => r.kind === 'fd.acl').state, 'server-missing');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
