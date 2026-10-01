@@ -10,6 +10,7 @@ explanation. This table mirrors `lib/explain.mjs` — if you learn a new one, ad
 | `F00903` on a taskclass | NEVER delete/recreate a taskclass to change it — breaks ANSWER dispatch permanently. Mint a NEW class id. |
 | `T00104` | Search engine couldn't run the request. Causes: orderClause on an INT tag (order by a STRING tag or system `creationDate` TIMESTAMP); nested FieldAggregation inside a search; a criterion with `type:null` (always set `"type":"STRING"`); lowercase `creationdate` (must be camelCase). |
 | `F00032` | Tag not declared in the class tagReferences. Declare it on the class — for a taskclass that means a NEW class id. Hits handler marker tags too. |
+| `F00205` on a class / vfclass push | A referenced tag class is missing on the server. Usually an UNTRACKED `fd/tagclasses/X.json` (not in registry.json — `push --all` skips it): register it and push. `uxc verify --offline` / the push pre-flight report it (refusal; `--force` overrides). On a blank scope: base platform tags missing (`uxc doctor --ready`). |
 | `F00033` | Mandatory tag missing at create. Pass it, or relax `mandatory:false` via documentclass full-replace (push the edited local class). |
 | `T00707` | Tmp file ref already consumed — a FAILED create eats the tmp id. Exists-check BEFORE upload; fresh tmp per attempt. uxc's upsert does this; seeing it means a hand-rolled call. |
 | `T00108` | Id still occupied (deleted task ids stay burned forever). Mint unique ids (timestamp suffix); never reuse. |

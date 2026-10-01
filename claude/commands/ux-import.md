@@ -16,7 +16,9 @@ How it behaves — and what you do at each phase:
 - **Pre-flight**: every resource is checked against the live server BEFORE any write. If a
   collision list prints (same id exists with different content), STOP. Show the list to the
   user, `uxc diff` the important ones, and only re-run with `--force` after they approve —
-  forcing overwrites live resources.
+  forcing overwrites live resources. Upgrades of this package are NOT collisions: rows the
+  installed receipt lists as ours show `upgrade` (push normally) or `conflict` "edited on the
+  server since <code>@<v> was installed" — the latter is a real server-side edit: same STOP rule.
 - **Ordered push**: resources deploy in dependency order, state committed per resource. A
   failure mid-import is resumable: fix the cause, then `uxc push --changed --target <name>`
   from the unpacked package dir.

@@ -13,6 +13,15 @@ uxc doctor --sandbox               # ~60-120s, self-cleaning writes: can handler
 uxc doctor --ai-smoke              # one real LLM call: does the provider API key work end-to-end?
 ```
 
+Plain `uxc doctor` (auth, gateway JWT, dialects, class lists, `GET /gui/rest/caches`) is
+**read-only**. `--write-probes` adds the `DELETE /gui/rest/caches` probe — a REAL cache clear on
+the instance, the only way to prove that JWT surface; `--sandbox`, `--roundtrip` and `--ai-smoke`
+also create (then remove) throwaway `Zz*` objects. Any of those four makes doctor a write: it takes
+the target's write lock and, inside a package that pins no target and has no sync state for the
+global default, it is refused until you pass `--target <name>` or pin the checkout (DESIGN §25.5).
+`uxc doctor --offline` is not a thing (it warns `unknown flag`); for a server-free check of a
+package use `uxc verify --offline`.
+
 Green on all three ⇒ install (`uxc mp install <slug>` / `uxc import <pkg>`); the install itself
 then enforces `minClientVersion`, `supportedVersions`, and the receipt downgrade gate.
 After installing: `uxc verify` (per-resource assertions) and `uxc doctor --dups` (duplicate scan).

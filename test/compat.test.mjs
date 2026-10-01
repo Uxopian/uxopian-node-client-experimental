@@ -8,7 +8,7 @@ import { mkdtempSync, cpSync, writeFileSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readCompat, judgeUpgrade, validateCompat, receiptDeps, hasBreaks, EXIT_BREAKS } from '../lib/compat.mjs';
-import { buildReceipt, writeFdReceipt, receiptFromFdDoc, receiptFromAiPrompt, FD_TAGS, FD_COMPAT_TAG, FD_CLASS } from '../lib/receipt.mjs';
+import { buildReceipt, writeFdReceipt, writeReceipts, receiptFromFdDoc, receiptFromAiPrompt, FD_TAGS, FD_COMPAT_TAG, FD_CLASS } from '../lib/receipt.mjs';
 import { satisfiesRange, parseVersionRange, versionSupported } from '../lib/version.mjs';
 import { LOCK_MODES } from '../lib/cli-meta.mjs';
 import { importPackage } from '../lib/packageio.mjs';
@@ -268,17 +268,31 @@ function infraCtx() {
       getOne: async (p) => (have.has(p) ? { id: p }
         : p === `/rest/documentclass/${FD_CLASS}` ? { id: FD_CLASS, tagReferences: FD_TAGS.map((tagName) => ({ tagName })) } : null),
       post: async (p, b) => { calls.push([p, b[0]?.id]); },
-      upsertDoc: async (d) => { calls.push(['upsertDoc', d]); },
+      getDoc: async () => null,
+      upsertDoc: async (d, files = []) => { calls.push(['upsertDoc', d, files]); },
     } },
   };
 }
 
 test('receipt without compat: no UxcCompat tagclass, no UxcPackage class update, no tag (as before §26)', async () => {
+  // through writeReceipts — the REAL path (import / push --all / installed --write) — for a plain
+  // package whose sync state carries per-resource hashes: the hashes go to the receipt document's
+  // content file, so there is still ZERO schema write (no tagclass, no UxcPackage class update)
   const ctx = infraCtx(); // a server whose infra was set up by a pre-§26 uxc
-  await writeFdReceipt(ctx, { code: 'plain', version: '1.0.0', products: ['flowerdocs'] }, { compat: null });
+  ctx.target.name = 't';
+  ctx.pkg = { resState: (_t, kind, id) => (`${kind}/${id}` === 'fd.tagclass/PlainA' ? { syncedHash: 'sha256:00112233445566778899' } : null) };
+  const res = await writeReceipts(ctx, { code: 'plain', version: '1.0.0', products: ['flowerdocs'] }, { resources: ['fd.tagclass/PlainA'], compat: null });
+  assert.equal(res[0].ok, true, JSON.stringify(res));
   assert.deepEqual(ctx.calls.filter(([p]) => p !== 'upsertDoc'), []); // zero schema writes
-  const doc = ctx.calls.find(([p]) => p === 'upsertDoc')[1];
+  const [, doc, files] = ctx.calls.find(([p]) => p === 'upsertDoc');
   assert.equal(doc.tags.some((t) => t.name === FD_COMPAT_TAG), false);
+  assert.deepEqual(doc.tags.map((t) => t.name).filter((n) => !FD_TAGS.includes(n)), [], 'only the pre-§26 receipt tags');
+  assert.equal(files.length, 1);
+  assert.deepEqual(JSON.parse(String(files[0].bytes)).resourceHashes, { 'fd.tagclass/PlainA': '0011223344556677' });
+  // and with no hashes at all, the receipt attaches nothing
+  const bare = infraCtx();
+  await writeReceipts(bare, { code: 'plain', version: '1.0.0', products: ['flowerdocs'] }, { compat: null });
+  assert.deepEqual(bare.calls.map(([p, , f]) => `${p}:${f?.length ?? '-'}`), ['upsertDoc:0']);
 
   const withCompat = infraCtx();
   await writeFdReceipt(withCompat, { code: 'ext', version: '1.0.0', products: ['flowerdocs'] }, { compat: { requires: { sp: { versions: '^1' } } } });

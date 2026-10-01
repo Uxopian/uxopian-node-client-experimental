@@ -9,6 +9,9 @@ import { openPackage } from '../lib/registry.mjs';
 import { lintExtension, carriesPrefix } from '../lib/extension.mjs';
 import { parseDependsOn, renderText } from '../lib/extension-kit.mjs';
 import verifyCmd from '../lib/commands/verify.mjs';
+import { checkDependencies, dependencyRangeErrors } from '../lib/dependencies.mjs';
+import { judgeUpgrade, receiptDeps } from '../lib/compat.mjs';
+import { lintSchemas } from '../lib/schemas.mjs';
 
 const BIN = resolve(import.meta.dirname, '..', 'bin', 'uxc.mjs');
 const made = [];
@@ -92,6 +95,124 @@ test('init --extension refusals', () => {
   assert.match(uxc(['init', '--extension', 'acme', '--code', 'other', ...dep, d()]).out, /disagree/);
   const dir = initGeneric();
   assert.match(uxc([...base, ...dep, dir]).out, /already exists/);
+});
+
+// ---------------------------------------------------------------- #109: one range grammar
+
+test('init --depends-on accepts every satisfiesRange form (and the historical ones); refusals list the forms', () => {
+  for (const range of ['*', '1.1.*', '>=1.1', '>= 1.1', '1.2.3', '1.x', '^1.2', '~1.2', '>=0.4 <0.5', '^1 || ^3', '=1.2']) {
+    assert.deepEqual(parseDependsOn(`case-management@${range}`), { slug: 'case-management', range }, range);
+  }
+  for (const bad of ['nonsense', '1.2.3.4', '>=', '1..2', '1.x.3', '||']) {
+    const r = uxc(['init', '--extension', 'acme', '--depends-on', `cm@${bad}`, join(tmp(), 'x')]);
+    assert.notEqual(r.code, 0, bad);
+    assert.match(r.out, /is not valid — accepted: exact '1\.2\.3'.*'>=0\.4 <0\.5'.*'\^1 \|\| \^3'/, bad);
+  }
+});
+
+/** ctx whose receipts read resolves to the given rows (see dependencies.test.mjs). */
+const rctx = (receipts) => ({
+  target: { name: 't' },
+  clients: {
+    core: { getDoc: async () => null, search: async () => ({ found: receipts.length, results: receipts.map((r, i) => ({ id: `UXC_PKG_${i}` })) }) },
+    gateway: { get: async () => receipts.map((r) => ({ id: `uxcPkg${r.code}`, content: JSON.stringify({ kind: 'uxc-package-receipt/1', ...r }) })) },
+  },
+});
+
+test('a range written by init is evaluated alike by the dependency gate and the upgrade report', async () => {
+  const dir = join(tmp(), 'ext');
+  const r = uxc(['init', '--extension', 'po', '--depends-on', 'case-management@>=0.4 <0.5', '--dep-code', 'cm', '--no-examples', dir]);
+  assert.equal(r.code, 0, r.out);
+  const m = JSON.parse(readFileSync(join(dir, 'uxopian-project.json'), 'utf8'));
+  assert.deepEqual(m.dependencies, { cm: { slug: 'case-management', versions: '>=0.4 <0.5' } });
+  assert.deepEqual(dependencyRangeErrors(m), []);
+  assert.deepEqual(lintSchemas(openPackage(dir)), []);
+  // the extension's receipt carries the range the upgrade report reads
+  const extReceipt = { code: 'po', version: '0.1.0', ...receiptDeps(m, null) };
+  for (const [v, inRange] of [['0.4.0', true], ['0.4.2', true], ['0.5.0', false], ['0.3.9', false]]) {
+    const [gate] = await checkDependencies(rctx([{ code: 'cm', version: v }]), m);
+    assert.equal(gate.ok, inRange, `gate ${v}`);
+    const [row] = judgeUpgrade([extReceipt], { code: 'cm', version: v }, {});
+    assert.equal(row.verdict === 'breaks', !inRange, `report ${v}`);
+  }
+});
+
+test('dependency ranges outside the grammar: dependencyRangeErrors, verify (lintSchemas) and mp publish refuse them', () => {
+  assert.deepEqual(dependencyRangeErrors({ dependencies: { a: '*', b: { versions: ['^1', '>=2 <3'] }, c: '1.2.*' } }), []);
+  const errs = dependencyRangeErrors({ dependencies: { a: 'nope', b: { versions: ['^1', '1.2.3.4'] } } });
+  assert.deepEqual(errs.map((e) => [e.code, e.range]), [['a', 'nope'], ['b', '1.2.3.4']]);
+  assert.match(errs[0].message, /dependencies\.a range "nope" is not valid — accepted: .*'>=0\.4 <0\.5'/);
+
+  const dir = initGeneric(['--no-examples']);
+  const mpath = join(dir, 'uxopian-project.json');
+  const m = JSON.parse(readFileSync(mpath, 'utf8'));
+  m.dependencies.cm.versions = '1.2.3.4';
+  writeFileSync(mpath, JSON.stringify(m));
+  const f = lintSchemas(openPackage(dir));
+  assert.deepEqual(f.map((x) => [x.path, x.severity]), [['dependencies.cm.versions', 'error']]);
+  const v = uxc(['verify'], { cwd: dir });
+  assert.notEqual(v.code, 0);
+  assert.match(v.out, /dependencies\.cm\.versions: range "1\.2\.3\.4" is not valid/);
+  assert.equal(uxc(['mp', 'init'], { cwd: dir }).code, 0);
+  const home = tmp('uxc-home-');
+  const env = { ...childEnv, HOME: home, USERPROFILE: home };
+  const pub = (() => {
+    try { return execFileSync('node', [BIN, 'mp', 'publish', '--dry-run'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { return String(e.stdout ?? '') + String(e.stderr ?? ''); }
+  })();
+  assert.match(pub, /dependencies\.cm range "1\.2\.3\.4" is not valid — accepted:/);
+  m.dependencies.cm.versions = '>=0.4 <0.5';
+  writeFileSync(mpath, JSON.stringify(m));
+  const ok = (() => {
+    try { return execFileSync('node', [BIN, 'mp', 'publish', '--dry-run'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { return String(e.stdout ?? '') + String(e.stderr ?? ''); }
+  })();
+  assert.doesNotMatch(ok, /dependencies\.cm range/);
+});
+
+// ---------------------------------------------------------------- #111: the empty scaffold
+
+test('init --extension --no-examples / --kinds none: skeleton only, and `uxc test --offline` is green with 0 tests', () => {
+  for (const flag of [['--no-examples'], ['--kinds', 'none']]) {
+    const dir = initGeneric(flag);
+    const m = JSON.parse(readFileSync(join(dir, 'uxopian-project.json'), 'utf8'));
+    assert.deepEqual(m.dependencies, { cm: { slug: 'case-management', versions: '>=0.3' } }, flag.join(' '));
+    assert.deepEqual(m.extension, { of: 'cm' });
+    assert.deepEqual(m.idPrefixes, { pascal: 'Acme', camel: 'acme', kebab: 'acme-', upper: 'ACME_' });
+    assert.deepEqual(m.dataSets, []);
+    assert.deepEqual(openPackage(dir).entries(), [], 'no example resource');
+    assert.deepEqual(readdirSync(join(dir, 'tests')), ['.gitkeep'], 'the harness dir, no example test');
+    assert.match(readFileSync(join(dir, 'AGENTS.md'), 'utf8'), /EXTENDS `cm`/);
+    assert.match(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), /read AGENTS\.md first/);
+    assert.deepEqual(codes(dir), []);
+    const t = uxc(['test', '--offline'], { cwd: dir });
+    assert.equal(t.code, 0, t.out);
+    assert.match(t.out, /no embedded tests/);
+    assert.equal(uxc(['verify'], { cwd: dir }).code, 0);
+  }
+});
+
+test('init --no-examples with a kit: the kit manifest is merged, no example is rendered; the flag never eats [dir]', () => {
+  const root = fakeProduct();
+  const dir = join(tmp(), 'ext');
+  // the boolean flag directly before the positional [dir] must not swallow it
+  const r = uxc(['init', '--extension', 'acme', '--depends-on', 'case-management@>=0.3', '--product-dir', root, '--no-examples', dir]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /no examples \(skeleton only\)/);
+  const m = JSON.parse(readFileSync(join(dir, 'uxopian-project.json'), 'utf8'));
+  assert.equal(m.extension.library.classId, 'CmServerLibrary');
+  assert.deepEqual(m.dataSets, []);
+  assert.ok(!existsSync(join(dir, 'fd/scripts/acme-lib')));
+  assert.deepEqual(readdirSync(join(dir, 'tests')), ['.gitkeep']);
+});
+
+test('init --no-examples refusals, and the --dep-code hint', () => {
+  const base = ['init', '--extension', 'acme', '--depends-on', 'case-management@>=0.3', '--dep-code', 'cm'];
+  const d = () => join(tmp(), 'x');
+  assert.match(uxc([...base, '--kinds', 'none,script', d()]).out, /--kinds none means no examples/);
+  assert.match(uxc([...base, '--kinds', 'script', '--no-examples', d()]).out, /--no-examples and --kinds script disagree/);
+  assert.match(uxc(['init', '--name', 'X', '--code', 'xy', '--no-examples', d()]).out, /--no-examples only applies with --extension/);
+  const r = uxc(['init', '--extension', 'acme', '--depends-on', 'case-management@>=0.3', '--no-examples', d()]);
+  assert.notEqual(r.code, 0);
+  assert.match(r.out, /cannot tell the package code of "case-management" — pass --dep-code <code>/);
 });
 
 test('plain `uxc init` is unchanged (no extension block, default bands)', () => {

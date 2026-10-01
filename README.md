@@ -153,7 +153,10 @@ base, so server-injected fields never show up as phantom drift. `status` is loca
 
 ### Ship — `.uxpkg` archives
 
-`export` produces a single credential-free archive (sync state excluded, secrets scrubbed).
+`export` produces a single credential-free archive (sync state excluded, secrets scrubbed). It
+ships the package's own files only: in a git work tree the file list comes from git (`.gitignore`
+honoured); `node_modules/`, `.claude/`, nested worktrees and `marketplace/` are always left out,
+and the command prints what it skipped (with sizes) and warns above 25 MB (`UXC_EXPORT_WARN_MB`).
 `import` pre-flights **every** resource against the target and prints the full collision report
 *before any write*, then deploys in dependency order, resumably.
 

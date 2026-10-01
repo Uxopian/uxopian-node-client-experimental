@@ -61,6 +61,7 @@ export default {
 | `t.waitFor(fn, {timeoutMs, everyMs, label})` | poll until truthy — the primitive for the ~45 s handler window and search lag (poll by DIRECT GET, LEARNINGS §25) |
 | `t.runPrompt(idOrGoal, payload, {expect})` | wraps `lib/run.mjs` (SSE quirks, cold-start retry) |
 | `t.expect(cond, msg)` / `t.fail(msg)` | assertions; failures collected with context |
+| `t.json(text)` / `t.matchJson(text, expected)` | parse model output (fenced, prose, trailing commas) — strict first, repairs reported (#122) |
 | `t.log(msg)` | progress line in the runner output |
 
 Safety by construction: the harness only deletes what it tracked; created fixtures are always

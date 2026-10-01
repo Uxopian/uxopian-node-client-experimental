@@ -14,8 +14,11 @@ registry.mjs package object. `ctx.out` is output.mjs `out(flags)`.
 ```js
 export function localOf(pkg, entry)            // -> {obj, contents?}|null  (adapter.readLocal)
 export function localHash(pkg, entry)          // -> 'sha256:…'|null
-export async function serverOf(ctx, entry)     // -> {obj, contents?}|null  (adapter.readServer)
-export async function serverHash(ctx, entry)   // -> 'sha256:…'|null
+export async function serverOf(ctx, entry)     // -> {obj, contents?, unknown?}|null  (adapter.readServer)
+export async function serverHash(ctx, entry)   // -> 'sha256:…'|null  (null also when the form is `unknown`)
+// `unknown: '<reason>'` (fd.acl proxy echo with no record, §48): classify judges file vs base only
+// (insync | local; no base -> collision) and never records a base; push treats the server as = base;
+// pull refuses.
 export function baseHash(pkg, targetName, entry) // from state
 // One resource's 3-way classification (full matrix incl. no-base rows + rebased):
 export async function classify(ctx, entry)     // -> {state: 'insync'|'local'|'server'|'rebased'|'conflict'|'server-missing'|'new'|'adopted'|'collision'|'retired'|'external'|'unsupported', detail?}
@@ -80,13 +83,42 @@ export function naturalVersion(v)          // '2026.0.0-ft10' -> '2026.0.0-ft.10
 ## lib/packageio.mjs
 
 ```js
-export async function exportPackage(ctx, { output, allowDirty = false })  // zip minus .uxc/; mcp secret scrub
+export async function exportPackage(ctx, { output, allowDirty = false })  // -> {output, files, entries, bytes, fileSource, excluded, included}
+//   files from selectExportFiles (below) -> staged copy -> mcp/llm/agent/f2map secret scrub -> zip;
+//   notes what was left out (grouped, sizes), warns when the archive > UXC_EXPORT_WARN_MB (25)
+export function selectExportFiles(dir, { caseInsensitive })  // -> {source:'git'|'walk', files:[rel], excluded:[{path, bytes, files, reason, tracked}], included:[{path, reason:'gitignored'|'tooling-dir', resource, files}]}
+//   git work tree: `git ls-files --cached --others --exclude-standard` (.gitignore honoured), else a walk;
+//   both: never .uxc/ .git marketplace/ node_modules/ .claude/ *.uxpkg, nor a nested git WORKTREE —
+//   even when git tracks them (warned as 'tracked'); registry-owned files ship even if gitignored and
+//   node_modules/.claude inside a registry entry path ship ('included', noted); symlinks followed
+//   (reasons 'symlink-cycle'/'broken-symlink'); submodules/nested repos ship minus .git;
+//   caseInsensitive defaults to isCaseInsensitiveFs(dir) (git path matching)
+export function isCaseInsensitiveFs(dir)        // -> boolean (case-swapped entry name resolves to the same inode)
+export function gitFileList(dir)                // -> {all:[rel], tracked:Set}|null (no git / not a work tree)
 export async function importPackage(ctx, src, { remap = null, force = false, ignoreClientVersion = false })
 //   unpack (or use dir) -> assertClientSupports(manifest) (refuse before any dir/write) ->
 //   if remap 'old=new': naming.buildRemapMap + applyRemap over ALL text files + rename files/dirs +
 //   rewrite registry/manifest, lint residuals (abort if any) -> PRE-FLIGHT every resource vs server
 //   (no-base matrix) and print full collision list BEFORE any write (need --force to overwrite) ->
 //   pushResources in PUSH_ORDER -> verify summary.
+//   OWNED UPGRADES (issue #52, DESIGN §19): no-base 'collision' rows listed in THIS code's installed
+//   receipt are re-judged by reclassifyOwned -> 'upgrade' (pushable, no --force) | 'conflict'
+//   ("edited on the server since <code>@<v> was installed"); ids not in the receipt stay 'collision',
+//   and so do ids the receipt lists WITHOUT a hash unless they carry the package's own id prefix.
+//   Result (and the --report result) carries owned: {receipt:'code@v', upgraded, unknownBase, edited}.
+export async function reclassifyOwned(ctx, pkg, rows, own)  // mutates rows; seeds base for 'upgrade' rows
+// lib/receipt.mjs
+export function ownedByReceipt(receipts, code)    // -> {code, version, keys:Set, hashes:{key:short}|null} | null
+export function resourceHashesFromState(pkg, targetName, resources)  // -> {"kind/id": shortHash(syncedHash)}
+export const shortHash                            // 'sha256:<hex>' -> first 16 hex
+// buildReceipt(..., { resourceHashes }) -> receipt.resourceHashes (sorted; absent when empty);
+// FD: JSON content file 'uxc-receipt.json' {kind:'uxc-receipt-content/1', resourceHashes} on the receipt
+// DOCUMENT (FD_CONTENT_FILE/FD_CONTENT_KIND) — no tag, zero schema writes; merged into an existing file;
+// none attached for a plain receipt on a fileless doc. writeReceipts defaults resourceHashes from ctx.pkg
+// state; writeFdReceipt retries WITHOUT the file on failure (receipt.warning says so).
+export async function readFdReceiptContent(core, doc)  // -> object|null (no file / unreadable = null)
+export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes
+export async function removeReceipts(ctx, code)  // destroy: FD doc + AI prompt -> [{surface, ok, action:'deleted'|'absent', error?}]
 ```
 
 ## lib/compat.mjs — upgrade report (DESIGN §26)
@@ -104,9 +136,16 @@ export const EXIT_BREAKS = 3
 ```
 
 ```js
-// lib/version.mjs — compat ranges (DESIGN §26); versionSupported (§18 patterns) is unchanged
+// lib/version.mjs — ranges (DESIGN §26): THE dependency grammar too (#109) — compat requires,
+// manifest dependencies.*, init --depends-on; versionSupported (§18 server patterns) is unchanged
 export function parseVersionRange(range)    // string | [string] -> [[ [op, version] ]] (OR of ANDs) | null
 export function satisfiesRange(version, range)  // '^1.2' '~1.2' '1.x' '>=1.0 <2.0' '^1 || ^3' exact; unparseable -> false
+export const isValidRange = (range) => bool    // parseVersionRange(range) !== null
+export const RANGE_FORMS                        // the accepted forms, for error messages
+
+// lib/dependencies.mjs (DESIGN §22) — the gate evaluates with satisfiesRange (was versionSupported)
+export function dependencyRangeErrors(manifest) // -> [{ code, range, message }] ranges outside the grammar
+                                                //    (mp publish errors; verify via lintSchemas)
 ```
 
 ## lib/refs.mjs
@@ -135,7 +174,8 @@ export async function runPrompt(ctx, idOrGoal, { payload = {}, goal = false, pro
 // images: data URIs only (`data:<mime>;base64,…`) appended as IMAGE content items — bare base64 is
 // REFUSED client-side (the gateway closes the socket instead of answering 400); gated on
 // caps.inlineImages (ft5+). UXOPIAN-AI-LEARNINGS §A19.
-// -> { answer, elapsedMs, pass: expect ? regex.test(answer) : null, error?: string }
+// -> { answer, elapsedMs, pass: expect ? matchLoose(expect, answer).pass : null, error?: string,
+//      expectVia?: 'json'|'json-repaired', repaired?: string[] }   (expectVia only when the raw text did not match)
 // lib/commands/versions.mjs (uxc versions <promptId> [--stats], read-only, caps.promptVersioning):
 //   GET …/prompts/{id}/versions (+ …/versions/{n}/statistics, …/{id}/statistics) -> rows
 //   {version, state served|draft|published, provider/model, size, local '= local'?, uses, feedback, saved (h)}
@@ -143,7 +183,32 @@ export async function runPlan(ctx, planId, { payload = {}, expect = null, maxCha
 // caps.agenticPlans required. POST /admin/plan-executions/run -> poll GET /{id} to
 // COMPLETED|FAILED|CANCELLED; 400/404 at submit -> status REJECTED; timeout -> POST /{id}/stop.
 // -> { executionId, status, answer (final nodes), nodes:[{id,type,status,outputKey,output,error?}],
-//      elapsedMs, pass (expect over every node output, false when error), error? }
+//      elapsedMs, pass (expect over every node output, false when error), error?,
+//      expectVia?, expectNode?, repaired? }   — --expect: regex on all outputs joined (raw text), else
+//      per node matchLoose (strict JSON, then repaired); the matching node + repairs are reported
+// Local run records (#122) — the gateway has NO per-node re-run (§A14/§A16), so --retry is a full
+// re-run with a recorded payload:
+export function runsDir(pkgDir = null)          // <pkg>/.uxc/runs | ~/.uxopian/runs (UXC_HOME)
+export function planRunRecord(planId, res, { payload, target, retryOf, now })
+// -> { planId, executionId, target, recordedAt, status, elapsedMs, payload, nodes:[{id,type,status,output(≤500),error?}], error?, retryOf? }
+export function recordPlanRun(dir, rec) -> path   // never overwrites; keeps the newest 50 per plan
+export function listPlanRuns(dir, { planId?, target? }) -> [{...record, path}]  // oldest first
+export function findPlanRun(dir, planId, { executionId?, target? }) -> record   // throws a clear Error when none
+export function comparePlanRuns(prev, next) -> [{ id, type, before:{status,error?,output}|null, after:… }]
+```
+
+## lib/jsonloose.mjs
+
+```js
+export function parseLooseJson(text) -> { value, repaired: string[] }   // throws Error(reason)
+// The FIRST JSON value of model output: strict whole text (repaired: []), else the first ``` fence,
+// else the first {…}/[…] that parses tolerantly. Tolerated + noted: fences, prose around, trailing
+// commas, smart-quote / single-quote delimiters (a ' closes only before , : } ] or the end),
+// unquoted keys, raw line breaks in strings, Python True/False/None. Never evals; an embedded
+// scalar is never guessed; __proto__ stays an own key.
+export function matchLoose(re, text) -> { pass, via: 'text'|'json'|'json-repaired'|null, repaired }
+// --expect: regex on the raw text, then on the strict JSON re-serialized (compact + 2-space),
+// then on the loosely parsed value. Package tests: testkit should re-export both (#122).
 ```
 
 ## lib/index.mjs (public lib)
@@ -247,6 +312,9 @@ export function createHarness(ctx, { runId, testsDir, log }) // -> { t, teardown
 export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:false, reason}
 //   requires: { resources:['kind/id'], docs:['ID'], products:['uxopian-ai'], llmProvider:true,
 //               caps:{product:{cap:bool}} } — unmet => the runner SKIPS with the reason.
+//   a resource outside pkg.registry resolves through manifest.dependencies: the dependency's
+//   receipt (readReceiptsChecked, read once per ctx, retried) must list 'kind/id' (a receipt with
+//   no list is trusted), then serverOf as usual. Unreadable receipts -> "could not check …" (#115).
 ```
 
 `lib/receipt.mjs` adds `stampTestReceipt(ctx, code, {passed, skipped, total, when})` — targeted
@@ -295,6 +363,9 @@ export function resolvePinnedTarget({pin, pinFrom, requested, ambient, write, ov
 //   -> {use, refuse:string|null, warn:string|null}   (refuse => the caller must fail())
 export function forbiddenBy(policy, {command, args, flags})   // -> [{pattern, reason}]
 export function partitionProtected(patterns, entries)         // -> {allowed, blocked:[{entry,pattern}]}
+export function firstContactGuard({inPackage, pin, source, target, hasState, mode})
+//   -> {refuse:string|null, note:string|null}   (#110, DESIGN §25.5) — refuse only an unpinned,
+//   stateless package's WRITE to the GLOBAL default target; note (stderr) the same READ
 ```
 
 `.uxc/target` (one line) overrides `manifest.agent.target`. An absent block = empty policy: uxc
@@ -308,7 +379,8 @@ export async function openSession(ctx, {command, modName, mod})
 ```
 
 Runs before every `run()`: enforces `agent.forbid`, resolves the target pin (mutating
-`ctx.flags.target`), waits out a prior handler window, and takes the lock. Sets `ctx.policy` and
+`ctx.flags.target`), applies the first-contact guard (DESIGN §25.5: `targetSource()` from
+lib/config.mjs -> 'flag'|'env'|'global'|null, and `hasTargetState(dir, name)` exported here), waits out a prior handler window, and takes the lock. Sets `ctx.policy` and
 `ctx.lockKey` for commands that need them (push/pull consult protect/neverPull; push records the
 handler window).
 
@@ -329,6 +401,9 @@ export function declaredIncludeOrder(pkg)   // manifest.includeOrder, basenames
 export function lintIncludeOrder(pkg)       // -> [{path, message}]  BLOCKING when declared
 export function resourceSizes(pkg, entries) // -> [{kind,id,file,bytes,strippedBytes,saved}]
 export function sizeWarnings(rows, warnAt)  // -> [{…, over:boolean, message}]
+export function classModelReferences(pkg, entries)  // -> [{from:{kind,id}, field, kind, id}]
+export function lintClassReferences(pkg, entries, {deps}) // -> [{from, ref, kind, id, status:'untracked'|'unresolved', file?, message}]
+//   untracked: BLOCKING (verify FAIL; push refuses the planned referrer, --force overrides) · unresolved: WARNING (#117)
 ```
 
 Every check is pure + offline: `verify` runs them all, `push` uses them as a pre-flight. Prompt
@@ -407,11 +482,14 @@ Flag semantics:
 | `--limit n` (+ `--offset`) | page size of a paged listing | `mp ls`; `--max` is an alias (`--page-size` legacy) |
 | `--fields a,b` | project columns | `ls`, `get`, `search`, `watch` |
 | `--full` | no truncation / include informational lines | `diff`, `get`, `context`, `verify` |
+| `--offline` | touch no server: no target, no client, lock `none` | `verify` (`--static` alias), `test` |
+| `--write-probes` | let a diagnostic change the instance | `doctor` (`DELETE /gui/rest/caches`); makes it a `write` |
 | `--version v` | an ADDON version | `mp *`; the CLI version is `uxc --version` |
 | `-o <file>` | output file | `export`, `mp pull` (`--output` legacy) |
 
 `FLAG_ALIASES` (applied by the dispatcher; giving both spellings with different values is an
-error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`.
+error): `search`/`recent`/`task ls` `--limit` -> `--max`; `mp ls` `--max` -> `--limit`;
+`verify` `--static` -> `--offline`.
 `LEGACY_FLAG_ALIASES` records older in-module spellings (`--page-size`, `--fd`/`--uxai` ->
 `--compat` on `mp ls`, `--notes`, `--output`, `--classId`, `--families`); do not add more.
 
@@ -428,6 +506,15 @@ alias resolves to a real module and shadows none; every flag a module reads (`fl
 `flags['x']`, `reclaim(…, 'x')`, `collectFlag('x')`) appears in its help/summary, unless global,
 `--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
 every alias.
+
+Unknown flags (#110): the dispatcher calls `unknownFlags(modName, mod, flags, {srcFlags,
+helperFlags})` (lib/cli-meta.mjs) after the flag aliases. Known = `GLOBAL_FLAGS` (`help dir json
+human target no-lock lock-timeout allow-target-mismatch`) ∪ what the module (+ sibling command
+modules it imports) reads (`flagsReadBy`, the lint's forms + `collectRepeatedFlag('x')`) ∪ the
+`--flags` its summary/help names (`flagsInHelp`, `--ignore-*` = prefix) ∪ its aliases ∪ an optional
+`mod.flags` array ∪ — only when still unknown — what lib/*.mjs + lib/kinds/*.mjs read. Each leftover
+prints `! unknown flag --x for <cmd> (ignored)` on stderr; the command still runs (a WARNING:
+no set is provably complete). A test holds every completion flag to "known".
 
 ## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
 
@@ -512,7 +599,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | destroy            | steps `[…]` (dry run) · `{steps, failures, kept}`                       |
 | export             | `{file, …}` (packageio result)                                          |
 | import             | packageio result · `{src, report:true, written:false, upgrade, collisions}` (--report) |
-| verify             | `{resources, checks, failures:[string]}`                                |
+| verify             | `{resources, checks, failures:[string], offline:boolean}`               |
 | data pull / push   | row actions `[…]` or `{dataset}`                                        |
 | refs               | `[hit]`                                                                 |
 | enable / disable   | `{id, disabled}`                                                        |
@@ -538,7 +625,7 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | install-claude     | `[{dest, src}]`                                                         |
 | completion --install | `{installed, shell}`                                                  |
 | version            | `{version}`                                                             |
-| init               | `{dir, manifest, created, extension?}`                                  |
+| init               | `{dir, manifest, created, extension?}` (`extension.source`: kit/generic/none — none = `--no-examples`/`--kinds none`) |
 | target add         | `{name, core, ai, gui, f2, scope, default}`                             |
 | target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
 | target use         | `{default}`                                                             |
@@ -575,7 +662,7 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     keepLocal(prevFileObj, canon) -> {key: value}   jsonLayout.writeLocal re-attaches these unhashed keys (`legacy`)
     push() -> {ownValues, legacyValues, legacyAdded}  legacyAdded = declared legacy values a push of this package added
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
-    presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
+    presence(ctx, entry) -> string | {state?, detail?, note?}   status --remote detail (and state override); note = informational
 
 ## lib/jsonschema.mjs + lib/schemas.mjs (DESIGN §29) — JSON Schemas of the package files
     validateSchema(schema, value, {registry: Map($id -> schema)}) -> [{path, message, keyword, severity}]
@@ -584,12 +671,17 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     SCHEMA_NAMES {manifest, registry, marketplace, compat} · KIND_SCHEMAS {kind -> name} · schemaForKind(kind)
     loadSchemas() -> {byName, byId} · validateAgainst(name, value) -> findings
     lintSchemas(pkg) -> [{file, path, message, severity, where}]   verify: error = FAIL, warning = warn
+      (+ an error per manifest dependencies.* range outside the satisfiesRange grammar, #109)
     stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
     keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
 
-## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune` and fd.dataset remove()
-    rowOwners(ctx, manifest) -> {owners:[{code, forms, source:'receipt'|'dependency'}], receiptsReadable, receiptErrors:[string]}
+## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune`, fd.dataset remove() and the dataset's own view
+    rowOwners(ctx, manifest) -> {owners, guardOwners:[{code, forms, source:'receipt'|'last-read'|'dependency'}], receiptsReadable, receiptErrors:[string]}
+      readable: owners = INSTALLED packages (receipts; a dependency without one is no owner), guardOwners === owners,
+        and the set is persisted (pkg.setInstalledSeen(target, codes) -> state.targets[t].installedPackages)
+      unreadable: owners = pkg.installedSeen(target) (last successful read; [] if never), guardOwners = owners ∪
+        declared dependencies — every WRITE (push/--force/pull/prune/remove) skips guardOwners' rows
     foreignOwners(ctx, manifest) -> owners                                             (rowOwners(...).owners)
     prefixMatchLength(forms, id, {strict?}) -> n   longest carried prefix form, 0 = none   PURE
     splitRowOwnership(ids, manifest, owners, {receiptsReadable=true}) -> {own:[id], foreign:[{id, code}], unproven:[id]}   PURE
@@ -597,4 +689,15 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
       receiptsReadable, else unproven (kept)
     pushRows(...) report gains keptForeign: [{id, code}], keptUnproven: [id]
     fd.dataset remove(ctx, id) -> {deleted:[id], keptForeign, keptUnproven}   (rm --server, destroy, generic prune)
+    fd.dataset readServer(ctx, id) -> {obj, contents, rows, foreign?:[{id, code}]}   rows/contents = OWN view only
+      (#114: another installed package's rows excluded from the hash; alone on the target = full class, byte-identical;
+      receipts unreadable -> unprefixed rows stay in, last-read installed packages' rows out). foreign is never hashed.
+    fd.dataset presence(ctx, entry) -> {note} | undefined   "+n rows of <code> (…not drift)" from the last readServer
+    rowStatus(...) gains foreign?: [{id, code}], skippedForeign?: [id]
+    pushRows(...) report gains skippedForeign: [{id, code}] (local rows/tombstones of another package: never
+      upserted nor deleted, also under --force), foreign: [{id, code}]; serverOnly = OUR server-only rows only
+    pullRows(...) report gains foreign?: [{id, code}], skippedGuarded?: [id] (receipts unreadable: guard rows
+      neither pulled nor dropped); never writes another package's rows to the local file
+    foreignNote(foreign) -> string | null   (exported from fd-dataset.mjs)
+  sync.mjs statusAll rows carry note?: string (informational, never drift); status prints in-sync rows that have one.
   lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged

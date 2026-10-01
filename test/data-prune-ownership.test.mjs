@@ -72,11 +72,14 @@ test('splitRowOwnership: a custom idPrefixes of the package keeps its rows its o
   assert.deepEqual(r.foreign, []);
 });
 
-test('foreignOwners: other receipts + declared dependencies, never the package itself', async () => {
+test('foreignOwners: other INSTALLED packages only — a declared dependency without a receipt is no owner; never the package itself', async () => {
   const core = fakeCore({ docs: [], receipts: ['cm', 'po', 'zz'] });
   const { ctx } = ctxFor(makePkg({ rows: [row('PO_A')], deps: { cm: '*', qq: '*' } }), core);
   const o = await foreignOwners(ctx, ctx.pkg.manifest);
-  assert.deepEqual(o.map((x) => `${x.code}:${x.source}`), ['cm:receipt', 'qq:dependency', 'zz:receipt']);
+  assert.deepEqual(o.map((x) => `${x.code}:${x.source}`), ['cm:receipt', 'zz:receipt']);
+  assert.deepEqual(ctx.pkg.installedSeen('t1'), ['cm', 'zz'], 'the installed set is recorded at each successful read');
+  const r = await rowOwners(ctx, ctx.pkg.manifest);
+  assert.equal(r.guardOwners, r.owners, 'receipts read: writes guard exactly the installed owners');
 });
 
 test('prune --yes deletes our stale rows, keeps the other installed package\'s rows, and says so', async () => {
@@ -114,22 +117,35 @@ test('only foreign rows server-side: nothing to delete, no kill list at all', as
   assert.equal(rep.keptForeign.length, 1);
 });
 
-test('receipts unreadable: the declared dependency still protects its rows', async () => {
+test('receipts unreadable: the declared dependency still protects its rows (writes fail safe)', async () => {
   const core = fakeCore({ docs: [row('CM_SUPPLY'), row('PO_STALE')] });
   core.search = async ({ classId }) => {
-    if (classId === 'UxcPackage') throw new Error('class absent');
+    if (classId === 'UxcPackage') throw new Error('HTTP 500 boom');
     const list = [...core.store.values()]; return { found: list.length, results: list.map((d) => ({ id: d.id })) };
   };
+  core.getOne = async () => ({ id: 'UxcPackage' }); // the class exists: the failure is real
   const { ctx } = ctxFor(makePkg({ rows: [row('PO_KEEP')], deps: { cm: '*' } }), core);
-  await pushRows(ctx, ctx.pkg, 'CmTeams', { prune: true, yes: true });
+  const rep = await pushRows(ctx, ctx.pkg, 'CmTeams', { prune: true, yes: true });
   assert.deepEqual(core.log.deleted, ['PO_STALE']);
+  assert.deepEqual(rep.keptForeign, [{ id: 'CM_SUPPLY', code: 'cm' }]);
+  const o = await rowOwners(ctx, ctx.pkg.manifest);
+  assert.deepEqual([o.receiptsReadable, o.owners.length, o.guardOwners.map((g) => `${g.code}:${g.source}`)], [false, 0, ['cm:dependency']]);
 });
 
-test('without --prune nothing changes: foreign rows are just serverOnly', async () => {
+test('receipts READ, declared dependency NOT installed: its prefix owns nothing (pruned as ours, as before §31)', async () => {
+  const core = fakeCore({ docs: [row('CM_SUPPLY'), row('PO_STALE')], receipts: ['po'] });
+  const { ctx } = ctxFor(makePkg({ rows: [row('PO_KEEP')], deps: { cm: '*' } }), core);
+  const rep = await pushRows(ctx, ctx.pkg, 'CmTeams', { prune: true, yes: true });
+  assert.deepEqual(core.log.deleted.sort(), ['CM_SUPPLY', 'PO_STALE']);
+  assert.deepEqual(rep.keptForeign, []);
+});
+
+test('without --prune nothing changes: our server-only rows are serverOnly, foreign rows are reported apart (#114)', async () => {
   const core = fakeCore({ docs: [row('CM_SUPPLY'), row('PO_STALE')], receipts: ['cm'] });
   const { ctx } = ctxFor(makePkg({ rows: [row('PO_KEEP')] }), core);
   const rep = await pushRows(ctx, ctx.pkg, 'CmTeams', {});
-  assert.deepEqual(rep.serverOnly.sort(), ['CM_SUPPLY', 'PO_STALE']);
+  assert.deepEqual(rep.serverOnly, ['PO_STALE']);
+  assert.deepEqual(rep.foreign, [{ id: 'CM_SUPPLY', code: 'cm' }]);
   assert.deepEqual(core.log.deleted, []);
 });
 

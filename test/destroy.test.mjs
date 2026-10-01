@@ -77,3 +77,53 @@ test('destroy with ONLY createOnly resources left: says so and touches nothing',
     assert.ok(rec.lines.some((l) => /only createOnly-gated resources remain/.test(l)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+/** A live-ish target: the script doc + both receipts present; deletes are logged. */
+function liveCtx(dir, { failScript = false } = {}) {
+  const { ctx, rec } = ctxFor(dir, { confirm: 'tp' });
+  const docs = new Map([['tp-widgets', { id: 'tp-widgets' }], ['UXC_PKG_TP', { id: 'UXC_PKG_TP', tags: [] }]]);
+  const prompts = [{ id: 'uxcPkgTp', content: '{}' }, { id: 'uxcPkgOther', content: '{}' }];
+  const deleted = [];
+  ctx.connect = () => {};
+  ctx.target = { name: 't1', user: 'u' };
+  ctx.clients = {
+    core: {
+      getDoc: async (id) => docs.get(id) ?? null,
+      del: async (p) => {
+        const id = decodeURIComponent(p.split('/').pop());
+        if (failScript && id === 'tp-widgets') throw new Error('HTTP 500');
+        docs.delete(id); deleted.push(`core:${id}`);
+      },
+    },
+    gateway: {
+      get: async () => prompts,
+      del: async (p) => { deleted.push(`gw:${decodeURIComponent(p.split('/').pop())}`); },
+    },
+    cacheClear: async () => ({}),
+  };
+  return { ctx, rec, deleted };
+}
+
+test('destroy deletes the package\'s receipts (FD doc + AI prompt) LAST, and only its own', async () => {
+  const dir = scaffold([RESOURCES[0]]);
+  const prevExit = process.exitCode;
+  try {
+    const { ctx, rec, deleted } = liveCtx(dir);
+    await cmd.run(ctx);
+    assert.deepEqual(deleted, ['core:tp-widgets', 'core:UXC_PKG_TP', 'gw:uxcPkgTp']);
+    assert.deepEqual(rec.results[0].receipts.map((r) => `${r.surface}:${r.action}`), ['flowerdocs:deleted', 'uxopian-ai:deleted']);
+    assert.ok(rec.lines.some((l) => /delete\s+receipt flowerdocs \(tp\)/.test(l)));
+  } finally { process.exitCode = prevExit; rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('destroy with a failed step KEEPS the receipts (the package is still partly installed) and says so', async () => {
+  const dir = scaffold([RESOURCES[0]]);
+  const prevExit = process.exitCode;
+  try {
+    const { ctx, rec, deleted } = liveCtx(dir, { failScript: true });
+    await cmd.run(ctx);
+    assert.deepEqual(deleted, []);
+    assert.deepEqual(rec.results[0].receipts, []);
+    assert.ok(rec.warns.some((w) => /receipts KEPT on t1/.test(w)));
+  } finally { process.exitCode = prevExit; rmSync(dir, { recursive: true, force: true }); }
+});

@@ -11,8 +11,13 @@ uxc target ls                                   # check the instance is register
 uxc target add iris --url https://iris.demos.uxopian.com --scope IRIS --user system --password '…'
 uxc init --name "Contract Management" --code ct ./contracts-pkg
 cd contracts-pkg
-uxc doctor                                      # connectivity + endpoint gauntlet — run BEFORE building
+echo iris > .uxc/target                         # pin it: a NEW unpinned package refuses writes to the global default (#110)
+uxc doctor                                      # connectivity + endpoint gauntlet, read-only — run BEFORE building
 ```
+A package with no pin and no sync state for the global default target refuses WRITES to it
+("pins no target and has never been used with …") until you choose: `--target <name>` or a pin.
+Reads run with a one-line stderr note. `uxc verify --offline` (= `--static`) lints with no target
+at all; `uxc doctor --write-probes` adds the `DELETE /gui/rest/caches` probe (a real cache clear).
 `init` writes the manifest (edit `registrationOrderBands` if defaults clash), registry, state,
 dirs, a tool-neutral `AGENTS.md` (package map, operating rules, cheat-sheet, tests) and a short
 CLAUDE.md stanza pointing to it. Refresh the AGENTS.md block later: `uxc context --agents-md --write`.
@@ -92,12 +97,18 @@ scopes provider/model/tools for a calling surface — smoke with `uxc run <promp
 
 ```
 uxc status --remote                       # must be clean (export refuses dirty unless --allow-dirty)
-uxc export -o ct-1.0.0.uxpkg              # zip minus .uxc/, ai.mcp secrets scrubbed
+uxc export -o ct-1.0.0.uxpkg              # package files only (git list / .gitignore; never .uxc node_modules .claude), secrets scrubbed
 uxc target add stage --url https://stage.example.com --scope STAGE --user system --password '…'
 uxc import ct-1.0.0.uxpkg --target stage
 ```
 Import pre-flights EVERY resource and prints the full collision list BEFORE any write
 (`--force` to overwrite). A failed import is resumable: `uxc push --changed --target stage`.
+**Upgrades don't need `--force`:** same-id objects listed in the target's installed RECEIPT for the
+same package code are ours — state `upgrade` when unchanged since that install (pushed normally),
+`conflict` "edited on the server since <code>@<v> was installed" when someone edited them (show the
+diff, `--force` only with approval). Receipts from uxc older than per-resource hashes → `upgrade`
+plus a WARN listing the resources (edits undetectable) — only for ids carrying the package's own
+prefix. Ids NOT in our receipt stay `collision`. `uxc destroy` deletes the package's receipts last.
 `--code-remap ct=xy` is EXPERIMENTAL: registry-driven token-boundary renaming across all four
 prefix forms + derived ids, then a residual lint — it ABORTS if any old-prefix token survives.
 Review the lint output with the user; never force past it.

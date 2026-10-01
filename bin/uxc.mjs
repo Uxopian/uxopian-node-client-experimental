@@ -7,8 +7,11 @@ import { createClients } from '../lib/http.mjs';
 import { findPackageDir } from '../lib/config.mjs';
 import { openPackage } from '../lib/registry.mjs';
 import { out, fail, outputMode, setOutputMode, reportError } from '../lib/output.mjs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   COMMANDS, TWO_WORD as TWO_WORD_LIST, resolveAliases, applyFlagAliases, aliasesOf,
+  unknownFlags, flagsReadBy,
 } from '../lib/cli-meta.mjs';
 import { openSession } from '../lib/session.mjs';
 
@@ -77,6 +80,10 @@ async function main() {
   // AFTER help (help must win, even over a flag conflict — #103): --limit = --max where both mean "at most N" (#99)
   applyFlagAliases(modName, parsed.flags);
   const ctx = makeCtx(parsed);
+  // a flag this command does not read is WARNED about, never dropped in silence (#110)
+  for (const f of unknownFlags(modName, mod, parsed.flags, { srcFlags: commandFlags(modName), helperFlags })) {
+    ctx.out.warn(`unknown flag --${f} for ${TWO_WORD.has(cmd) ? `${cmd} ${rest[0]}` : cmd} (ignored) — run: uxc ${TWO_WORD.has(cmd) ? `${cmd} ${rest[0]}` : cmd} --help`);
+  }
   // Package policy + cross-process lock (DESIGN §25): which instance this checkout may talk to,
   // what it may never do, and who else is writing to it right now. Reads never queue.
   const session = await openSession(ctx, { command: TWO_WORD.has(cmd) ? `${cmd} ${rest[0]}` : cmd, modName, mod });
@@ -85,6 +92,27 @@ async function main() {
   } finally {
     session.release();
   }
+}
+
+const LIB = fileURLToPath(new URL('../lib/', import.meta.url));
+const readSrc = (path) => { try { return readFileSync(path, 'utf8'); } catch { return ''; } };
+
+/** Flags read by lib/commands/<modName>.mjs and the sibling command modules it imports. */
+function commandFlags(modName) {
+  const src = readSrc(`${LIB}commands/${modName}.mjs`);
+  const siblings = [...src.matchAll(/from '\.\/([\w-]+)\.mjs'/g)].map((m) => readSrc(`${LIB}commands/${m[1]}.mjs`));
+  return flagsReadBy([src, ...siblings].join('\n'));
+}
+
+/** Flags read by the helper modules (lib/*.mjs, lib/kinds/*.mjs) — scanned only when needed. */
+function helperFlags() {
+  const out = new Set();
+  for (const sub of ['', 'kinds/']) {
+    let names = [];
+    try { names = readdirSync(`${LIB}${sub}`).filter((n) => n.endsWith('.mjs')); } catch { /* none */ }
+    for (const n of names) for (const f of flagsReadBy(readSrc(`${LIB}${sub}${n}`))) out.add(f);
+  }
+  return out;
 }
 
 function makeCtx({ args, flags }) {
