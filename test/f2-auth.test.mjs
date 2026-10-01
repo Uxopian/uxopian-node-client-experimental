@@ -27,8 +27,13 @@ async function stubBroker() {
     switch (path) {
       case '/api/broker/contents': // a real refusal, text/plain like the broker
         res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end(OUTSIDE);
-      case '/api/broker/health': // a real refusal with a JSON message
+      case '/api/role-denied': // a real refusal with a JSON message
         return json(res, 403, { ...GENERIC, message: 'Access is denied for this role' });
+      case '/api/broker/health': // the authed 403 body is UNRECORDED (A0 §b, §F23): assume the worst
+        // case — Spring's default envelope with no message, byte-identical to the "no token" answer
+        return json(res, 403, GENERIC);
+      case '/api/ok':
+        return json(res, 200, { ok: token });
       case '/api/generic-once': // the first token is unknown to the broker, the next one is fine
         return token === 'T1' ? json(res, 403, GENERIC) : json(res, 200, { ok: token });
       case '/api/generic-always':
@@ -68,7 +73,7 @@ test('a specific 403 is surfaced verbatim: no new login, the broker body is in t
       assert.doesNotMatch(e.message, /re-authenticate/);
       return true;
     });
-    await assert.rejects(f2.get('/api/broker/health'), (e) => {
+    await assert.rejects(f2.get('/api/role-denied'), (e) => {
       assert.equal(e.status, 403);
       assert.match(e.message, /Access is denied for this role/);
       return true;
@@ -136,5 +141,18 @@ test('two legitimate 403s within 30 s: no cooldown error, because no login was a
       });
     }
     assert.equal(b.state.logins, 1);
+  } finally { b.close(); }
+});
+
+test('/api/broker/health 403 with NO message (the unrecorded rc5 body), on an accepted token: no login, no replay', async () => {
+  const b = await stubBroker();
+  try {
+    const f2 = f2Surface(b.target, { loginCooldownMs: 0 }); // nothing to hide behind: no cooldown
+    await f2.get('/api/ok');
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(f2.get('/api/broker/health'), (e) => e.status === 403 && /Forbidden/.test(e.message));
+    }
+    assert.equal(b.state.logins, 1, 'the token was already accepted: a 403 is the broker\'s real answer');
+    assert.equal(b.state.hits['/api/broker/health'], 2, 'never replayed');
   } finally { b.close(); }
 });

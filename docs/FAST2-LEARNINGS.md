@@ -354,7 +354,9 @@ used a throwaway `UXC_A0_probe_*` map, and all of them were deleted afterwards (
   `/api/auth/lock-time-duration` → `30`, `/v3/api-docs` → 200 (OpenAPI 3.1, 113 paths / 140
   operations, global `Bearer Token` scheme), `/swagger-ui/index.html` → 200.
 - Only FAILED logins count toward the lockout (§F3). Each `uxc` process logs in once on its own;
-  that is noisy in the broker's auth log but harmless for the lockout counter.
+  that is noisy in the broker's auth log but harmless for the lockout counter. uxc's own 30 s
+  cooldown matches: it counts failed logins only, and `login()` reuses a fresh token, so one
+  process sharing one client (`connect()`, then `f2 ls`, `f2 status`, `doctor --f2`) logs in once.
 
 ## §F22 — 401 vs 403: what each one means on rc5 (updates §F3 and §F14)
 - **No token → 403** with the generic Spring envelope
@@ -381,6 +383,10 @@ Two legitimate 403s answered with a valid super-admin token:
 A client that treats every 403 as "token expired" logs in again, loses the broker's text, and —
 with a second such 403 inside the 30 s lock window — trips its own anti-lockout cooldown with a
 message about failed logins although none failed. Fixed in uxc by §F22's rule.
+- The BODY of the authed `/api/broker/health` 403 is **not recorded** (A0 §b). Spring Boot ≥ 2.3
+  omits `message` by default, so a role 403 may be byte-identical to the "no token" envelope. uxc
+  therefore never re-logs-in for a 403 on a token the broker has already accepted, whatever the
+  body; the generic-403 re-auth only applies to a token not yet proven.
 
 ## §F24 — Version detection needs the token on rc5
 - `GET /actuator/info` → 200 `{"build":{"artifact":"fast2-broker-rest-server","name":"Fast2 REST

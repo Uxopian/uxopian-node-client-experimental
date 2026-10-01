@@ -436,21 +436,37 @@ every alias.
 ```js
 export function f2Surface(target, {loginCooldownMs = 30_000}?)  // target.f2 + f2User/f2Password -> client
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
-//   {base, login(), req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
+export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
+//   {base, login({force}?) -> token, hasToken() -> bool, anonymous(method, path, opts?) -> response,
+//    req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
 //    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
 //    on a status; opts.binary -> response.bytes, a Buffer), text(path) -> string}
 ```
 
-Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. Re-auth rule
-(§F22/§F23): a 401 -> one login + one replay; a GENERIC 403 -> one login + one replay, at most once
-per token and never inside the login cooldown; if the fresh token still gets the generic 403, it is
-real for the rest of the process. Any other 403 -> no login, surfaced with the broker's body. A status
->= 400 throws `HttpError` carrying the broker's body (`get`/`post`/`put`/`del`/`req`/`text`).
+Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. `login()`
+returns the token in hand while it is fresh (3.5 h) and only `login({force:true})` always calls the
+broker, so any caller (doctor, a library driver on `connect()`) may call it safely. The anti-lockout
+cooldown (30 s) counts FAILED logins only (a failed status or a transport error on the login):
+inside it, `login()` throws `UXC_F2_COOLDOWN` without a request. Re-auth rule (§F22/§F23): a 401 ->
+one forced login + one replay, unless a re-login is skipped — inside the failed-login cooldown, or
+when the token the last 401 re-login minted is itself refused — and then the BROKER's 401 is
+returned (`req()` throws its `HttpError`, `explanation` = why the re-login was skipped, never the
+cooldown text). A GENERIC 403 -> one login + one replay, at most once per token, never inside the
+cooldown after any login, and never on a token the broker already accepted (a 403 on a proven
+token is a real refusal whatever its body shape — Spring omits `message` by default); if the fresh
+token still gets the generic 403, it is real for the rest of the process. Any other 403 -> no
+login, surfaced with the broker's body. A status >= 400 throws `HttpError` carrying the broker's
+body (`get`/`post`/`put`/`del`/`req`/`text`). Poll loops (`f2 status --watch`, `f2 run`, the
+`lib push` worker wait) never swallow an `isF2AuthError` error: it ends the command, exit 2.
 `DELETE /api/maps/{id}` answers **200 with an empty body** (§F29), so `del()` resolves to `undefined`
 on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
 call site. Upload answers 201 + the full map (§F25).
 
-Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`):
+Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`). A stored
+target is judged on its STORED fields: saved with `f2` and no FlowerDocs field, it stays Fast2-only
+even when `UXC_SCOPE`/`UXC_USER`/`UXC_CORE_URL`/… are exported (env FlowerDocs vars only complete a
+stored FlowerDocs target). A pure-env target is judged on the env; its "incomplete" error names
+the FlowerDocs env vars that made it a FlowerDocs target.
 `createClients` returns `noSurface(target, product)` for `core`, `gui` and `gateway` — a Proxy
 whose every property read throws `Error{code:'UXC_NO_SURFACE'}` "target <name> has no FlowerDocs
 surface …" before any request; `auth()` and `cacheClear()` reject the same way. Commands never

@@ -20,6 +20,7 @@ import "./f2-doctor.test.mjs";
 import "./f2-exceptions.test.mjs";
 import "./f2-lib.test.mjs";
 import "./f2-only-target.test.mjs";
+import "./f2-poll-auth.test.mjs";
 import "./f2-status.test.mjs";
 import "./f2-xml-import.test.mjs";
 import "./f2map.test.mjs";
