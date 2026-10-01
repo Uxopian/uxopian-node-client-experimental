@@ -160,11 +160,14 @@ broker do it** — a proven composition of two verified mechanics:
 
 ```
 uxc add f2.map <Name> --from-xml path/to/foo.map.xml
-  → POST /api/maps/upload/ZzUxcConv<rand>   (broker parses the XML)
-  → GET  /api/maps/{newId}                  (broker emits the JSON)
-  → canonicalize, write f2/maps/<Name>.json
-  → DELETE /api/maps/{newId}                (never-run map deletes cleanly — verified)
+  → refuse if <Name> already exists on the target (an upload would `_new1`, never collide)
+  → POST /api/maps/upload/ZzUxcConv<rand>   (broker parses the XML; 201 + the full map JSON, §F25)
+  → DELETE /api/maps/{newId}                (in a `finally`; 200 empty, §F29)
+  → canonicalize + variable-ize like `add --from`, write + register f2/maps/<Name>.json
 ```
+
+A failed upload is swept too (any map carrying the throwaway name is deleted) before the broker's
+message is shown verbatim. Implemented in `lib/kinds/f2-map.mjs` `importXml()` (FAST-5877).
 
 The reverse (`uxc get f2.map <Name> --xml`) is just `GET /api/maps/download/{mapId}`, which returns
 the `.map.xml` the UI expects. Both directions are server-authoritative, so uxc never owns a

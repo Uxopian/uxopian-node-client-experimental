@@ -519,6 +519,21 @@ Verified read-only on the rc5 broker, on two existing `Finished` campaigns (1 ex
   single-campaign format.
 - It is a file, never a count: `uxc f2 exceptions` counts rows and (step, class) pairs client-side.
 
+## §F36 — `uxc add f2.map --from-xml`: the broker conversion, end to end (rc5, 2026-10-01)
+Verified through `importXml()` (lib/kinds/f2-map.mjs) on a broker `2026.0.0-rc5`, one login:
+- The shipped `DefaultMap` XML (`GET /api/maps/download/{id}`, every UUID regenerated, `<name>`
+  replaced) uploaded multipart (`file`, `application/xml`) → **201** + the full map; `DELETE` → 200;
+  `GET /api/maps/{id}` afterwards → 404; the pattern search finds nothing. No follow-up search needed.
+- Preserved in the JSON: all 6 step ids (in order), every step's `graphic.x/y`, both link
+  conditions (`…conditions.Otherwise`, `…conditions.PunnetInException`).
+- The JSON echo has **no `sharedObjectConfigurations` key** (top level: `id, name, isReadOnly,
+  mapVersion, mapVersionsSerieId, mapDescription, steps`), although that XML carries a
+  non-self-closing `<sharedObjectConfigurations>` element. Whether it held MAP-scoped entries that
+  the JSON drops was NOT checked: open (see the list below).
+- A hand-written minimal XML (the guide's `Random.map.xml` shape + an `Otherwise` condition) got
+  **500** with the generic "An unexpected error occurred. Check logs…" text and no field-level
+  message; nothing was created. Start from a downloaded/shipped XML, not a hand-written one.
+
 ## Unverified on rc5 (open after the 2026-10-01 probe)
 Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
 - What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
@@ -529,3 +544,5 @@ Out of scope of a read-mostly probe; verify on a throwaway object before relying
   the content of the CSVs inside its multi-campaign zip is still to be read once as bytes.
 - Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
 - A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
+- Whether the map JSON carries MAP-scoped shared objects at all (§F36: absent from the echo of a
+  map whose XML has a `<sharedObjectConfigurations>` element) — if not, `--from-xml` loses them.
