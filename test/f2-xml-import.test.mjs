@@ -98,8 +98,10 @@ const echo = (name, id) => ({
  *   ok        201 + the full map (§F25)
  *   reject400 400 + the broker's JSON message, nothing created
  *   fail500   the map IS created, then 500 (the sweep must remove it)
+ * `holdMs` delays the 201 after the map is created (Infinity: never answers); `onUpload()` fires
+ * as soon as the upload is received — the moment a user would press Ctrl-C.
  */
-async function stubBroker({ mode = 'ok', existing = [] } = {}) {
+async function stubBroker({ mode = 'ok', existing = [], holdMs = 0, onUpload = null } = {}) {
   const state = { maps: new Map(), calls: [], uploads: [], n: 0 };
   for (const [name, body] of existing) state.maps.set(name, { ...body, name, id: `live-${name}` });
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -126,6 +128,9 @@ async function stubBroker({ mode = 'ok', existing = [] } = {}) {
         const map = echo(name, `tmp-${state.n}`);
         state.maps.set(name, map);
         if (mode === 'fail500') return json(res, 500, { status: 500, error: 'Internal Server Error', message: 'boom while indexing' });
+        onUpload?.();
+        if (holdMs === Infinity) return undefined;
+        if (holdMs) return setTimeout(() => json(res, 201, map), holdMs);
         return json(res, 201, map);
       }
       const one = path.match(/^\/api\/maps\/([^/]+)$/);
@@ -351,5 +356,51 @@ test('importXml (library): a caller-chosen throwaway name is honoured and still 
     assert.deepEqual(res.throwaway, { name: 'ZzProbe_1', mapId: 'tmp-1', deleted: true });
     assert.equal(res.local.obj.name, 'ZzFoo');
     assert.equal(b.state.maps.size, 0);
+  } finally { b.close(); }
+});
+
+// #5 (review P2): Ctrl-C during the conversion left the ZzUxcConv* throwaway on the broker — Node's
+// default SIGINT exit never runs the `finally`. Now: the delete command is printed, the throwaway is
+// deleted (by id once the in-flight upload lands, else by name), exit 130.
+function spawnUxc(args, { cwd, home, env }) {
+  const blank = Object.fromEntries(KEYS.map((k) => [k, '']));
+  const child = spawn(process.execPath, [UXC, ...args], {
+    cwd, env: { ...process.env, ...blank, UXC_HOME: home, HOME: home, USERPROFILE: home, UXC_AGENT: '0', ...env },
+  });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (d) => { stdout += d; });
+  child.stderr.on('data', (d) => { stderr += d; });
+  const done = new Promise((r) => child.on('close', (status, signal) => r({ status, signal, stdout, stderr, all: stdout + stderr })));
+  return { child, done };
+}
+
+for (const [label, holdMs, sig] of [['the upload lands after the signal', 800, 'SIGINT'], ['the upload never answers', Infinity, 'SIGTERM']]) {
+  test(`#5 ${sig} during add --from-xml (${label}): the throwaway is deleted, its delete command printed, exit 130`, async () => {
+    let child = null;
+    const b = await stubBroker({ holdMs, onUpload: () => setTimeout(() => child?.kill(sig), 100) });
+    const w = await workspace(b.env);
+    try {
+      const p = spawnUxc(['add', 'f2.map', 'ZzFoo', '--from-xml', w.xml], { cwd: w.pkg, home: w.home, env: b.env });
+      child = p.child;
+      const r = await p.done;
+      assert.equal(r.status, 130, r.all);
+      assert.match(r.stderr, new RegExp(`${sig}: interrupted during the XML conversion — removing the throwaway map ZzUxcConv\\w+`));
+      assert.match(r.stderr, /uxc api DELETE \/api\/maps\/\S+ --surface f2 --yes/);
+      assert.match(r.stderr, /deleted the throwaway map ZzUxcConv\w+/);
+      assert.equal(b.state.maps.size, 0, `left on the broker: ${[...b.state.maps.keys()].join(', ')}`);
+      assert.ok(b.state.calls.includes('DELETE /api/maps/tmp-1'), b.state.calls.join(', '));
+      assert.ok(!existsSync(w.mapFile('ZzFoo')), 'nothing written');
+    } finally { b.close(); w.cleanup(); }
+  });
+}
+
+test('#5 the signal handlers are removed once the import returns (library caller)', async () => {
+  const b = await stubBroker();
+  try {
+    const target = { name: 'zz', f2: b.env.UXC_F2_URL, f2User: b.env.UXC_F2_USER, f2Password: b.env.UXC_F2_PASSWORD };
+    const ctx = { clients: { f2: f2Surface(target) }, target };
+    const before = [process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')];
+    await importXml(ctx, 'ZzFoo', Buffer.from(XML));
+    assert.deepEqual([process.listenerCount('SIGINT'), process.listenerCount('SIGTERM')], before);
   } finally { b.close(); }
 });

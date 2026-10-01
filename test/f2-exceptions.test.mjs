@@ -13,7 +13,8 @@ import { join, resolve } from 'node:path';
 import os from 'node:os';
 import { writeFileSync } from 'node:fs';
 import { parseCsv, countExceptions, exceptionsPath } from '../lib/f2/campaign.mjs';
-import { zipDir, unzipTo } from '../lib/zip.mjs';
+import { zipDir, unzipTo, crc32 } from '../lib/zip.mjs';
+import { deflateRawSync } from 'node:zlib';
 
 /** entries {name: text} -> zip bytes, through the repo's own zip writer. */
 async function zipOf(entries) {
@@ -57,7 +58,8 @@ function csvOf(campaign, pairs) {
   return `${lines.join('\n')}\n`;
 }
 
-async function stubBroker(campaigns) {
+/** `download` overrides the export: {bytes, filename?} (filename null = no Content-Disposition). */
+async function stubBroker(campaigns, { download = null } = {}) {
   // rc5: several campaigns -> ONE zip of `<campaign>_exceptions.csv` (FAST2-LEARNINGS §F35)
   const zipFor = async (cs) => zipOf(Object.fromEntries(cs.map((c) => [`${c}_exceptions.csv`, campaigns[c].csv])));
   const state = { logins: 0, downloads: [] };
@@ -77,6 +79,11 @@ async function stubBroker(campaigns) {
       state.downloads.push({ campaigns: cs, mapIds: ms });
       if (cs.length !== ms.length) return json(res, 400, { message: 'lists must have the same length' });
       if (cs.some((c, k) => campaigns[c]?.mapId !== ms[k])) return json(res, 400, { message: 'mapIds not paired with campaigns' });
+      if (download) {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream',
+          ...(download.filename ? { 'Content-Disposition': `attachment; filename=${download.filename}` } : {}) });
+        return res.end(download.bytes);
+      }
       const one = cs.length === 1;
       const name = one ? `${cs[0]}_exceptions.csv` : `${cs.join('_')}_exceptions.zip`;
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename=${name}` });
@@ -208,5 +215,107 @@ test('f2 exceptions <unknown>: the broker\'s "Could not find campaign", exit 2, 
     assert.equal(r.status, 2, r.all);
     assert.match(r.stderr, /Could not find campaign with name ZzNope/);
     assert.deepEqual(b.state.downloads, []);
+  } finally { b.close(); w.cleanup(); }
+});
+
+// #9 (review P2): an EOCD-only zip (no entry) starts with 0x06054b50, not a local header: it was
+// saved as .csv and its binary header counted as "1 exception row".
+const EOCD_ONLY = (() => { const b = Buffer.alloc(22); b.writeUInt32LE(0x06054b50, 0); return b; })();
+const TWO = { ...ONE, ZZB_Run2: { mapId: 'm-b', csv: csvOf('ZZB_Run2', [['9. Write', 'java.io.IOException', 2]]) } };
+
+for (const [label, filename] of [['named .zip', 'ZZA_Run1_ZZB_Run2_exceptions.zip'], ['no filename', null]]) {
+  test(`#9 an empty (EOCD-only) zip, ${label}: saved as .zip, 0 rows, a clear message`, async () => {
+    const b = await stubBroker(TWO, { download: { bytes: EOCD_ONLY, filename } });
+    const w = tmp();
+    try {
+      const r = await uxc(['f2', 'exceptions', 'ZZA_Run1', 'ZZB_Run2', '--json'], { cwd: w.dir, home: w.home, env: b.env });
+      assert.equal(r.status, 0, r.all);
+      const j = JSON.parse(r.stdout);
+      assert.equal(j.rows, 0);
+      assert.deepEqual(j.top, []);
+      assert.match(j.path, /exceptions_ZZA_Run1_ZZB_Run2\.zip$/);
+      assert.match(r.stderr, /the zip holds no CSV entry \(an empty archive\) — 0 rows/);
+    } finally { b.close(); w.cleanup(); }
+  });
+}
+
+test('#9 an empty body: 0 rows, said so', async () => {
+  const b = await stubBroker(ONE, { download: { bytes: Buffer.alloc(0), filename: 'ZZA_Run1_exceptions.csv' } });
+  const w = tmp();
+  try {
+    const r = await uxc(['f2', 'exceptions', 'ZZA_Run1', '--json'], { cwd: w.dir, home: w.home, env: b.env });
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).rows, 0);
+    assert.match(r.stderr, /EMPTY file — 0 rows/);
+  } finally { b.close(); w.cleanup(); }
+});
+
+test('#9 a .zip filename on bytes that are not a zip: a clear error, exit 2', async () => {
+  const b = await stubBroker(TWO, { download: { bytes: Buffer.from('not a zip at all, sorry'), filename: 'x_exceptions.zip' } });
+  const w = tmp();
+  try {
+    const r = await uxc(['f2', 'exceptions', 'ZZA_Run1', 'ZZB_Run2'], { cwd: w.dir, home: w.home, env: b.env });
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.stderr, /is not a readable zip/);
+  } finally { b.close(); w.cleanup(); }
+});
+
+/** The live rc5 zip shape (§F35): deflated entries, flag 0x0808 (data descriptor + UTF-8), the
+ *  local header's CRC and sizes zero. The repo's writer never sets it, so it is built by hand. */
+function dataDescriptorZip(entries) {
+  const locals = [];
+  const central = [];
+  let offset = 0;
+  for (const [n, text] of Object.entries(entries)) {
+    const name = Buffer.from(n, 'utf8');
+    const data = Buffer.from(text, 'utf8');
+    const comp = deflateRawSync(data);
+    const crc = crc32(data);
+    const lfh = Buffer.alloc(30);
+    lfh.writeUInt32LE(0x04034b50, 0); lfh.writeUInt16LE(20, 4); lfh.writeUInt16LE(0x0808, 6); lfh.writeUInt16LE(8, 8);
+    lfh.writeUInt16LE(name.length, 26); // crc + sizes left 0: they follow the data
+    const dd = Buffer.alloc(16);
+    dd.writeUInt32LE(0x08074b50, 0); dd.writeUInt32LE(crc, 4); dd.writeUInt32LE(comp.length, 8); dd.writeUInt32LE(data.length, 12);
+    const cdh = Buffer.alloc(46);
+    cdh.writeUInt32LE(0x02014b50, 0); cdh.writeUInt16LE(20, 4); cdh.writeUInt16LE(20, 6); cdh.writeUInt16LE(0x0808, 8);
+    cdh.writeUInt16LE(8, 10); cdh.writeUInt32LE(crc, 16); cdh.writeUInt32LE(comp.length, 20); cdh.writeUInt32LE(data.length, 24);
+    cdh.writeUInt16LE(name.length, 28); cdh.writeUInt32LE(offset, 42);
+    locals.push(lfh, name, comp, dd);
+    central.push(cdh, name);
+    offset += 30 + name.length + comp.length + 16;
+  }
+  const cd = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(Object.keys(entries).length, 8); eocd.writeUInt16LE(Object.keys(entries).length, 10);
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
+}
+
+test('a 0x0808 data-descriptor zip (the live rc5 shape) is read from the central directory', async () => {
+  const bytes = dataDescriptorZip({ 'ZZA_Run1_exceptions.csv': ONE.ZZA_Run1.csv, 'ZZB_Run2_exceptions.csv': TWO.ZZB_Run2.csv });
+  const b = await stubBroker(TWO, { download: { bytes, filename: 'ZZA_Run1_ZZB_Run2_exceptions.zip' } });
+  const w = tmp();
+  try {
+    const r = await uxc(['f2', 'exceptions', 'ZZA_Run1', 'ZZB_Run2', '--json'], { cwd: w.dir, home: w.home, env: b.env });
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).rows, 15);
+  } finally { b.close(); w.cleanup(); }
+});
+
+// #13 (P3): `--out` as a bare flag wrote a file named "true"; `--out <dir>` crashed with EISDIR
+test('#13 --out as a bare flag is refused offline; --out <dir> saves the default name inside it', async () => {
+  const b = await stubBroker(ONE);
+  const w = tmp();
+  try {
+    const bare = await uxc(['f2', 'exceptions', 'ZZA_Run1', '--out'], { cwd: w.dir, home: w.home, env: b.env });
+    assert.equal(bare.status, 2, bare.all);
+    assert.match(bare.stderr, /--out needs a file or directory/);
+    assert.ok(!existsSync(join(w.dir, 'true')));
+    assert.deepEqual(b.state.downloads, []);
+    mkdirSync(join(w.dir, 'outdir'));
+    const dir = await uxc(['f2', 'exceptions', 'ZZA_Run1', '--out', 'outdir'], { cwd: w.dir, home: w.home, env: b.env });
+    assert.equal(dir.status, 0, dir.all);
+    assert.ok(existsSync(join(w.dir, 'outdir', 'exceptions_ZZA_Run1.csv')));
   } finally { b.close(); w.cleanup(); }
 });

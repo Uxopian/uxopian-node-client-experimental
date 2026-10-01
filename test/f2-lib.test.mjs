@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
-import { workerBack, classifyRefusal, versionNames } from '../lib/commands/f2-lib.mjs';
+import { seenSince, respawnKind, dateMs, installState, classifyRefusal, versionNames } from '../lib/commands/f2-lib.mjs';
 
 const UXC = resolve('bin/uxc.mjs');
 const KEYS = ['UXC_TARGET', 'UXC_URL', 'UXC_CORE_URL', 'UXC_AI_URL', 'UXC_GUI_URL', 'UXC_SCOPE', 'UXC_USER',
@@ -36,15 +36,22 @@ const LIBS = Array.from({ length: 250 }, (_, i) => ({
 }));
 
 /**
- * opts.campaigns: {name: status} · opts.upload: 'ok' | 409 | 500 | 400 · opts.respawn: 'newId' |
- * 'newPid' | 'never' · opts.listAfter: whether the pushed jar shows up in libraries afterwards.
+ * opts.campaigns: {name: status} · opts.upload: 'ok' | 409 | 500 | 400 · opts.respawn: 'same'
+ * (default: the EMBEDDED worker, same workerId + pid, heard from again within a second) | 'newId' |
+ * 'newPid' | 'never' (stops at the swap, never heard from again) · opts.listAfter: whether the
+ * pushed jar shows up in libraries afterwards · opts.jarDate: 'now' (default, epoch ms) | 'iso' |
+ * 'old' | 'garbage' · opts.workers: (st) => [status, body] | null — override GET /api/workers ·
+ * opts.capSize: the broker caps `size` and ignores `page` · opts.versions: the library-versions body.
+ * `lastSeen` is an AGE in ms, as on rc5 (§F32).
  */
 async function stubBroker(opts = {}) {
   const st = {
-    seen: [], uploads: [], restores: [], swapped: false, pages: [],
+    seen: [], uploads: [], restores: [], swapped: false, swappedAt: null, pages: [], workerCalls: 0,
     campaigns: opts.campaigns ?? {},
   };
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+  const jarDate = () => ({ now: st.swappedAt, iso: new Date(st.swappedAt).toISOString(), old: 1_700_000_000_000, garbage: 'n/a' })[opts.jarDate ?? 'now'];
+  const swap = () => { st.swapped = true; st.swappedAt = Date.now(); };
   const server = createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
     const path = u.pathname;
@@ -59,25 +66,35 @@ async function stubBroker(opts = {}) {
         const names = Object.keys(st.campaigns);
         return json(res, 200, { total: names.length, collection: names });
       }
+      if (path === '/api/maps/summary/search-by-pattern') return json(res, 200, { total: 0, collection: [] });
       const cs = path.match(/^\/api\/campaigns\/([^/]+)\/status$/);
       if (cs) return json(res, 200, st.campaigns[decodeURIComponent(cs[1])] ?? 'Finished');
       if (path === '/api/workers') {
-        const now = Date.now();
-        let w = { workerId: 'w1', pid: 100, lastSeen: now - 500, hostname: 'h', embedded: true };
-        if (st.swapped && opts.respawn === 'newId') w = { ...w, workerId: 'w2', pid: 200 };
-        if (st.swapped && opts.respawn === 'newPid') w = { ...w, pid: 101 };
+        st.workerCalls += 1;
+        const forced = opts.workers?.(st);
+        if (forced) return json(res, forced[0], forced[1]);
+        let w = { workerId: 'w1', pid: 100, lastSeen: 500, hostname: 'h', embedded: true };
+        if (st.swapped) {
+          const respawn = opts.respawn ?? 'same';
+          if (respawn === 'never') w = { ...w, lastSeen: Date.now() - st.swappedAt + 500 };
+          else w = { ...w, lastSeen: 200 };
+          if (respawn === 'newId') w = { ...w, workerId: 'w2', pid: 200 };
+          if (respawn === 'newPid') w = { ...w, pid: 101 };
+        }
         return json(res, 200, { total: 1, collection: [w] });
       }
       if (path === '/api/workers/libraries') {
-        const page = opts.ignorePage ? 0 : Number(u.searchParams.get('page') ?? 0);
-        const size = Number(u.searchParams.get('size') ?? 20);
+        const page = opts.ignorePage || opts.capSize ? 0 : Number(u.searchParams.get('page') ?? 0);
+        const size = Math.min(Number(u.searchParams.get('size') ?? 20), opts.capSize ?? Infinity);
         st.pages.push(page);
         let all = LIBS;
-        if (st.swapped && opts.listAfter !== false) all = [...LIBS, ...st.uploads.map((x) => ({ ...LIBS[0], jarName: x.filename }))];
+        if (st.swapped && opts.listAfter !== false) {
+          all = [...LIBS, ...st.uploads.map((x) => ({ ...LIBS[0], jarName: x.filename, lastModificationDate: jarDate() }))];
+        }
         return json(res, 200, { total: all.length, collection: all.slice(page * size, page * size + size) });
       }
       const lv = path.match(/^\/api\/workers\/library-versions\/(.+)$/);
-      if (lv) return json(res, 200, decodeURIComponent(lv[1]) === 'lib-007.jar' ? ['lib-007.jar.old'] : []);
+      if (lv) return json(res, 200, opts.versions ?? (decodeURIComponent(lv[1]) === 'lib-007.jar' ? ['lib-007.jar.old'] : []));
       if (path === '/api/workers/upload-library' && req.method === 'POST') {
         const text = body.toString('latin1');
         const m = text.match(/name="([^"]+)"; filename="([^"]+)"/);
@@ -86,12 +103,13 @@ async function stubBroker(opts = {}) {
         if (mode === 409) return json(res, 409, { code: 'CAMPAIGN_RUNNING', campaigns: ['C_Run1'] });
         if (mode === 500) { res.writeHead(500, { 'Content-Type': 'text/plain' }); return res.end('An unexpected error occurred. Please retry'); }
         if (mode === 400) { res.writeHead(400, { 'Content-Type': 'text/plain' }); return res.end('Invalid file provided'); }
-        st.swapped = true;
+        if (mode === 'huge') { res.writeHead(400, { 'Content-Type': 'text/html' }); return res.end(`<html>${'x'.repeat(10_000)}</html>`); }
+        swap();
         res.writeHead(200); return res.end();
       }
       if (path === '/api/workers/restore-library' && req.method === 'POST') {
         st.restores.push(Object.fromEntries(u.searchParams));
-        st.swapped = true;
+        swap();
         res.writeHead(200); return res.end();
       }
       return json(res, 404, { error: 'Not Found', path });
@@ -289,15 +307,79 @@ test('a new pid on the same workerId also counts as back', async () => {
   await withBroker({ respawn: 'newPid' }, async (b, t, run) => {
     const r = await run(['f2', 'lib', 'push', t.jar, '--yes']);
     assert.equal(r.status, 0, r.all);
-    assert.match(r.stdout, /worker\s+w1 back after/);
+    assert.match(r.stdout, /worker\s+w1 heard from [\d.]+s after the push \(new-pid\)/);
   });
 });
 
-test('no worker back before --timeout -> exit 1 with the last snapshot', async () => {
+// #2 false negative (review P1): the EMBEDDED worker runs in the broker JVM, keeps its workerId AND
+// pid, and is back in well under 10 s — the old workerBack never fired and timed out (exit 1) after
+// a successful swap.
+test('#2 embedded worker: same workerId + pid, fast respawn -> ok (jar listed with a fresh date)', async () => {
+  await withBroker({}, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '8', '--json']);
+    assert.equal(r.status, 0, r.all);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.status, 'ok');
+    assert.equal(j.listed, true);
+    assert.deepEqual(j.worker, { workerId: 'w1', pid: 100, respawn: 'same-worker' });
+    assert.ok(j.workerBackAfterSec < 5, `back after ${j.workerBackAfterSec}s`);
+  });
+});
+
+test('#2 the jar date may be an ISO string', async () => {
+  await withBroker({ jarDate: 'iso' }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '8', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).status, 'ok');
+  });
+});
+
+// #2 false positive (review P1): a failed `before` snapshot was swallowed (`.catch(() => [])`),
+// and the first worker seen then counted as "back" before the swap. Now: refuse, nothing uploaded.
+test('#2 the pre-push GET /api/workers fails -> exit 2, nothing uploaded (not swallowed)', async () => {
+  await withBroker({ workers: (st) => (st.workerCalls === 1 ? [503, { status: 503, error: 'Service Unavailable' }] : null) }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--json']);
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.stderr, /cannot read GET \/api\/workers before the push — not uploading/);
+    assert.equal(b.st.uploads.length, 0, 'never uploaded');
+  });
+});
+
+test('#2 --no-wait needs no worker snapshot', async () => {
+  await withBroker({ workers: () => [503, { status: 503 }] }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--no-wait', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).status, 'uploaded');
+    assert.equal(b.st.workerCalls, 0);
+  });
+});
+
+test('#2 a worker fresh but the jar still dated before the push -> stale, exit 1', async () => {
+  await withBroker({ jarDate: 'old' }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '1', '--json']);
+    assert.equal(r.status, 1, r.all);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.status, 'stale');
+    assert.equal(j.listed, true);
+    assert.match(r.stderr, /listed but dated .* before the push started/);
+  });
+});
+
+test('#2 an unreadable jar date -> unverified, exit 0, with a warning', async () => {
+  await withBroker({ jarDate: 'garbage' }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '1', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).status, 'unverified');
+    assert.match(r.stderr, /could not be confirmed by date/);
+  });
+});
+
+test('no worker heard from before --timeout -> exit 1 with the last snapshot', async () => {
   await withBroker({ respawn: 'never' }, async (b, t, run) => {
     const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '1', '--json']);
     assert.equal(r.status, 1, r.all);
-    assert.match(r.stderr, /no worker came back within 1s/);
+    assert.match(r.stderr, /no worker was heard from within 1s of the push/);
+    assert.match(r.stderr, /IS installed; the next run has no worker/);
     const j = JSON.parse(r.stdout);
     assert.equal(j.status, 'timeout');
     assert.equal(j.workerBackAfterSec, null);
@@ -307,7 +389,7 @@ test('no worker back before --timeout -> exit 1 with the last snapshot', async (
 
 test('worker back but the jar not listed -> exit 1, listed:false', async () => {
   await withBroker({ respawn: 'newId', listAfter: false }, async (b, t, run) => {
-    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--json']);
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '1', '--json']);
     assert.equal(r.status, 1, r.all);
     const j = JSON.parse(r.stdout);
     assert.equal(j.status, 'not-listed');
@@ -315,29 +397,81 @@ test('worker back but the jar not listed -> exit 1, listed:false', async () => {
   });
 });
 
-test('--no-wait returns right after the upload', async () => {
-  await withBroker({ respawn: 'never' }, async (b, t, run) => {
-    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--no-wait', '--json']);
+// #17 (P3): a broker that caps `size` leaves the jar outside the listing: that is "unverified", not "not listed"
+test('#17 the listing is short of total and the jar is not in it -> unverified, exit 0', async () => {
+  await withBroker({ capSize: 200 }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '1', '--json']);
     assert.equal(r.status, 0, r.all);
     const j = JSON.parse(r.stdout);
-    assert.equal(j.status, 'uploaded');
-    assert.ok(!b.st.seen.slice(b.st.seen.indexOf('POST /api/workers/upload-library') + 1).includes('GET /api/workers'));
+    assert.equal(j.status, 'unverified');
+    assert.match(r.stderr, /did not return every jar/);
   });
 });
 
-test('workerBack: new id, new pid, or lastSeen stale-then-fresh; epoch or age', () => {
+// #4 (P2): the wait loop rides out transport errors and 5xx, but not a 4xx (or an auth error)
+test('#4 a 5xx during the swap is ridden out; a 4xx in the wait loop stops it at once (exit 2)', async () => {
+  await withBroker({ workers: (st) => (st.swapped && st.workerCalls <= 3 ? [502, { status: 502 }] : null) }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '10', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(JSON.parse(r.stdout).status, 'ok');
+  });
+  await withBroker({ workers: (st) => (st.swapped ? [400, { status: 400, message: 'bad request' }] : null) }, async (b, t, run) => {
+    const started = Date.now();
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes', '--timeout', '60']);
+    assert.equal(r.status, 2, r.all);
+    assert.match(r.stderr, /400/);
+    assert.ok(Date.now() - started < 15_000, 'not polled for the whole timeout');
+    assert.equal(b.st.workerCalls, 2, 'the snapshot + one poll');
+  });
+});
+
+// #12 (P3): the refusal body goes through out.warn, bounded
+test('#12 the refusal body goes through out.warn; a huge one is cut', async () => {
+  await withBroker({ upload: 500 }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes']);
+    assert.equal(r.status, 1, r.all);
+    assert.match(r.stderr, /^! An unexpected error occurred\. Please retry$/m);
+  });
+  await withBroker({ upload: 'huge' }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'push', t.jar, '--yes']);
+    assert.equal(r.status, 1, r.all);
+    assert.ok(r.stderr.length < 4_000, `stderr is ${r.stderr.length} chars`);
+    assert.match(r.stderr, /… \(\d+ more chars\)/);
+  });
+});
+
+test('seenSince: a worker heard from after the call returned (lastSeen is an age in ms; an epoch is converted)', () => {
   const now = 2_000_000_000_000;
-  const before = [{ workerId: 'w1', pid: 1, lastSeen: now - 100 }];
-  assert.equal(workerBack(before, [{ workerId: 'w1', pid: 1, lastSeen: now - 100 }], {}, now), null);
-  assert.equal(workerBack(before, [{ workerId: 'w9', pid: 1, lastSeen: now }], {}, now).workerId, 'w9');
-  assert.equal(workerBack(before, [{ workerId: 'w1', pid: 2, lastSeen: now }], {}, now).pid, 2);
-  const s = {};
-  assert.equal(workerBack(before, [{ workerId: 'w1', pid: 1, lastSeen: now - 15_000 }], s, now), null);
-  assert.equal(workerBack(before, [{ workerId: 'w1', pid: 1, lastSeen: now - 1_000 }], s, now).workerId, 'w1');
-  const s2 = {}; // lastSeen as an age in ms
-  assert.equal(workerBack([{ workerId: 'a' }], [{ workerId: 'a', lastSeen: 12_000 }], s2, now), null);
-  assert.equal(workerBack([{ workerId: 'a' }], [{ workerId: 'a', lastSeen: 300 }], s2, now).workerId, 'a');
-  assert.equal(workerBack([], [{ workerId: 'a' }], {}, now).workerId, 'a', 'no worker before: any worker is back');
+  const since = now - 3_000; // the call returned 3 s ago
+  assert.equal(seenSince([{ workerId: 'w1', lastSeen: 500 }], since, now).workerId, 'w1', 'heard 0.5 s ago');
+  assert.equal(seenSince([{ workerId: 'w1', lastSeen: 3_500 }], since, now), null, 'heard BEFORE the call returned');
+  assert.equal(seenSince([{ workerId: 'w1', lastSeen: 12_000 }], now - 60_000, now), null, 'stale');
+  assert.equal(seenSince([{ workerId: 'w1', lastSeen: now - 200 }], since, now).workerId, 'w1', 'epoch');
+  assert.equal(seenSince([{ workerId: 'w1' }, { workerId: 'w2', lastSeen: null }], since, now), null, 'no lastSeen');
+  assert.equal(seenSince([{ workerId: 'a', lastSeen: 900 }, { workerId: 'b', lastSeen: 100 }], since, now).workerId, 'b', 'the freshest');
+  assert.equal(seenSince([], since, now), null);
+});
+
+test('respawnKind / dateMs / installState', () => {
+  const before = [{ workerId: 'w1', pid: 1 }];
+  assert.equal(respawnKind(before, { workerId: 'w1', pid: 1 }), 'same-worker');
+  assert.equal(respawnKind(before, { workerId: 'w1', pid: 2 }), 'new-pid');
+  assert.equal(respawnKind(before, { workerId: 'w9', pid: 1 }), 'new-worker');
+  assert.equal(dateMs(1_790_000_000_000), 1_790_000_000_000);
+  assert.equal(dateMs('1790000000000'), 1_790_000_000_000);
+  assert.equal(dateMs('2026-10-01T00:00:00Z'), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(dateMs({ value: '2026-10-01T00:00:00Z', type: 'date' }), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(dateMs('n/a'), null);
+  assert.equal(dateMs(null), null);
+  const names = new Set(['x.jar']);
+  const libs = (d, total = 1) => ({ libraries: [{ jarName: 'x.jar', lastModificationDate: d }], total });
+  assert.equal(installState(libs(1000), names, 1000).state, 'installed');
+  assert.equal(installState(libs(1000 - 20_000), names, 1000).state, 'installed', 'within the clock-skew allowance');
+  assert.equal(installState(libs(1000 - 60_000), names, 1000).state, 'stale');
+  assert.equal(installState(libs('?'), names, 1000).state, 'undated');
+  assert.equal(installState(libs(1), names, null).state, 'installed', 'a restore checks no date');
+  assert.equal(installState({ libraries: [], total: 0 }, names, 1).state, 'absent');
+  assert.equal(installState({ libraries: [], total: 5 }, names, 1).state, 'incomplete');
 });
 
 // --- BDD 5: restore — candidates, pre-check, restore-library query, wait --------------------------
@@ -382,11 +516,62 @@ test('restore without --from lists the candidates (read-only); an unknown --from
   });
 });
 
+// #7 (P2): the library-versions element shape is unverified live; an unknown shape must not block
+// the one command meant for an emergency rollback, and --force must skip the candidate check
+test('#7 restore: a {version, path} element is read by its path basename', async () => {
+  await withBroker({ versions: [{ version: '1.7', path: '/opt/fast2/worker-libs/versions/lib-007.jar.old' }] }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'restore', 'lib-007.jar', '--from', 'lib-007.jar.old', '--yes', '--timeout', '5', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.equal(b.st.restores.length, 1);
+    assert.doesNotMatch(r.stderr, /not recognised/);
+  });
+});
+
+test('#7 restore: an unknown element shape prints the raw element and does not block', async () => {
+  await withBroker({ versions: [{ v: 1, file: { n: 'lib-007.jar.old' } }] }, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'restore', 'lib-007.jar', '--from', 'lib-007.jar.old', '--yes', '--timeout', '5', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.match(r.stderr, /element shape not recognised — first element: \{"v":1,"file":\{"n":"lib-007\.jar\.old"\}\}/);
+    assert.match(r.stderr, /the broker validates jarToRestore/);
+    assert.deepEqual(b.st.restores, [{ jarToVersion: 'lib-007.jar', jarToRestore: 'lib-007.jar.old' }]);
+  });
+});
+
+test('#7 restore --force skips the candidate check (unknown --from, or an empty list)', async () => {
+  await withBroker({}, async (b, t, run) => {
+    const r = await run(['f2', 'lib', 'restore', 'lib-007.jar', '--from', 'other.jar.old', '--yes', '--force', '--timeout', '5']);
+    assert.equal(r.status, 0, r.all);
+    assert.match(r.stderr, /--force: "other\.jar\.old" is not a listed rollback candidate/);
+    assert.equal(b.st.restores.length, 1);
+  });
+  await withBroker({ versions: [] }, async (b, t, run) => {
+    const refused = await run(['f2', 'lib', 'restore', 'lib-007.jar', '--from', 'lib-007.jar.old', '--yes']);
+    assert.equal(refused.status, 2, refused.all);
+    assert.match(refused.stderr, /--force skips this check/);
+    const forced = await run(['f2', 'lib', 'restore', 'lib-007.jar', '--from', 'lib-007.jar.old', '--yes', '--force', '--timeout', '5']);
+    assert.equal(forced.status, 0, forced.all);
+    assert.equal(b.st.restores.length, 1);
+  });
+});
+
 test('versionNames accepts strings, objects and a {collection} envelope', () => {
   assert.deepEqual(versionNames(['a.jar.old']), ['a.jar.old']);
   assert.deepEqual(versionNames([{ jarName: 'a.jar.old' }, { name: 'b.jar.old' }]), ['a.jar.old', 'b.jar.old']);
   assert.deepEqual(versionNames({ collection: [{ fileName: 'c.jar.old' }] }), ['c.jar.old']);
+  assert.deepEqual(versionNames([{ version: '1', path: '/w/versions/d.jar.old' }, { version: '2', path: 'C:\\w\\e.jar.old' }]), ['d.jar.old', 'e.jar.old']);
+  assert.deepEqual(versionNames([{ v: 1 }]), [], 'unknown shape -> nothing (the caller shows it raw)');
   assert.deepEqual(versionNames(null), []);
+});
+
+// #14: f2 ls --campaigns and f2 lib share one campaign-status loop (campaignStatuses)
+test('#14 f2 ls --campaigns lists every campaign with its status and flags a wedged Starting', async () => {
+  await withBroker({ campaigns: { Done_Run1: 'Finished', Wedged_Run2: 'Starting' } }, async (b, t, run) => {
+    const r = await run(['f2', 'ls', '--campaigns', '--json']);
+    assert.equal(r.status, 0, r.all);
+    assert.deepEqual(JSON.parse(r.stdout).campaigns, ['Done_Run1', 'Wedged_Run2']);
+    assert.match(r.stderr, /campaign "Wedged_Run2" is wedged in Starting/);
+    assert.doesNotMatch(r.stderr, /Done_Run1/);
+  });
 });
 
 // --- lock mode: ls reads, a gated write locks only with --yes ------------------------------------
