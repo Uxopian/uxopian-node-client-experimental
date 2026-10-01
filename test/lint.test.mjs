@@ -10,8 +10,10 @@ import {
   lintTagValues, tagclassIndex, promptVariables, promptCallSites, lintPromptVariables,
   uninterpolatedVariables,
   promptProviderOrder, lintIncludeOrder, includeOrders, declaredIncludeOrder,
-  resourceSizes, sizeWarnings, HARD_LIMIT_BYTES,
+  resourceSizes, sizeWarnings, HARD_LIMIT_BYTES, lintClassReferences, classModelReferences,
 } from '../lib/lint.mjs';
+import pushCmd from '../lib/commands/push.mjs';
+import verifyCmd from '../lib/commands/verify.mjs';
 
 /** Build a throwaway package from {path: contents} plus a manifest and registry resources. */
 function pkgOf({ manifest = {}, resources = [], files = {} }) {
@@ -403,4 +405,137 @@ test('a correctly wrapped prompt raises no interpolation finding', () => {
   });
   assert.deepEqual(lintPromptVariables(pkg).filter((f) => f.kind === 'not-interpolated'), []);
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// #117 — class-model references (a vfclass naming an untracked tag class -> F00205 mid-push)
+// ---------------------------------------------------------------------------
+
+/** po package: PoCase (documentclass) + PoView (vfclass) referencing tag classes / a category. */
+function refsPkg({ untrackedFile = true, extra = {}, manifest = {} } = {}) {
+  return pkgOf({
+    manifest,
+    resources: [
+      { kind: 'fd.documentclass', id: 'PoCase', path: 'fd/classes/PoCase.json', policy: 'managed' },
+      { kind: 'fd.vfclass', id: 'PoView', path: 'fd/vfclasses/PoView.json', policy: 'managed' },
+      { kind: 'fd.tagclass', id: 'PoRef', path: 'fd/tagclasses/PoRef.json', policy: 'managed' },
+      { kind: 'fd.tagclass', id: 'Shared', path: 'fd/tagclasses/Shared.json', policy: 'external' },
+      { kind: 'fd.tagclass-delta', id: 'CmStatus', path: 'fd/tagclass-deltas/CmStatus.delta.json', policy: 'managed' },
+      { kind: 'fd.tagcategory', id: 'PoMeta', path: 'fd/tagcategories/PoMeta.json', policy: 'managed' },
+      { kind: 'fd.vfinstance', id: 'PoViewFolder', path: 'fd/vfinstances/PoViewFolder.json', policy: 'managed' },
+    ],
+    files: {
+      'fd/classes/PoCase.json': { id: 'PoCase', category: 'DOCUMENT', tagCategories: ['PoMeta'],
+        tagReferences: [{ tagName: 'PoRef' }, { tagName: 'Shared' }, { tagName: 'CmStatus' }, { tagName: 'CmOwner' }] },
+      'fd/vfclasses/PoView.json': { id: 'PoView', category: 'VIRTUAL_FOLDER', tagReferences: [{ tagName: 'PoStage' }, { tagName: 'PoRef' }] },
+      'fd/tagclasses/PoRef.json': tagclassFile('PoRef', 'STRING'),
+      'fd/tagclasses/Shared.json': tagclassFile('Shared', 'STRING'),
+      'fd/tagclass-deltas/CmStatus.delta.json': { tagclass: 'CmStatus', allowedValues: [] },
+      'fd/tagcategories/PoMeta.json': { id: 'PoMeta', tags: ['PoRef', 'RegistrationOrder'] },
+      'fd/vfinstances/PoViewFolder.json': { id: 'PoViewFolder', category: 'VIRTUAL_FOLDER', data: { classId: 'PoView' } },
+      ...(untrackedFile ? { 'fd/tagclasses/PoStage.json': tagclassFile('PoStage', 'STRING') } : {}),
+      ...extra,
+    },
+  });
+}
+
+test('class references: registry, external, tag-class delta and dependency prefixes resolve; untracked and unknown are reported', () => {
+  const { pkg, dir } = refsPkg({ manifest: { dependencies: { cm: '*' } } });
+  try {
+    const refs = classModelReferences(pkg);
+    assert.ok(refs.some((r) => r.from.id === 'PoViewFolder' && r.kind === 'fd.vfclass' && r.id === 'PoView'));
+    assert.ok(refs.some((r) => r.from.id === 'PoCase' && r.kind === 'fd.tagcategory' && r.id === 'PoMeta'));
+    const f = lintClassReferences(pkg);
+    // CmOwner: dependency prefix (cm) -> theirs; CmStatus: a delta on the product class; Shared: external
+    assert.deepEqual(f.map((x) => `${x.status} ${x.from} -> ${x.ref}`).sort(), [
+      'unresolved fd.tagcategory/PoMeta -> fd.tagclass/RegistrationOrder',
+      'untracked fd.vfclass/PoView -> fd.tagclass/PoStage',
+    ]);
+    const u = f.find((x) => x.status === 'untracked');
+    assert.equal(u.file, 'fd/tagclasses/PoStage.json');
+    assert.match(u.message, /untracked: fd\/tagclasses\/PoStage\.json is not in registry\.json/);
+    assert.match(u.message, /register it: add \{"kind":"fd\.tagclass","id":"PoStage"/);
+    assert.match(u.message, /uxc adopt fd\.tagclass PoStage/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('class references: without the dependency declared, its prefix is no evidence; entries narrow the referencing side', () => {
+  const { pkg, dir } = refsPkg({ untrackedFile: false });
+  try {
+    const f = lintClassReferences(pkg);
+    assert.ok(f.some((x) => x.ref === 'fd.tagclass/CmOwner' && x.status === 'unresolved'));
+    // no local file -> unresolved (may exist on the server), never "untracked"
+    assert.ok(f.some((x) => x.ref === 'fd.tagclass/PoStage' && x.status === 'unresolved'));
+    // only the documentclass is being checked: the vfclass's references are not its business
+    const only = lintClassReferences(pkg, [pkg.entry('fd.documentclass', 'PoCase')]);
+    assert.ok(only.every((x) => x.from === 'fd.documentclass/PoCase'));
+    // a retired / external referencing entry is never pushed: not checked
+    pkg.entry('fd.vfclass', 'PoView').retired = true;
+    assert.ok(lintClassReferences(pkg).every((x) => x.from !== 'fd.vfclass/PoView'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** Run a command module in-process: fail() exits are caught; output is collected. */
+async function runCmd(cmd, ctx) {
+  const realExit = process.exit; const realErr = console.error; const prevCode = process.exitCode;
+  const lines = []; const warns = []; let err = ''; let exit = null; let result = null;
+  process.exit = (c) => { throw Object.assign(new Error('exit'), { exitCode: c }); };
+  console.error = (m) => { err += `${m}\n`; };
+  try {
+    await cmd.run({
+      flags: {}, args: [], policy: {}, target: { name: 'mock' },
+      out: { line: (l) => lines.push(l), warn: (w) => warns.push(w), note() {}, result: (r) => { result = r; } },
+      connect() {},
+      ...ctx,
+    });
+  } catch (e) { if (e.exitCode == null) throw e; exit = e.exitCode; }
+  finally { process.exit = realExit; console.error = realErr; }
+  const code = process.exitCode; process.exitCode = prevCode;
+  return { lines, warns, err, exit, code, result };
+}
+
+const deadClients = {
+  core: new Proxy({}, { get: () => async () => { throw new Error('NO SERVER IN THIS TEST'); } }),
+  gateway: new Proxy({}, { get: () => async () => { throw new Error('NO SERVER IN THIS TEST'); } }),
+};
+
+test('verify --offline: an untracked reference FAILS, an unresolved one warns', async () => {
+  const { pkg, dir } = refsPkg();
+  try {
+    const r = await runCmd(verifyCmd, { flags: { offline: true }, requirePkg: () => pkg });
+    assert.equal(r.code, 1);
+    assert.ok(r.result.failures.some((m) => /fd\.vfclass\/PoView: .*untracked: fd\/tagclasses\/PoStage\.json/.test(m)), r.lines.join('\n'));
+    assert.ok(r.warns.some((w) => /RegistrationOrder/.test(w)));
+    assert.ok(!r.result.failures.some((m) => /RegistrationOrder/.test(m)), 'a platform tag class may exist on the target');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('push pre-flight: refuses a pushed class whose reference is only an untracked file; --force goes past it', async () => {
+  const { pkg, dir } = refsPkg();
+  try {
+    const refused = await runCmd(pushCmd, { args: ['PoView'], requirePkg: () => pkg, clients: deadClients });
+    assert.equal(refused.exit, 2);
+    assert.match(refused.err, /refused — 1 pushed resource reference.*UNTRACKED/);
+    assert.match(refused.err, /fd\/tagclasses\/PoStage\.json/);
+    assert.match(refused.err, /--force/);
+    // the documentclass does not reference PoStage: its push is not blocked
+    const other = await runCmd(pushCmd, { args: ['PoCase'], requirePkg: () => pkg, clients: deadClients });
+    assert.doesNotMatch(other.err, /refused — .*UNTRACKED/);
+    // --force: past the pre-flight (the dead client is what stops it), the finding still said aloud
+    const forced = await runCmd(pushCmd, { args: ['PoView'], flags: { force: true }, requirePkg: () => pkg, clients: deadClients });
+    assert.doesNotMatch(forced.err, /refused — .*UNTRACKED/);
+    assert.ok(forced.warns.some((w) => /PoStage.*--force/.test(w)), forced.warns.join('\n'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('push --all: one warning lists the untracked files it skips, then the reference pre-flight refuses', async () => {
+  const { pkg, dir } = refsPkg({ extra: { 'fd/tagclasses/PoLoose.json': tagclassFile('PoLoose', 'STRING') } });
+  try {
+    const r = await runCmd(pushCmd, { flags: { all: true }, requirePkg: () => pkg, clients: deadClients });
+    const skip = r.warns.filter((w) => /push --all skips/.test(w));
+    assert.equal(skip.length, 1);
+    assert.match(skip[0], /skips 2 untracked file\(s\) not in registry\.json: fd\/tagclasses\/PoLoose\.json, fd\/tagclasses\/PoStage\.json/);
+    assert.equal(r.exit, 2);
+    assert.match(r.err, /PoStage/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
