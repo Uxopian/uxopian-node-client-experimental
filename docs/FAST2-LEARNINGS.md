@@ -467,6 +467,11 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
   including `campaign`, `category` (`<logger>:<line>`), `exception` (full stack trace as a string).
 - `GET /api/workers/libraries?size=<n>` → `{total, collection:[{jarName, groupId, artifactId,
   version, source, lastModificationDate, creationDate, fileSize, versionsLibs}]}`.
+- **Paging, verified live** (2026-10-01, uxc `6fcf1a1`, `uxc f2 lib ls --json`): **401 of 401**
+  jars returned (401 unique names) in 3 `GET /api/workers/libraries` calls, all 200, and the
+  "did not page as expected" warning did not fire. The byte counts (50'104, 50'104, 98'335) fit
+  page 0, a page 1 that repeats page 0 (`page` not honoured), then the one `?size=<total>`
+  fallback — so that fallback is what reads past the first 200 on rc5.
 - From the OpenAPI only (not called): `POST /api/workers/upload-library` (multipart, required field
   `file`; 200 / 400 "Invalid file provided" / 500 — no "campaign running" code documented),
   `POST /api/workers/restore-library?jarToVersion=&jarToRestore=`,
@@ -478,6 +483,12 @@ message about failed logins although none failed. Fixed in uxc by §F22's rule.
   that refusal is unverified (see below). `uxc doctor --f2` is stricter and also counts `Starting`.
 - `OPTIONS /api/workers/upload-library` → 403 with or without CORS preflight headers: that is the
   security filter, so OPTIONS proves nothing about a route. The OpenAPI is the source of truth.
+- How `uxc f2 lib push|restore` confirms the swap (worker identity proves nothing: an **embedded**
+  worker runs in the broker JVM, so its `pid` is the broker's and its `workerId` may stay): the jar
+  is listed — for a push with `lastModificationDate` ≥ the upload start (30 s clock-skew
+  allowance; a restore moves a file, which keeps its date, so only the name is checked) — **and** a
+  worker was heard from after the call returned (asked-at − `lastSeen` > the 200, `lastSeen` < 5 s).
+  The pre-swap `GET /api/workers` must answer, or uxc does not send the write.
 
 ## §F33 — Campaigns and catalog (read-only)
 - `GET /api/campaigns/search-by-pattern` → `{total, collection:[<names>]}` — names only, no
@@ -514,9 +525,15 @@ Verified read-only on the rc5 broker, on two existing `Finished` campaigns (1 ex
 - **Two campaigns** (`campaigns=<c1>,<c2>&mapIds=<m1>,<m2>`, comma lists paired in order) →
   200 octet-stream with a **`.zip`** filename: a deflated zip (general-purpose flag `0x0808`: data
   descriptor + UTF-8 names) holding **one `<campaign>_exceptions.csv` per campaign**. Read the body
-  as bytes, never as text — a UTF-8 decode corrupts it. The entry names were read live; the
-  entries' CSV content was not (the first capture was text-decoded), so it is assumed to be the
-  single-campaign format.
+  as bytes, never as text — a UTF-8 decode corrupts it.
+- **Zip content, verified live** (2026-10-01, uxc `6fcf1a1`, `uxc f2 exceptions <c1> <c2>` on two
+  `Finished` rc5 campaigns, 1 exception each): `unzip` lists 2 entries, and each CSV is
+  **byte-identical** (`cmp`) to the single-campaign export of that campaign — the same
+  **27-column** header (`Campaign, Step, TraceId, Status, ExceptionType, Message, Punnet Id,
+  Document Id, punnet.data.….value, punnet.documents.data.…`). uxc counted 2 rows, as Python `csv`
+  did (1 + 1; 3 physical lines each because of a multi-line `Message`).
+- An export with **no entry** is a 22-byte EOCD-only zip (it starts with `PK\x05\x06`, not
+  `PK\x03\x04`): uxc reads either signature (and a `.zip` filename) as a zip and reports 0 rows.
 - It is a file, never a count: `uxc f2 exceptions` counts rows and (step, class) pairs client-side.
 
 ## §F36 — `uxc add f2.map --from-xml`: the broker conversion, end to end (rc5, 2026-10-01)
@@ -526,10 +543,18 @@ Verified through `importXml()` (lib/kinds/f2-map.mjs) on a broker `2026.0.0-rc5`
   `GET /api/maps/{id}` afterwards → 404; the pattern search finds nothing. No follow-up search needed.
 - Preserved in the JSON: all 6 step ids (in order), every step's `graphic.x/y`, both link
   conditions (`…conditions.Otherwise`, `…conditions.PunnetInException`).
-- The JSON echo has **no `sharedObjectConfigurations` key** (top level: `id, name, isReadOnly,
-  mapVersion, mapVersionsSerieId, mapDescription, steps`), although that XML carries a
-  non-self-closing `<sharedObjectConfigurations>` element. Whether it held MAP-scoped entries that
-  the JSON drops was NOT checked: open (see the list below).
+- **Shared objects survive in the JSON**, under the top-level key **`sharedObjectConfigurations`**
+  (verified live 2026-10-01, broker `2026.0.0-rc5`, uxc `6fcf1a1`: `GET /api/maps/download/{id}`
+  vs `GET /api/maps/{id}` on all 9 maps of the broker). On the **5 maps that carry shared objects**
+  (DEMO-OPBank-1-Migration and DEMO-OPBank-2-Delta-Migration, 2 entries each, `DctmConnectionProvider`;
+  TEMPLATE-Documentum-multi-target, `DctmConnectionProvider`; TEMPLATE-FileNet-To-OpenText,
+  `p8.FileNetConnectionProvider`; TEMPLATE-Flower-archiving, `FlowerDocsConnectionProvider`) the
+  JSON array `[{name, objectConfiguration{className, scope, singleton, fullyConfigured, fields[]}}]`
+  has **the same entry names, classes and field names** as the XML
+  `<sharedObjectConfigurations><map class="linked-hash-map"><entry>…`. Encoded `xr1c/` passwords
+  appear in both forms. **DefaultMap has none**: its XML has no `<sharedObjectConfigurations>`
+  element at all and its JSON no `shared` key — which is why the first check, on DefaultMap,
+  found nothing. `--from-xml` therefore keeps map-scoped shared objects.
 - A hand-written minimal XML (the guide's `Random.map.xml` shape + an `Otherwise` condition) got
   **500** with the generic "An unexpected error occurred. Check logs…" text and no field-level
   message; nothing was created. Start from a downloaded/shipped XML, not a hand-written one.
@@ -541,16 +566,13 @@ Out of scope of a read-mostly probe; verify on a throwaway object before relying
 - The `upload-library` / `restore-library` refusal status while a campaign is running (FAST-5880
   asks for 409 + `{code:"CAMPAIGN_RUNNING"}`). Until it is recorded, `uxc f2 lib push|restore`
   checks for a Started/Starting campaign first and shows any non-2xx verbatim (`classifyRefusal`).
-- The `library-versions/{name}` element shape, the name a restored `.old` jar is listed under, and
-  whether a respawned worker keeps its `workerId` (uxc also accepts a new `pid` or a stale-then-fresh
-  `lastSeen`, `workerBack`).
-- The paging parameters of `GET /api/workers/libraries`. 2026-10-01, rc5: `?page=0&size=200` →
-  200 rows of `total:401`, and `?page=1&size=200` did NOT return the next 200 (repeated or empty).
-  `uxc f2 lib ls` then makes one `?size=<total>` call; that fallback is not yet verified live.
+- The `library-versions/{name}` element shape (uxc reads `jarName|name|fileName|basename(path)`,
+  prints an unknown element raw and does not block on it; `--force` skips the candidate check),
+  the name a restored `.old` jar is listed under, and whether a respawned worker keeps its
+  `workerId` (uxc no longer relies on it, §F32).
 - The worker-restart response (200 vs 207 multi-status).
-- The results file format of a run (`step/{stepId}/download-result`). The exceptions export is §F35;
-  the content of the CSVs inside its multi-campaign zip is still to be read once as bytes.
+- The results file format of a run (`step/{stepId}/download-result`). The exceptions export,
+  multi-campaign zip content included, is §F35.
 - Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
 - A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
-- Whether the map JSON carries MAP-scoped shared objects at all (§F36: absent from the echo of a
-  map whose XML has a `<sharedObjectConfigurations>` element) — if not, `--from-xml` loses them.
+
