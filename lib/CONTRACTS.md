@@ -432,13 +432,17 @@ every alias.
 ## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
 
 ```js
-export function f2Surface(target)   // target.f2 base + target.f2User/f2Password -> client
+export function f2Surface(target, {loginCooldownMs = 30_000}?)  // target.f2 + f2User/f2Password -> client
+export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 //   {base, login(), req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
 //    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
 //    on a status), text(path) -> string}
 ```
 
-Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. A status
+Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. Re-auth rule
+(§F22/§F23): a 401 -> one login + one replay; a GENERIC 403 -> one login + one replay, at most once
+per token and never inside the login cooldown; if the fresh token still gets the generic 403, it is
+real for the rest of the process. Any other 403 -> no login, surfaced with the broker's body. A status
 >= 400 throws `HttpError` carrying the broker's body (`get`/`post`/`put`/`del`/`req`/`text`).
 `DELETE /api/maps/{id}` answers **200 with an empty body** (§F29), so `del()` resolves to `undefined`
 on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
