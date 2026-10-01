@@ -45,6 +45,12 @@ uxc target add local --core https://host/core --ai …/uxopian-ai --scope IRIS -
   resources, and `push` says so instead of failing obscurely. No derivation from the Core host:
   fast2 is usually a different machine entirely, and §61's split-port lesson says derivation lies.
 - Password handling follows the fd.demo precedent: injected via env, never committed.
+- **Fast2-only target** (FAST-5875): `--f2 <url> --f2-user <email> --f2-password <p>` and NO
+  FlowerDocs flag at all is a valid target (`fd: false`, `core`/`gui`/`gateway` = `null`), also
+  from the `UXC_F2_*` env vars alone. `uxc f2 …` and `doctor` (which then runs the f2 leg and skips
+  the FlowerDocs / AI checks) work; a FlowerDocs / AI client refuses through one guard
+  (`lib/http.mjs` `noSurface`) with "target <name> has no FlowerDocs surface" before any request.
+  A target with SOME FlowerDocs field must still have all of them.
 
 ## 3. New client surface: `ctx.clients.f2`
 

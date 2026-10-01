@@ -448,6 +448,12 @@ real for the rest of the process. Any other 403 -> no login, surfaced with the b
 on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
 call site. Upload answers 201 + the full map (§F25).
 
+Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`):
+`createClients` returns `noSurface(target, product)` for `core`, `gui` and `gateway` — a Proxy
+whose every property read throws `Error{code:'UXC_NO_SURFACE'}` "target <name> has no FlowerDocs
+surface …" before any request; `auth()` and `cacheClear()` reject the same way. Commands never
+null-check `ctx.clients.core`: the guard is the one place this is decided.
+
 ## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
 
 ```js
@@ -558,8 +564,8 @@ Result shapes (a `[...]` is an array of the objects shown; `…` = adapter/serve
 | completion --install | `{installed, shell}`                                                  |
 | version            | `{version}`                                                             |
 | init               | `{dir, manifest, created, extension?}`                                  |
-| target add         | `{name, core, ai, gui, f2, scope, default}`                             |
-| target ls          | `[{def, name, core, ai, scope, user, password:'••••••'}]` (masked)      |
+| target add         | `{name, core, ai, gui, f2, scope, default}` (Fast2-only: core/ai/gui/scope `null`) |
+| target ls          | `[{def, name, core, ai, scope, user, password:'••••••', f2}]` (masked)  |
 | target use         | `{default}`                                                             |
 | scope get          | scope object · `{id, exists:false}` (exit 1)                            |
 | scope create       | `{action:'created'|'updated', scope}`                                   |
