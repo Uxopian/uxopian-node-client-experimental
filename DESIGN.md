@@ -1173,7 +1173,7 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
   - **Hash stability**: alone on the target (or with installed packages that contribute nothing to the
     class and whose prefixes no value carries) the view is the object as read — byte-identical to 0.25.0
     (verified for every resource's local hash and every tag class's server-form hash on
-    examples/ct-package and gerflor: 0 differences). Offline tests: `test/shared-tagclass.test.mjs`.
+    examples/ct-package and a customer package: 0 differences). Offline tests: `test/shared-tagclass.test.mjs`.
   - Still recommended: after a product upgrade that REPLACES the class some other way (manual edit,
     another tool), re-push every extension's deltas; `status --remote` in the extension detects a wipe.
 - **Offline checks** (`lintTagDeltas`, run by `verify` and by `push` validation):
