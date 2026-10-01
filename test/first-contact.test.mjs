@@ -100,6 +100,11 @@ test('the guard passes: explicit --target, env target, a pin, or recorded state 
   withSandbox({}, (sb) => {
     assert.doesNotMatch(run(sb, ['push', '--all', '--target', 'globalbox']).stderr, /pins no target/);
     assert.doesNotMatch(run(sb, ['push', '--all'], { UXC_TARGET: 'other' }).stderr, /pins no target/);
+  });
+  // a URL-defined instance with NO global default to merge onto is an explicit, per-shell choice
+  // (with a default, partial URL env merges onto it and stays guarded — see the next test)
+  withSandbox({}, (sb) => {
+    writeFileSync(join(sb.home, '.uxopian', 'targets.json'), JSON.stringify({ targets: {} }));
     assert.doesNotMatch(run(sb, ['push', '--all'], { UXC_URL: DEAD, UXC_SCOPE: 'S', UXC_USER: 'u', UXC_PASSWORD: 'p' }).stderr, /pins no target/);
   });
   withSandbox({ files: { '.uxc/target': 'globalbox\n' } }, (sb) => assert.doesNotMatch(run(sb, ['push', '--all']).stderr, /pins no target/));
@@ -241,5 +246,20 @@ test('uxc doctor --offline warns "unknown flag --offline for doctor" on stderr (
     assert.doesNotMatch(r.stdout, /unknown flag/);
     const ok = run(sb, ['verify', '--offline', '--full']);
     assert.doesNotMatch(ok.stderr, /unknown flag/);
+  });
+});
+
+test('a PARTIAL env (UXC_URL / UXC_CORE_URL without UXC_TARGET) over a global default is still the default: writes refused (0.24.1 review)', () => {
+  for (const env of [{ UXC_URL: 'http://127.0.0.1:2' }, { UXC_CORE_URL: 'http://127.0.0.1:2/core' }]) {
+    withSandbox({}, (sb) => {
+      const r = run(sb, ['cache-clear'], env);
+      assert.notEqual(r.status, 0, JSON.stringify(env));
+      assert.match(r.stderr + r.stdout, /pins no target and has never been used with "globalbox"/, JSON.stringify(env));
+    });
+  }
+  // UXC_TARGET names the target explicitly: the caller chose it, the guard does not apply
+  withSandbox({}, (sb) => {
+    const r = run(sb, ['cache-clear'], { UXC_TARGET: 'globalbox' });
+    assert.doesNotMatch(r.stderr + r.stdout, /pins no target/);
   });
 });
