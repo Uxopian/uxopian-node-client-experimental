@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
-import { conversionName, findLeakedSecrets } from '../lib/kinds/f2-map.mjs';
+import { conversionName, findLeakedSecrets, importXml } from '../lib/kinds/f2-map.mjs';
+import { f2Surface } from '../lib/http.mjs';
 
 const UXC = resolve('bin/uxc.mjs');
 const KEYS = ['UXC_TARGET', 'UXC_URL', 'UXC_CORE_URL', 'UXC_AI_URL', 'UXC_GUI_URL', 'UXC_SCOPE', 'UXC_USER',
@@ -338,4 +339,17 @@ test('--from-xml: refused offline for another kind, a missing file, or a non-XML
     assert.match(bad.stderr, /does not look like a \.map\.xml/);
     assert.equal(b.state.calls.length, 0, 'no network call');
   } finally { b.close(); w.cleanup(); }
+});
+
+test('importXml (library): a caller-chosen throwaway name is honoured and still deleted', async () => {
+  const b = await stubBroker();
+  try {
+    const target = { name: 'zz', f2: b.env.UXC_F2_URL, f2User: b.env.UXC_F2_USER, f2Password: b.env.UXC_F2_PASSWORD };
+    const ctx = { clients: { f2: f2Surface(target) }, target };
+    const res = await importXml(ctx, 'ZzFoo', Buffer.from(XML), { tmpName: 'ZzProbe_1' });
+    assert.equal(b.state.uploads[0].name, 'ZzProbe_1');
+    assert.deepEqual(res.throwaway, { name: 'ZzProbe_1', mapId: 'tmp-1', deleted: true });
+    assert.equal(res.local.obj.name, 'ZzFoo');
+    assert.equal(b.state.maps.size, 0);
+  } finally { b.close(); }
 });
