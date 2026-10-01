@@ -1,7 +1,8 @@
 # FAST2-DESIGN — fast2 as a third product surface in uxc
 
-Status: **plan** (Phase 1). Every mechanic cited here was verified live on a local
-`fast2-complete-package-2026` broker `2026.0.0-rc4` on 2026-08-04 and recorded in
+Status: **shipped** in 0.14.0 (`f2.map`, the `f2` target surface, `uxc f2 ls|run`, `doctor --f2`);
+re-verified on `2026.0.0-rc5` on 2026-10-01 (§F21–§F33). Every mechanic cited here was verified
+live on a local `fast2-complete-package-2026` broker `2026.0.0-rc4` on 2026-08-04 and recorded in
 [docs/FAST2-LEARNINGS.md](./docs/FAST2-LEARNINGS.md) (§F1–§F12). Nothing below is guessed.
 
 **Goal**: a uxopian package can hold **fast2 maps** alongside its FlowerDocs and Uxopian-AI
@@ -13,8 +14,8 @@ map that feeds it.
 
 ## 1. Why this fits the existing architecture (and where it does not)
 
-fast2 is the **third product**, after `flowerdocs` and `uxopian-ai`. The reserved slots already
-exist: `DIALECTS.fast2` (`lib/dialects.mjs:46`), the `FAST2-LEARNINGS.md` slot (now filled), and
+fast2 is the **third product**, after `flowerdocs` and `uxopian-ai`. Its slots
+are filled: `DIALECTS.fast2` (`lib/dialects.mjs:46`), `docs/FAST2-LEARNINGS.md`, and
 `manifest.products`. Three things are genuinely new:
 
 | | flowerdocs / uxopian-ai | fast2 |

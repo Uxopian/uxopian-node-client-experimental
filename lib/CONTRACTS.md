@@ -429,6 +429,21 @@ alias resolves to a real module and shadows none; every flag a module reads (`fl
 `--ignore-*`-covered, or a recorded alias; destructive gates as above; help and completion list
 every alias.
 
+## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
+
+```js
+export function f2Surface(target)   // target.f2 base + target.f2User/f2Password -> client
+//   {base, login(), req(method, path, body?, opts?) -> response, get/post/put/del(path, …) -> json,
+//    tryGet(path) -> json | null (404), raw(method, path, body?, opts?) -> response (never throws
+//    on a status), text(path) -> string}
+```
+
+Single JSON objects (no Core array wrapping), `Authorization: Bearer <accessToken>`. A status
+>= 400 throws `HttpError` carrying the broker's body (`get`/`post`/`put`/`del`/`req`/`text`).
+`DELETE /api/maps/{id}` answers **200 with an empty body** (§F29), so `del()` resolves to `undefined`
+on success. Summary rows carry `id:{mapId}`, map bodies a flat `id` (§F30) — normalise at the
+call site. Upload answers 201 + the full map (§F25).
+
 ## lib/commands/api.mjs — raw passthrough (#96, BACKLOG-AGENTIC §27 item 3)
 
 ```js

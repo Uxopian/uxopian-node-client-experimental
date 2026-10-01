@@ -333,3 +333,158 @@ A link is `{name, target, condition}` where `condition` wraps an objectConfigura
 - `com.fast2.filesystem.DeleteFileFromSystem` (`pathOfFileToDelete`) deletes the source outright.
 - Remember `security.allowed.directories` in `config/application.properties`: when set, the worker
   may only touch listed directories — a move to an unlisted folder fails at run time.
+
+---
+
+**§F21–§F33 verified 2026-10-01** on a broker `2026.0.0-rc5` (`fast2-broker-rest-server`, built
+`2026-09-14`), embedded worker, authentication on. REST only (no shell on the host); every write
+used a throwaway `UXC_A0_probe_*` map, and all of them were deleted afterwards (pattern search
+`^UXC_A0.*` → `{"total":0}`). No campaign was started, no library uploaded, no worker restarted.
+
+## §F21 — Login, token lifetimes and refresh (rc5)
+- `POST /api/auth/login` body `{email, password}` plus an optional `tenantId` (OpenAPI
+  `AuthenticationRequest`) → **200** `{accessToken, refreshToken, tokenType:"BEARER", email,
+  firstname, lastname, roles[], tenantId:"default", tenantIds[]}`. The token field is
+  **`accessToken`** (unchanged from §F3). Roles come back as `ROLE_*` plus `*_PRIVILEGE` entries.
+- The access JWT is RS256 with claims `role, tenantId, email, sub, iat, exp`; **`exp - iat` =
+  14'400 s (4 h)**. The refresh JWT also lives **4 h** (claims `tenantId, sub, iat, exp`). Refresh
+  endpoint: **`POST /api/auth/refresh-token`** (exists in the OpenAPI; not exercised by uxc yet).
+- Anonymous (public) endpoints: `GET /api/auth/is-authentication-required` → `true`,
+  `/api/auth/is-authenticated` → `false`, `/api/auth/max-failed-attempts` → `3`,
+  `/api/auth/lock-time-duration` → `30`, `/v3/api-docs` → 200 (OpenAPI 3.1, 113 paths / 140
+  operations, global `Bearer Token` scheme), `/swagger-ui/index.html` → 200.
+- Only FAILED logins count toward the lockout (§F3). Each `uxc` process logs in once on its own;
+  that is noisy in the broker's auth log but harmless for the lockout counter.
+
+## §F22 — 401 vs 403: what each one means on rc5 (updates §F3 and §F14)
+- **No token → 403** with the generic Spring envelope
+  `{"timestamp", "status":403, "error":"Forbidden", "path"}` — no `message`. Verified on
+  `/actuator/info`, `/api/broker/health`, `/api/config`, `/api/workers`, `/api/maps/...`. Never 401,
+  never a 200 envelope. (On rc4, §F3 recorded the generic text "An unexpected error occurred…".)
+- **Bad token → 401** with the envelope `{"status":"INVALID","message":"Invalid compact JWT string: …"}`
+  for a non-JWT, and a 401 `"…signed with the 'HS256' signature algorithm, but the provided
+  …RSAPublicKeyImpl key may not be used…"` for a forged HS256 JWT. So rc5 answers a bad token with
+  **401 + INVALID**, where rc4 answered a stale-after-restart token with **200 + INVALID** (§F14).
+  Keep both: a client must branch on 401 AND still guard the 200 envelope for older builds.
+  A stale-after-restart token was not re-tested on rc5 (it needs a broker restart).
+- **Consequence for uxc (`lib/http.mjs` `f2Surface`)**: re-authenticate on **401**; on a 403 only
+  when the body is the generic envelope above, at most once per token. Any other 403 is a real
+  authorization answer (§F23) and is surfaced verbatim, with no login attempt.
+
+## §F23 — Authenticated-but-forbidden: a 403 is NOT always an expired token
+Two legitimate 403s answered with a valid super-admin token:
+- **`GET /api/broker/health` → 403 even for `ROLE_SUPER_ADMIN`.** It is unusable as a probe on
+  rc5. Probe with the authed `GET /actuator/info` (§F24), or anonymously with
+  `GET /api/auth/is-authentication-required` (2026 only).
+- **`GET /api/broker/contents?path=/` → 403** `Access denied: Attempt to access file outside storage
+  root (/)` (§F31).
+A client that treats every 403 as "token expired" logs in again, loses the broker's text, and —
+with a second such 403 inside the 30 s lock window — trips its own anti-lockout cooldown with a
+message about failed logins although none failed. Fixed in uxc by §F22's rule.
+
+## §F24 — Version detection needs the token on rc5
+- `GET /actuator/info` → 200 `{"build":{"artifact":"fast2-broker-rest-server","name":"Fast2 REST
+  Server","time":"2026-09-14T…","version":"2026.0.0-rc5","group":"com.fast2"}}` **with** the token;
+  **anonymous → 403** (generic envelope). So version detection must run after login (uxc does).
+- There is no anonymous version surface: `/v3/api-docs` is public but carries `servers[]`, no
+  version.
+- `uxc doctor --f2` on rc5 detects `fast2 2026.0.0-rc5 -> f2-2026 [actuator]`, and every f2-2026
+  capability flag (`apiPrefix`, `actuatorInfo`, `mapJsonCrud`, `uploadAutoRenames`) was confirmed
+  true by §F25–§F27.
+- `GET /api/config` → 200 `{"dashboards":{…},"uxopian-ai":{"url":…},"server":{…}}` with the token.
+
+## §F25 — XML upload answers 201 + the full map, and `_new1` is confirmed on rc5
+- `POST /api/maps/upload/{mapName}` (multipart field `file`) → **201 Created** (not 200), body =
+  the **full map JSON** (`id`, `name`, `mapVersionsSerieId`, `mapVersion{versionNumber,
+  displayName, lastModificationDate{value,type,format}}`, `mapDescription`, `steps`). Read the new
+  id from `.id`; no follow-up search is needed.
+- The `<id>` inside the XML is ignored: the broker assigns a new one (as on rc4, §F7).
+- **`_new1` re-confirmed**: a second upload under the same name → 201 and a NEW map
+  `<name>_new1` with a new id and a new `mapVersionsSerieId`. No 409, no overwrite.
+  `GET /api/maps/name-availability?mapName=` reads `true` before the first upload and `false`
+  after it — it remains the clean pre-create check.
+
+## §F26 — JSON create is accepted on rc5, and it never updates
+- `POST /api/maps` with a JSON body → **201** + the map JSON. "Please import XML map only" never
+  appears on rc5 (`mapJsonCrud` holds).
+- It **ignores a supplied `id` / `mapVersionsSerieId`**: posting the full identity block of an
+  EXISTING map under another name created a NEW map (new id, new serie) — no overwrite, no 409.
+  So `POST` is create-only; an update must go through `PUT` (§F27). This is why `f2.map` is
+  `createOnly + inPlaceUpdate`.
+
+## §F27 — `PUT /api/maps` in place on rc5; a description-only edit keeps the version
+- `PUT /api/maps` with the body of `GET /api/maps/{id}` (identity block included, §F16) and
+  `mapDescription.content` changed → **200** + the updated map JSON. Same `id`, same
+  `mapVersionsSerieId`; only `lastModificationDate` moves.
+- The **description-only** change did NOT mint a version: still `v1`, and
+  `search-by-version` → total 1. Do not expect a version bump on every PUT.
+- Whether a STRUCTURAL `PUT` mints a new version on rc5 (§F16, rc4: yes) was not re-tested.
+
+## §F28 — Link conditions: the XML tag and the rc5 JSON echo
+- XML: a link is `<com.fast2.model.taskflow.design.TaskLink>` holding `<name>`, `<target><id>` and
+  **`<taskLinkCondition class="com.arondor.common.reflection.bean.config.ObjectConfigurationBean">`**
+  with `<className>`, `<fields/>`, `<singleton>`, `<fullyConfigured>`. 19 occurrences across 6 of
+  the 9 maps exported via `GET /api/maps/download/{id}` (200, `application/octet-stream`); e.g. the
+  shipped `DefaultMap` routes `Success` with `com.fast2.taskflow.conditions.Otherwise` and `Fail`
+  with `…PunnetInException`.
+- JSON (`GET /api/maps/{id}`): `steps[].links[] = {name, target, condition:{objectConfiguration:
+  {className, singleton, fullyConfigured, fields[]}}}` (as §F19). On these rc5 exports an
+  unconditioned link came back as just `{target}`; keep authoring §F19's empty form, which the
+  broker accepts, and let canonicalization absorb the difference if a hash drift ever shows up.
+
+## §F29 — `DELETE /api/maps/{id}` → 200 with an EMPTY body
+- **200, empty body, no content-type.** A JSON accessor gets nothing (uxc: `undefined`); that is success, not an error.
+  Afterwards `GET /api/maps/{id}` → 404 and the pattern search → `{"total":0}`.
+- A malformed id (e.g. an object stringified into the path) → **400 with an HTML Tomcat error
+  page**, not JSON. Do not assume error bodies are JSON on the maps routes.
+
+## §F30 — Map id shape differs between the summary and the body
+- `GET /api/maps/summary/search-by-pattern` → `{total, collection:[{id:{mapId}, name,
+  versionNumber}]}` — **`id` is NESTED `{mapId}`**.
+- `GET /api/maps/{id}`, and the upload/POST/PUT bodies → **`id` is a flat string**.
+- Any new code path that reads a summary row must normalise `id.mapId` (`uxc f2 ls` does).
+- `GET /api/maps/{id}` keys: `isReadOnly, id, name, mapVersionsSerieId, mapVersion,
+  mapDescription, steps`; step keys: `id, name, queue, taskType, graphic, objectConfiguration,
+  links`.
+
+## §F31 — `broker/contents` is not a directory browser
+- The path is resolved **under a storage root**; it lists nothing, and that root is not the
+  install's `files/` directory under that name.
+- `?path=/` → **403** `Access denied: Attempt to access file outside storage root (/)` (§F23).
+  `?path=` and `?path=.` → **500** with a generic `An unexpected error occurred…` (text/plain).
+  `files`, `files/`, `logs`, `maps`, `config`, `exceptions.csv`, `output_<run>.csv`,
+  `files/output_<run>.csv`, `./files/output_<run>.csv` → **404** `Content not found: <path>`
+  (text/plain).
+- Which file a CSVWriter `./files/x.csv` lands on is still unproven (see the list below).
+
+## §F32 — Workers and libraries (read-only)
+- `GET /api/workers` → `{total, collection:[{embedded, hostname, jdkVersion, lastSeen, pid,
+  processingSpeed, queueFilter, tenantId, totalProcessed, workerId}]}`. The id field is
+  **`workerId`**; there is **no status field** (liveness = `lastSeen`).
+- `GET /api/workers/{id}/logs?results=<n>` → 200, a bare JSON **array** of events with keys
+  including `campaign`, `category` (`<logger>:<line>`), `exception` (full stack trace as a string).
+- `GET /api/workers/libraries?size=<n>` → `{total, collection:[{jarName, groupId, artifactId,
+  version, source, lastModificationDate, creationDate, fileSize, versionsLibs}]}`.
+- From the OpenAPI only (not called): `POST /api/workers/upload-library` (multipart, required field
+  `file`; 200 / 400 "Invalid file provided" / 500 — no "campaign running" code documented),
+  `POST /api/workers/restore-library?jarToVersion=&jarToRestore=`,
+  `GET /api/workers/library-versions/{libraryName}`, `POST /api/workers/generate-token?workerLogin=`,
+  `POST|DELETE /api/workers`.
+- `OPTIONS /api/workers/upload-library` → 403 with or without CORS preflight headers: that is the
+  security filter, so OPTIONS proves nothing about a route. The OpenAPI is the source of truth.
+
+## §F33 — Campaigns and catalog (read-only)
+- `GET /api/campaigns/search-by-pattern` → `{total, collection:[<names>]}` — names only, no
+  status. `GET /api/campaigns/{name}/status` → 200, a bare JSON string (`"Finished"`), as §F9.
+- `GET /api/catalog` → a bare array of **163** classes; `?allTask=true` → **1'511** (§F15 counted
+  161 / 1505 on rc4 — the counts move with the installed jars, never hard-code them).
+
+## Unverified on rc5 (open after the 2026-10-01 probe)
+Out of scope of a read-mostly probe; verify on a throwaway object before relying on them:
+- What `broker/contents?path=` resolves a CSVWriter `./files/<x>.csv` to — needs a controlled run
+  that writes a known CSV.
+- The `upload-library` refusal status while a campaign is running.
+- The worker-restart response (200 vs 207 multi-status).
+- The exceptions and results file formats of a run.
+- Whether a structural `PUT /api/maps` mints a new version on rc5 (§F16 says yes on rc4).
+- A stale token after a broker restart (rc4: 200 + INVALID, §F14; rc5: untested).
