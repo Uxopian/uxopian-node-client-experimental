@@ -12,6 +12,7 @@ import "./dependencies.test.mjs";
 import "./data-prune-ownership.test.mjs";
 import "./destroy.test.mjs";
 import "./doctor-ai-smoke.test.mjs";
+import "./doctor-f2-opensearch.test.mjs";
 import "./dialects.test.mjs";
 import "./dupproof.test.mjs";
 import "./export.test.mjs";
