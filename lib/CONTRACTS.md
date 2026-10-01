@@ -149,7 +149,7 @@ export async function runPlan(ctx, planId, { payload = {}, expect = null, maxCha
 ## lib/index.mjs (public lib)
 
 ```js
-export { connect } from …       // async connect(targetName?) -> { core, gateway, gui, cacheClear, target }
+export { connect } from …       // async connect(targetName?) -> { core, gateway, gui, f2, cacheClear, target }
 export { openPackage } from '../registry path'
 export { KINDS, PUSH_ORDER } from './kinds/index.mjs'
 export { canonicalize, hashResource } from './canonical.mjs'
@@ -158,6 +158,10 @@ export { explainCode, explainError } from './explain.mjs'
 export * as naming from './naming.mjs'
 export * as util from './util.mjs'
 ```
+
+`connect()` side effect (FAST-5884, REVIEW P3-9): on a target with a fast2 URL, the `f2` client
+shares the token cache — it reads and writes `<UXC_HOME|~>/.uxopian/f2-tokens/` for every
+embedding program, exactly as the CLI does. Opt out with `UXC_F2_TOKEN_CACHE=0`.
 
 ## Adapters — kind-specific notes (DESIGN.md §7 is normative; highlights)
 
@@ -435,7 +439,8 @@ every alias.
 ## lib/http.mjs — f2Surface(target), the fast2 broker client (FAST2-LEARNINGS §F1–§F3, §F21–§F33)
 
 ```js
-export function f2Surface(target, {loginCooldownMs = 30_000, reloginIntervalMs = 30_000, tokenCache = false}?)  // target.f2 + f2User/f2Password -> client
+export function f2Surface(target, {loginCooldownMs = 30_000, reloginIntervalMs = 30_000, tokenCache = false,
+  loginWaitMs = 5_000}?)  // target.f2 + f2User/f2Password -> client
 export function createClients(target, {f2TokenCache = true}?)  // f2 gets {tokenCache: f2TokenCache}; the CLI passes false for --no-token-cache
 export function isGenericF2Forbidden(response) -> bool  // 403 + Spring {error:"Forbidden"} without a message, or rc4's bare text
 export function isF2AuthError(err) -> bool  // 401/403 HttpError, failed login (code UXC_F2_LOGIN), cooldown (UXC_F2_COOLDOWN)
@@ -472,17 +477,30 @@ off for a bare `f2Surface()` unless `{tokenCache: true}`, and off whenever `UXC_
 (also `false|off|no`) or the CLI gets `--no-token-cache` — then nothing is read or written.
 One file per identity: `<UXC_HOME|~>/.uxopian/f2-tokens/<sha256(broker URL \n user \n tenant)[0..32]>.json`,
 directory 0700, file 0600, written to a `.<key>.<pid>.<rand>.tmp` in the same directory then
-`rename()`d (atomic; concurrent writers = last one wins). A file with group/other bits or another
-owner is ignored and removed. Format (v1, one JSON line):
+`rename()`d (atomic; concurrent writers = last one wins). The directory is `lstat`ed: a symlink, a
+non-directory or another owner's directory refuses the cache (nothing read, written, chmod-ed or
+deleted through it; it costs a login). A file is opened `O_NOFOLLOW|O_NONBLOCK` and `fstat`ed: a
+symlink, a FIFO or any non-regular file, group/other bits or another owner -> ignored and removed.
+Windows: none of these POSIX checks apply and no ACL is set — the profile directory's inherited ACL
+is the only protection of the token files. Format (v1, one JSON line):
 `{v:1, broker, user, tenant:null, accessToken, refreshToken|null, refreshExpiresAt:ms|null,
 expiresAt:ms, expSource:'jwt'|'ttl', savedAt:ms}` — `expiresAt` = the JWT `exp` (decoded without
-verification) or login + 3.5 h; never the password. `login()` without `force`: the token in hand
+verification; an `exp` >= 1e12 is read as ms; one more than 24 h after the login is not believed)
+or login + 3.5 h; `refreshExpiresAt` likewise (an unbelievable one -> login + 3.5 h); never the password. `login()` without `force`: the token in hand
 while fresh → the cached token while `now < expiresAt − 10 min` (`ttl`: `< expiresAt`) → inside that
 margin `POST /api/auth/refresh-token` with `Authorization: Bearer <refreshToken>` (not a login: never
 counts towards the lockout, never inside the cooldown logic) → a broker login. Every successful
-login/refresh writes the entry; a failed login (any status, or a transport error) deletes it; a 401
-deletes it when it still holds the refused token. `uxc target logout [name] [--all]` and
-re-registering a name with `target add` delete entries. No token is ever printed (`--json`,
+login/refresh writes the entry; a failed login (any status, or a transport error) deletes the entry
+it started from, and a spent unrefreshable entry is deleted the same way — compare-and-delete
+(`dropIf`), so a fresh entry a sibling process stored meanwhile survives (REVIEW P3-2); a 401
+deletes it when it still holds the refused token. Login lock (REVIEW P3-3): a broker login takes
+`<key>.lock` (O_EXCL); a process that finds it held waits (<= `loginWaitMs`, polling 50 ms) for the
+token the holder stores and uses it — after a 401, any stored token other than the refused one —
+then logs in itself only if none came (a lock older than 10 s is a crashed holder's and is taken
+over). N parallel processes after a broker restart = 1 login. Every write sweeps orphans: entries
+whose access and refresh tokens died over an hour ago, temp/lock files older than an hour
+(REVIEW P3-5). `uxc target logout [name] [--all]` and
+re-registering a name with `target add` delete entries (`--all` also removes lock files). No token is ever printed (`--json`,
 messages, the `UXC_HTTP_LOG` journal — it logs method, path, status, time, size only).
 
 Fast2-only target (`resolveTarget` -> `fd: false`, `core`/`gui`/`gateway` = `null`). A stored

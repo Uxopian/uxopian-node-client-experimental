@@ -5,15 +5,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import {
   mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync, existsSync, chmodSync,
+  symlinkSync, lstatSync, utimesSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import os from 'node:os';
 import { f2Surface, createClients } from '../lib/http.mjs';
 import {
-  tokenCache, tokenCacheDir, jwtExpMs, cacheKey, FALLBACK_TTL_MS, REFRESH_MARGIN_MS,
+  tokenCache, tokenCacheDir, jwtExpMs, cacheKey, expiryOf, FALLBACK_TTL_MS, REFRESH_MARGIN_MS, MAX_TTL_MS,
 } from '../lib/f2/token-cache.mjs';
 
 const UXC = resolve('bin/uxc.mjs');
@@ -34,7 +35,7 @@ const nowSec = () => Math.floor(Date.now() / 1000);
  * refresh token as the Bearer (AuthenticationService.refreshToken) and mints a new access token.
  */
 async function stubBroker() {
-  const state = { logins: 0, refreshes: 0, valid: new Set(), refreshValid: new Set(), loginStatus: 200, refreshStatus: 200, issued: [], accessLife: 4 * 3600, acceptNew: true };
+  const state = { logins: 0, refreshes: 0, valid: new Set(), refreshValid: new Set(), loginStatus: 200, refreshStatus: 200, issued: [], accessLife: 4 * 3600, acceptNew: true, loginDelayMs: 0, onLogin: null };
   const json = (res, status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = createServer((req, res) => {
     const path = new URL(req.url, 'http://x').pathname;
@@ -43,6 +44,15 @@ async function stubBroker() {
       const bearer = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
       if (path === '/api/auth/login') {
         state.logins += 1;
+        if (state.onLogin) state.onLogin(state);
+        if (state.loginDelayMs) {
+          const ms = state.loginDelayMs;
+          state.loginDelayMs = 0; // only the first login is slow
+          return setTimeout(() => { state.loginDelayMs = 0; answerLogin(); }, ms);
+        }
+        return answerLogin();
+      }
+      function answerLogin() {
         if (state.loginStatus !== 200) return json(res, state.loginStatus, { status: 'INVALID', message: 'Bad credentials' });
         const a = jwt(state.logins, nowSec() + state.accessLife, 'A');
         const r = jwt(state.logins, nowSec() + state.accessLife, 'R');
@@ -438,4 +448,157 @@ test('FAST-5884 BDD1: nothing is written in the working directory (the package)'
     assert.deepEqual(readdirSync(pkg), []);
     assert.ok(existsSync(join(home, '.uxopian', 'f2-tokens')));
   } finally { await b.close(); rmSync(home, { recursive: true, force: true }); rmSync(pkg, { recursive: true, force: true }); }
+});
+
+// --- REVIEW @0e4a0c0 P3-1: the directory and the file are not trusted by path ------------------
+
+test('P3-1: a symlinked f2-tokens directory is refused: not chmod-ed, nothing written through it, each process logs in', { skip: !POSIX }, async () => {
+  const b = await stubBroker();
+  const elsewhere = mkdtempSync(join(os.tmpdir(), 'uxc-f2tok-elsewhere-'));
+  try {
+    chmodSync(elsewhere, 0o755);
+    await withHome(async (home) => {
+      mkdirSync(join(home, '.uxopian'), { recursive: true });
+      symlinkSync(elsewhere, join(home, '.uxopian', 'f2-tokens'));
+      await client(b.url).get('/api/ok');
+      await client(b.url).get('/api/ok');
+      assert.equal(b.state.logins, 2, 'the cache was refused, not used');
+      assert.deepEqual(readdirSync(elsewhere), [], 'no token written through the link');
+      assert.equal(statSync(elsewhere).mode & 0o777, 0o755, 'the link target was not chmod-ed');
+    });
+  } finally { await b.close(); rmSync(elsewhere, { recursive: true, force: true }); }
+});
+
+test('P3-1: a FIFO under the entry name cannot hang the read: ignored, removed, replaced by a login', { skip: !POSIX }, async () => {
+  const b = await stubBroker();
+  try {
+    await withHome(async () => {
+      const c = tokenCache({ broker: b.url, user: USER });
+      mkdirSync(tokenCacheDir(), { recursive: true, mode: 0o700 });
+      execFileSync('mkfifo', ['-m', '600', c.file()]);
+      const t0 = Date.now();
+      await client(b.url).get('/api/ok');
+      assert.ok(Date.now() - t0 < 5_000, 'did not block');
+      assert.equal(b.state.logins, 1);
+      assert.ok(lstatSync(c.file()).isFile(), 'the FIFO was replaced by a regular entry');
+    });
+  } finally { await b.close(); }
+});
+
+test('P3-1: a symlink under the entry name is not followed (its target is neither read nor touched)', { skip: !POSIX }, async () => {
+  const b = await stubBroker();
+  const outside = mkdtempSync(join(os.tmpdir(), 'uxc-f2tok-out-'));
+  try {
+    await withHome(async () => {
+      await client(b.url).get('/api/ok'); // a valid entry exists
+      const c = tokenCache({ broker: b.url, user: USER });
+      const real = join(outside, 'entry.json');
+      writeFileSync(real, readFileSync(c.file()), { mode: 0o600 });
+      rmSync(c.file());
+      symlinkSync(real, c.file());
+      assert.equal(c.read(), null, 'a symlinked entry is never read');
+      assert.ok(existsSync(real), 'its target is untouched');
+      await client(b.url).get('/api/ok');
+      assert.equal(b.state.logins, 2);
+      assert.ok(lstatSync(c.file()).isFile());
+    });
+  } finally { await b.close(); rmSync(outside, { recursive: true, force: true }); }
+});
+
+// --- REVIEW @0e4a0c0 P3-2: compare-and-delete, never a sibling's fresh entry ---------------------
+
+test('P3-2: a failed login removes the entry it started from, never one a sibling stored during the request', async () => {
+  const b = await stubBroker();
+  try {
+    await withHome(async () => {
+      await client(b.url).get('/api/ok');
+      b.state.loginStatus = 500; // user store down (FAST-5804)
+      b.state.onLogin = () => tokenCache({ broker: b.url, user: USER }).write({ accessToken: 'sibling-fresh-token' });
+      await assert.rejects(() => client(b.url).login({ force: true }), (e) => e.code === 'UXC_F2_LOGIN');
+      assert.equal(tokenCache({ broker: b.url, user: USER }).read()?.accessToken, 'sibling-fresh-token');
+    });
+  } finally { await b.close(); }
+});
+
+test('P3-2: a spent entry is dropped by compare-and-delete (dropIf), so a newer one stored meanwhile survives', async () => {
+  await withHome(async () => {
+    const c = tokenCache({ broker: 'http://h:1', user: USER });
+    c.write({ accessToken: 'old' });
+    c.dropIf('not-the-one');
+    assert.equal(c.read().accessToken, 'old');
+    c.dropIf('old');
+    assert.equal(c.read(), null);
+  });
+});
+
+// --- REVIEW @0e4a0c0 P3-3: N parallel processes after a broker restart ------------------------
+
+test('P3-3: three parallel `uxc` processes after a broker restart spend ONE re-login (the others wait for its token)', async () => {
+  const b = await stubBroker();
+  const home = setupHome(b.url);
+  try {
+    const first = await uxc(['api', 'GET', '/api/ok', '--surface', 'f2'], { home });
+    assert.equal(first.status, 0, first.all);
+    assert.equal(b.state.logins, 1);
+    b.state.valid.clear(); // broker restarted: the cached token is refused
+    b.state.loginDelayMs = 400; // the re-login takes a while: the siblings 401 meanwhile
+    const runs = await Promise.all([1, 2, 3].map(() => uxc(['api', 'GET', '/api/ok', '--surface', 'f2'], { home })));
+    for (const r of runs) assert.equal(r.status, 0, r.all);
+    assert.equal(b.state.logins, 2, 'one re-login for the three processes');
+    assert.deepEqual(readdirSync(join(home, '.uxopian', 'f2-tokens')).filter((f) => !f.endsWith('.json')), [], 'no lock or temp file left');
+  } finally { await b.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test('P3-3: a stale login lock (crashed holder) is taken over', async () => {
+  await withHome(async () => {
+    const c = tokenCache({ broker: 'http://h:1', user: USER });
+    const release = c.lock();
+    assert.equal(typeof release, 'function');
+    assert.equal(c.lock(), null, 'held');
+    const lockPath = join(tokenCacheDir(), `${c.key}.lock`);
+    const old = (Date.now() - 60_000) / 1000;
+    utimesSync(lockPath, old, old);
+    const again = c.lock();
+    assert.equal(typeof again, 'function', 'a lock older than LOCK_STALE_MS is taken over');
+    again();
+    assert.ok(!existsSync(lockPath));
+  });
+});
+
+// --- REVIEW @0e4a0c0 P3-4: the decoded exp is clamped -----------------------------------------
+
+test('P3-4: an exp in milliseconds is read as ms; an exp beyond 24 h (or 1e300) falls back to the 3.5 h TTL', async () => {
+  const at = Date.now();
+  const inOneHourMs = at + 3_600_000;
+  assert.equal(jwtExpMs(jwt(1, inOneHourMs)), inOneHourMs, 'ms-unit exp');
+  assert.deepEqual(expiryOf(jwt(1, inOneHourMs), at), { expiresAt: inOneHourMs, expSource: 'jwt' });
+  assert.deepEqual(expiryOf(jwt(1, 1e300), at), { expiresAt: at + FALLBACK_TTL_MS, expSource: 'ttl' });
+  assert.deepEqual(expiryOf(jwt(1, nowSec() + 30 * 24 * 3600), at), { expiresAt: at + FALLBACK_TTL_MS, expSource: 'ttl' });
+  const inside = nowSec() + 23 * 3600;
+  assert.equal(expiryOf(jwt(1, inside), at).expSource, 'jwt', '<= 24 h is believed');
+  assert.ok(MAX_TTL_MS === 24 * 3600_000);
+  await withHome(async () => {
+    const e = tokenCache({ broker: 'http://h:1', user: USER }).write({ accessToken: jwt(1, 1e300), refreshToken: jwt(1, 1e300, 'R'), at });
+    assert.equal(e.expSource, 'ttl');
+    assert.equal(e.refreshExpiresAt, at + FALLBACK_TTL_MS, 'the refresh expiry is clamped too');
+  });
+});
+
+// --- REVIEW @0e4a0c0 P3-5: orphan entries expire ----------------------------------------------
+
+test('P3-5: a write sweeps entries whose tokens died over an hour ago and stale temp files; live ones stay', async () => {
+  await withHome(async () => {
+    const long = Date.now() - 3 * 3600_000;
+    const orphan = tokenCache({ broker: 'http://old-host:1789', user: USER });
+    orphan.write({ accessToken: jwt(1, Math.floor(long / 1000)), refreshToken: jwt(1, Math.floor(long / 1000), 'R'), at: long - 60_000 });
+    const live = tokenCache({ broker: 'http://other:1789', user: USER });
+    live.write({ accessToken: jwt(2, nowSec() + 3600) });
+    const tmp = join(tokenCacheDir(), '.deadbeef.1.abc.tmp');
+    writeFileSync(tmp, '{}', { mode: 0o600 });
+    utimesSync(tmp, long / 1000, long / 1000);
+    tokenCache({ broker: 'http://h:1', user: USER }).write({ accessToken: jwt(3, nowSec() + 3600) });
+    assert.equal(orphan.read(), null, 'orphan entry swept');
+    assert.ok(!existsSync(tmp), 'stale temp swept');
+    assert.ok(live.read(), 'a live entry of another identity stays');
+  });
 });

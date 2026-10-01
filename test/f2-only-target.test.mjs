@@ -123,20 +123,29 @@ test('regression: an FD + AI + F2 target resolves exactly as before (fd true, ev
 // --- http: the one shared guard -----------------------------------------------------------------
 
 test('createClients on a Fast2-only target: every FD / AI use goes through one guard, before any request', async () => {
-  const t = withEnv(F2_ENV, () => resolveTarget(NOPE));
-  const c = createClients(t);
-  assert.ok(c.f2, 'the fast2 client exists');
-  for (const [label, use] of [
-    ['core.get', () => c.core.get('/rest/tagclass')],
-    ['core.search', () => c.core.search({ classId: 'X' })],
-    ['core.base', () => c.core.base],
-    ['gateway.get', () => c.gateway.get('/api/v1/prompts')],
-    ['gui.raw', () => c.gui.raw('GET', '/rest/caches')],
-  ]) {
-    assert.throws(use, (e) => e.code === 'UXC_NO_SURFACE' && NO_SURFACE.test(e.message), label);
+  // REVIEW P3-8: this builds a real f2 client (token cache + failed-login marker on): keep it off the real home
+  const home = mkdtempSync(join(os.tmpdir(), 'uxc-f2only-'));
+  const saved = process.env.UXC_HOME;
+  process.env.UXC_HOME = home;
+  try {
+    const t = withEnv(F2_ENV, () => resolveTarget(NOPE));
+    const c = createClients(t);
+    assert.ok(c.f2, 'the fast2 client exists');
+    for (const [label, use] of [
+      ['core.get', () => c.core.get('/rest/tagclass')],
+      ['core.search', () => c.core.search({ classId: 'X' })],
+      ['core.base', () => c.core.base],
+      ['gateway.get', () => c.gateway.get('/api/v1/prompts')],
+      ['gui.raw', () => c.gui.raw('GET', '/rest/caches')],
+    ]) {
+      assert.throws(use, (e) => e.code === 'UXC_NO_SURFACE' && NO_SURFACE.test(e.message), label);
+    }
+    await assert.rejects(c.auth(), (e) => e.code === 'UXC_NO_SURFACE');
+    await assert.rejects(c.cacheClear(), (e) => e.code === 'UXC_NO_SURFACE');
+  } finally {
+    if (saved === undefined) delete process.env.UXC_HOME; else process.env.UXC_HOME = saved;
+    rmSync(home, { recursive: true, force: true });
   }
-  await assert.rejects(c.auth(), (e) => e.code === 'UXC_NO_SURFACE');
-  await assert.rejects(c.cacheClear(), (e) => e.code === 'UXC_NO_SURFACE');
 });
 
 test('createClients on an FD target is unchanged: real surfaces with their bases', () => {
