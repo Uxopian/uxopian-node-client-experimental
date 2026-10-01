@@ -97,7 +97,9 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
 - Server-only library (a handler fetches it by id and `load()`s it): `"registrationOrder": null`
   spelled out, AND (0.19+) `"classId": "<CtServerLibrary>"` naming a package document class —
   only a non-Script class keeps it out of the browser. `classId` is refused on a browser script
-  and must not be spelled `Script`.
+  and must not be spelled `Script`; it must be an `fd.documentclass` entry of the package (or one
+  registered with `uxc adopt fd.documentclass <id> --external`). `uxc ls fd.script` lists Script
+  plus the library classes the package's metas declare.
 
 ## fd.guiconfig — managed, cache-affecting
 - Storage: `fd/guiconfig/<id>/meta.json + <id>.xml` (GUIConfiguration-class doc, Spring-bean XML)
