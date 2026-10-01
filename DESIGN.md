@@ -662,7 +662,12 @@ A package declares what must ALREADY be installed on the target (`lib/dependenci
 ```
 
 Keys are **package codes** (the receipts §19 are the installed-ledger — works offline); `versions`
-reuses the §18 pattern language; `slug` only feeds the fix-it hint. Checked by `uxc import`,
+is a range in the §26 grammar (`satisfiesRange`: exact, `*`/`1.x`/`1.2.*`, `^1.2`, `~1.2`, `>=1.1`,
+a space-AND set `>=0.4 <0.5`, `^1 || ^3`; a list is OR) — a superset of the §18 pattern language
+it started with, so every pattern accepted before means the same (#109). ONE grammar everywhere:
+`init --depends-on`, `verify` (an error, via `lintSchemas`) and `mp publish` validate with it
+(`isValidRange`, `dependencyRangeErrors`), this gate and the upgrade report (§26) evaluate with it —
+a range `init` writes is judged identically by both. `slug` only feeds the fix-it hint. Checked by `uxc import`,
 `uxc mp install` (**pre-download**, off the marketplace manifest), full `uxc push --all`, and
 `uxc doctor --ready` (L3 rows). An unmet dependency REFUSES with the exact ordered recipe
 (`uxc mp install <slug> --target t   (variables? uxc vars <slug>)`); `--ignore-dependencies`
@@ -851,7 +856,8 @@ means. A package MAY ship `compat.json` (`uxc-compat/1`; manifest field `compat`
   `>=0.2.3 <0.3.0`); `~1.2` = `>=1.2.0 <1.3.0`; `>=1.0 <2.0`; `^1 || ^3`. Prereleases order by
   semver precedence; the upper bound of `^ ~ x` excludes the next version's prereleases. A string
   array is OR. An unparseable range fails `validateCompat` (so `mp publish` refuses it).
-  `versionSupported` (server + dependency gates) is unchanged.
+  `versionSupported` (the server gate, §18) is unchanged; the dependency gate (§22) evaluates with
+  `satisfiesRange` too (#109), so a dependency range means the same at install and in this report.
 - **Receipts** keep what an installed package needs (§19): `dependencies` (normalized manifest
   block) and `requires` (= `compat.requires`), FD tag `UxcCompat`, AI receipt JSON fields. Absent
   when undeclared, so receipts of packages without either are byte-identical to before — and the
@@ -883,7 +889,8 @@ the generic built-ins.
 ### 27.1 `uxc init --extension <code> --depends-on <slug>@<range>`
 
 `uxc init --extension acme --depends-on case-management@">=0.3" [--name …] [--dep-code cm]
-[--kinds a,b] [--product-dir <checkout>] [dir]` (`--extension --code acme` is the same).
+[--kinds a,b | --kinds none | --no-examples] [--product-dir <checkout>] [dir]` (`--extension --code
+acme` is the same). `<range>` is any §22/§26 range (`">=0.4 <0.5"`, `^0.4`, …).
 
 - Writes the manifest of a NEW package (`code`, four prefix forms, `dependencies: { <depCode>:
   { versions, slug } }`, `extension: { of: <depCode> }`, `registrationOrderBands.fd.script` =
@@ -892,7 +899,8 @@ the generic built-ins.
   prefixes), and the examples.
 - **Dependencies are keyed by package code** (§22), the slug is the marketplace hint. The code comes
   from `--product-dir`'s manifest, else `--dep-code`, else the slug when it is itself a valid code;
-  otherwise the command refuses and says so. Refusals: bad extension code, a code equal to the
+  otherwise the command refuses and names `--dep-code <code>` (#111: authors reach for `--code`,
+  which is the extension's own code). Refusals: bad extension code, a code equal to the
   dependency's, a range outside the §22 grammar, an existing manifest, `--depends-on`/`--kinds`/
   `--product-dir`/`--dep-code` without `--extension`, an unknown kind.
 - **Examples, one per extension kind, each with an offline test (`tests/NN-*.test.mjs`, green under
@@ -920,6 +928,12 @@ the generic built-ins.
      kind adapters as `uxc add`, so the mechanics are the tool's. Their tests are self-contained (no
      import from uxc): the resource is registered, its id carries the package's prefix and not the
      dependency's, its files parse.
+- `--no-examples` (= `--kinds none`, #111) writes the skeleton only: the manifest (dependency,
+  prefixes, `extension` block, a kit's `manifest` merge when `--product-dir` has one), registry,
+  state, README, AGENTS.md + CLAUDE.md, and an empty `tests/` (`.gitkeep`) — no example resource,
+  dataset or test, for an author starting from real resources. `uxc test --offline` on it is green
+  (no tests = nothing to fail). `none` cannot be combined with other kinds, nor `--no-examples`
+  with `--kinds <kinds>`.
 - `--kinds` selects examples (`--families` is an accepted alias). The package is assembled in a
   staging directory and copied in only when everything rendered: a kit that fails half-way never
   leaves a manifest that blocks the retry. The staging directory is removed on every exit path.

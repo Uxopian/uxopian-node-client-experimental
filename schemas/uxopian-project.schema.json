@@ -185,7 +185,7 @@
     },
     "dependencies": {
       "type": "object",
-      "description": "Packages that must already be installed on the target, keyed by PACKAGE CODE (DESIGN §22). Value: a version pattern, or { versions, slug }.",
+      "description": "Packages that must already be installed on the target, keyed by PACKAGE CODE (DESIGN §22). Value: a version range, or { versions, slug }. Range grammar (satisfiesRange): exact '1.2.3', '*', '1.x' / '1.2.*', '^1.2', '~1.2', '>=1.1', a space-AND set '>=0.4 <0.5', '^1 || ^3'; a list is OR.",
       "additionalProperties": {
         "anyOf": [
           {
@@ -196,7 +196,7 @@
             "properties": {
               "versions": {
                 "$ref": "#/$defs/patternList",
-                "description": "Version pattern(s) of the dependency."
+                "description": "Version range(s) of the dependency (satisfiesRange grammar, e.g. '>=0.4 <0.5'; a list is OR)."
               },
               "slug": {
                 "type": "string",
