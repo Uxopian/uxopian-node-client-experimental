@@ -109,6 +109,18 @@ test('upsertSection: CRLF files stay CRLF, the block is found and replaced', () 
   assert.equal(upsertSection('', sec), `${sec}\n`);
 });
 
+test('upsertSection: a mixed-ending file keeps its bare-LF lines outside the markers (#103)', () => {
+  const sec = renderClaudeSection({ code: 'xy', name: 'X' });
+  const mixed = '# Mine\r\nlf line\nkeep\r\n';
+  const once = upsertSection(mixed, sec);
+  assert.ok(once.startsWith('# Mine\r\nlf line\nkeep\r\n\r\n<!-- uxc:begin -->\r\n'), JSON.stringify(once.slice(0, 60)));
+  const inside = once.slice(once.indexOf(BEGIN), once.indexOf(END));
+  assert.doesNotMatch(inside.replace(/\r\n/g, ''), /\n/, 'the block follows the file\'s CRLF');
+  const edited = 'top\n' + once.replace('read AGENTS.md first', 'old text') + 'tail lf\n';
+  const twice = upsertSection(edited, sec);
+  assert.equal(twice, 'top\n' + once + 'tail lf\n', 'only the block is rewritten');
+});
+
 test('renderAgentsSection is deterministic and lists non-extension dependencies', () => {
   const m = { name: 'D', code: 'dd', version: '1.0.0', dependencies: { zz: { versions: '1.*', slug: 'zeta' }, aa: { versions: '*' } } };
   assert.equal(renderAgentsSection(m), renderAgentsSection(structuredClone(m)));

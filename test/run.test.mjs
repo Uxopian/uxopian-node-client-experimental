@@ -56,3 +56,11 @@ test('--timeout: timeoutMs opt reaches the gateway request (default 300s otherwi
     assert.equal(rec.reqs[0].opts.timeout, 300_000);
   }
 });
+
+// #76 — an oversized --image is refused or flagged BEFORE the run, not explained as a bean failure
+test('imageSizeVerdict: fine, warned above the smallest provider cap, refused above the largest', async () => {
+  const { imageSizeVerdict, IMAGE_WARN_BYTES, IMAGE_MAX_BYTES } = await import('../lib/commands/run.mjs');
+  assert.equal(imageSizeVerdict('a.png', 344 * 1024), null);
+  assert.match(imageSizeVerdict('a.png', IMAGE_WARN_BYTES + 1).warning, /a\.png.*closed connection or a 413/);
+  assert.match(imageSizeVerdict('a.png', IMAGE_MAX_BYTES + 1).error, /a\.png.*per-image limit/);
+});

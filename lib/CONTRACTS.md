@@ -256,13 +256,15 @@ never rewrites installedAt. `resolveTarget` exposes `allowTests` (targets.json /
 ## lib/home.mjs — where uxc keeps its non-package state
 
 ```js
-export function uxcHome()                   // UXC_HOME (any platform) else os.homedir()
+export function uxcHome()                   // UXC_HOME (any platform; a relative one is path.resolve()d) else os.homedir()
 export function uxcDir(...parts)            // <home>/.uxopian/<...parts>, resolved PER CALL
 ```
 
 `os.homedir()` reads $HOME on posix and %USERPROFILE% on Windows, so `HOME`-based test isolation
 silently did nothing there — the suite overwrote the real `~/.uxopian/targets.json` (#71). Every
-path under `~/.uxopian` goes through `uxcDir()`; tests set `UXC_HOME`.
+path under `~/.uxopian` goes through `uxcDir()`; tests set `UXC_HOME`. Print a config path with
+`targetsPath()` / `marketplaceConfigPath()` (per call), never the import-time `TARGETS_FILE` /
+`MARKETPLACE_FILE` constants (kept for compatibility only, #76).
 
 ## lib/lock.mjs — cross-process target lock (DESIGN §25.1)
 
@@ -557,15 +559,21 @@ test/output-mode.test.mjs lints that every command module except help calls `.re
 
 ## lib/tagdelta.mjs (DESIGN §28) — pure, shareable
     mergeTagDelta(serverValues, deltaValues, {prefix}) -> {values, added, updated, unchanged, kept}
-    removeOwnValues(serverValues, names, {prefix})     -> {values, removed}
+    removeOwnValues(serverValues, names, {prefix, legacy}) -> {values, removed}
+    legacyOf(delta) -> [name]   the delta's declared unprefixed own values (DESIGN §30)
     sliceOwn(serverValues, names) / projectValues(values)   (canonical slice both sides are hashed in)
     checkTagDelta(delta, {id, prefix, ownTagclasses, knownTagclasses}) -> [{code, message}]
-    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN
+    lintTagDeltas(pkg) -> [{code, message}]   codes: EXT_TAG_VALUE_PREFIX, EXT_TAG_CLASS_UNKNOWN, EXT_TAG_DELTA_OWN, EXT_TAG_LEGACY
+      (also folded into extension.mjs lintExtension(pkg) -> [{code, where, message}]; findingKey(f) = code|id dedupes the two)
     valuePrefix(manifest) -> 'ACME_'
     onlyMissing(deltaValues, serverValues) -> bool   (server differs only by absent values)
 Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read by sync.mjs:
     mergeOnPush=true + onlyMissing(local, server) -> bool   skip collision/conflict refusals ONLY when true
-    baseState(local) -> {ownValues}      merged into state wherever sync records a base without push()
+    baseState(local) -> {ownValues, legacyValues}    merged into state wherever sync records a base without push()
+                                                     (never legacyAdded: only push() records what it ADDED — §30;
+                                                     pull passes the file as written, so kept keys count)
+    keepLocal(prevFileObj, canon) -> {key: value}   jsonLayout.writeLocal re-attaches these unhashed keys (`legacy`)
+    push() -> {ownValues, legacyValues, legacyAdded}  legacyAdded = declared legacy values a push of this package added
     orphans(ctx, entry, local) -> [name] non-empty = push writes although the slice is unchanged
     presence(ctx, entry) -> string | {state?, detail}   status --remote detail (and state override)
 
@@ -579,3 +587,14 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
     stampSchema(absPath, name) -> bool   (init/add/init --extension/mp init; no-op if already set)
     keepSchemaKey(absPath, obj) -> obj   (writeLocal keeps the file's $schema across a canonical rewrite)
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
+
+## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune` and fd.dataset remove()
+    rowOwners(ctx, manifest) -> {owners:[{code, forms, source:'receipt'|'dependency'}], receiptsReadable, receiptErrors:[string]}
+    foreignOwners(ctx, manifest) -> owners                                             (rowOwners(...).owners)
+    prefixMatchLength(forms, id, {strict?}) -> n   longest carried prefix form, 0 = none   PURE
+    splitRowOwnership(ids, manifest, owners, {receiptsReadable=true}) -> {own:[id], foreign:[{id, code}], unproven:[id]}   PURE
+      longest prefix wins (own strict boundary vs foreign lenient; tie -> own); unprefixed -> own when
+      receiptsReadable, else unproven (kept)
+    pushRows(...) report gains keptForeign: [{id, code}], keptUnproven: [id]
+    fd.dataset remove(ctx, id) -> {deleted:[id], keptForeign, keptUnproven}   (rm --server, destroy, generic prune)
+  lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged

@@ -931,6 +931,9 @@ the generic built-ins.
 ### 27.2 The prefix control (`lib/extension.mjs`, run by `verify`, `push` and `mp publish`)
 
 `lintExtension(pkg)` is pure and offline; findings are blocking (`push --ignore-lint` overrides).
+It also carries the tag-class delta lint (`lintTagDeltas`, §28: `EXT_TAG_*`, `where` =
+`fd.tagclass-delta/<id>`), so `push` and `mp publish` refuse a bad delta in the same pass; `verify`,
+which runs `lintTagDeltas` on its own as well, skips the duplicates by `findingKey` (code + id) (#93).
 Two tiers, so a package that merely depends on another (for instance on a provider bundle) is not
 broken by a rule it never opted into:
 
@@ -1033,7 +1036,7 @@ displayNames} ] }`; the registry id is the TARGET tag class name (verbatim, neve
   `EXT_TAG_VALUE_PREFIX` (value lacks the manifest's uppercase prefix), `EXT_TAG_CLASS_UNKNOWN`
   (no/mismatched `tagclass`; online: class absent or not a CHOICELIST), `EXT_TAG_DELTA_OWN` (the target is a
   tag class this package owns). They live in `lib/tagdelta.mjs`, not `lib/extension.mjs`, so this PR has no
-  file in common with #87; once #87 merges, its extension verify can call `lintTagDeltas` too.
+  file in common with #87; the extension prefix control (§27.2) now calls `lintTagDeltas` too (#93).
 - Not done on purpose: no cache clear (tag classes are read live), no version bump, no GUI refresh hook —
   the product regenerates its own label catalogue after a delta (`CAPABILITIES`).
 
@@ -1088,5 +1091,79 @@ so no package that works today is rejected by an editor or by verify. The other 
   registry `kind` (sync throws), a non-semver `minClientVersion` (the client gate throws).
   Marketplace findings stay warnings: `mp publish` is their gate. `verify` prints errors as `FAIL` lines
   (exit 1) and warnings as warnings (`lintSchemas(pkg)`, offline, with the other §25 lints).
-- Checked on every local package at implementation time (examples/, uxoai*, gerflor, cm, llm, qpins,
-  pii-triage, eowin, demoseminaire, ct): no error, no warning.
+- Checked on every local package at implementation time (the examples/ packages and 16 other local
+  packages, customer POCs included): no error, no warning.
+
+## 30. Legacy values in a tag-class delta (`"legacy": [...]`)
+
+An extension split out of a product sometimes inherits values that already live in a product tag class
+under UNPREFIXED codes (the Purchase Order Management extension `po` owns `ORDER` in the product's
+`CmCaseType`; renaming it `PO_ORDER` would touch every case, notebook and id prefix). A delta declares
+them: `{ "tagclass": "CmCaseType", "legacy": ["ORDER"], "allowedValues": [ {ORDER…}, {PO_QUOTE…} ] }`.
+
+- **Declared AND listed**: each `legacy` name must also be in `allowedValues` (with labels), else
+  `EXT_TAG_LEGACY`. `legacy` not an array of strings is the same code.
+- **Lint** (`lintTagDeltas`, `verify`, push validation): `EXT_TAG_VALUE_PREFIX` skips declared legacy
+  values; every other value still needs the prefix. `legacyOf(delta)` is the pure accessor.
+- **Push**: unchanged merge (`mergeTagDelta`): a legacy value the server lacks is appended; one the
+  server already holds is left byte for byte (never relabelled).
+- **Declared ≠ removable.** The declaration only exempts a value from the prefix lint. uxc removes an
+  unprefixed value (`rm --server`, upgrade pruning, orphan removal on push) ONLY when it is in the
+  state's `legacyAdded`: the declared legacy values that a push of THIS package actually ADDED to the
+  server (`added ∩ legacy` of the write, accumulated across pushes, narrowed to what the delta still
+  declares). A declared value already on the server when the package arrived (adopted, or present at
+  merge time) is never recorded there: it is the product's value. `status --remote` and `rm --server`
+  print it as `kept: <V> — legacy value present before this package`. No base record (adopted /
+  rebased / pulled — `baseState`) ever writes `legacyAdded`.
+- **Dropping a legacy value** from both `legacy` and `allowedValues`: if it is in `legacyAdded` it is an
+  orphan and the next push removes it; otherwise uxc just stops tracking it (`ownValues` loses it,
+  the server keeps it) and push prints `no longer tracked: <V> — … left on the server`.
+- **The key survives rewrites, unhashed.** The canonical (hashed) form stays `{tagclass, allowedValues}`
+  — a delta hashes identically with or without `legacy`, and as before §30. The push echo leg and pull
+  rewrite the file through `jsonLayout.writeLocal`, whose `keepLocal(prevFile, canon)` hook re-attaches
+  the file's `legacy` (narrowed to the names still listed — a pull never leaves `EXT_TAG_LEGACY`), the
+  way `$schema` is kept (§29). Pull records its base extras from the file AS WRITTEN.
+- State per target: `{ownValues, legacyValues (declared, informational), legacyAdded (removable)}`;
+  `baseState` records the first two only.
+- Schema `schemas/tagclass-delta.schema.json` documents `legacy`; `uxc explain EXT_TAG_LEGACY`.
+
+## 31. `data push --prune` and row ownership across installed packages
+
+A dataset can be fed by several installed packages: the Case Management product and an extension (the
+Purchase Order Management `po`) both contribute rows to `CmTeams`. `--prune` deletes "server rows absent
+from MY local file" — in a shared dataset that is the OTHER package's rows. It now never does.
+
+- **Who owns a row** (`lib/ownership.mjs`): the other packages on the target, read from the installation
+  receipts (DESIGN §19, `readReceiptsChecked`, both surfaces) plus the manifest's declared `dependencies`
+  (an offline floor: receipts unreadable still protects the dependency). Never the package itself. A
+  package owns the ids carrying its prefix forms, always derived from its code (`prefixForms`:
+  `Cm`/`cm`/`cm-`/`CM_`) — receipts carry no `idPrefixes`, so only THIS package's manifest
+  `idPrefixes` is honoured.
+- **Longest prefix wins** (`prefixMatchLength`): each id goes to the package whose matching prefix form
+  is LONGEST, across this package and every other one (own `cm` + installed `cm2`: `Cm2Team`, `cm2Team`,
+  `cm2-x`, `CM2_X` are cm2's — they used to be pruned as cm's). Between foreign packages too, so the
+  warning names the right owner. A tie goes to this package. Boundaries: `CM_`/`cm-` carry their
+  separator (kebab case-insensitive); after pascal/camel the next char must start a word — for OUR
+  claims (what we may delete) an uppercase letter only, for ANOTHER package's protection also a digit or
+  `_` (`carriesForms`' lenient rule, so an unknown `Cm2024Team` still shields under `cm`). The asymmetry
+  only ever errs on keeping. Matrix in `test/data-prune-ownership.test.mjs` (cm/cm2/cmx, ct/ctx).
+- **Receipts readable vs not** (`readReceiptsChecked`; `readReceipts` keeps swallowing errors for its
+  other callers): only proven absence is "no receipts" — FD search error + `UxcPackage` class absent, or
+  a gateway 404. Any other error = unreadable, and then rows not provably ours are never deleted.
+- **Decision per server row** (`splitRowOwnership`, pure -> `{own, foreign, unproven}`): our prefix
+  longest -> ours, deletable; another package's prefix longest -> theirs, kept; no known prefix ->
+  deletable exactly as before when receipts were READ, else `unproven`, kept (also under `--yes`).
+- **Output**: the kill list (and `--yes` deletion) contains only our rows; foreign rows are named in one
+  warning with their owner (`belong to another installed package (cm) — kept, never deleted: …`),
+  unproven rows in another with the read error (`installation receipts could not be read (…) — … kept`);
+  the result carries `keptForeign: [{id, code}]` and `keptUnproven: [id]`. A dataset whose only orphans
+  are kept prints no kill list.
+- **Every delete path**: `fd.dataset` `remove()` — reached by `rm --server`, `destroy` and the generic
+  push/upgrade prune — applies the same rule (own-prefixed + unprefixed when receipts are readable; never
+  another installed package's rows; kept rows named) and returns `{deleted, keptForeign, keptUnproven}`.
+  A package alone on the target (readable receipts, no dependency) deletes every row, as before.
+- Unchanged: tombstone rows (`{"_id":…,"_deleted":true}`) are explicit and still delete; without
+  `--prune` nothing is deleted.
+- Limit: a row of another package that carries NO prefix of it (a legacy code such as `SUPPLY_PLANNING`)
+  cannot be told from ours by id; keep such rows out of the prune by listing them in the local file or
+  avoid `--prune` on shared datasets.

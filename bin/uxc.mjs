@@ -61,7 +61,6 @@ async function main() {
     argv = rest.slice(1);
   }
   const parsed = parseArgv(argv);
-  applyFlagAliases(modName, parsed.flags); // --limit = --max where both mean "at most N" (#99)
   let mod;
   try {
     mod = (await import(`../lib/commands/${modName}.mjs`)).default;
@@ -75,6 +74,8 @@ async function main() {
     const aliasLine = [...al.commands.map((c) => `uxc ${c}`), ...al.flags].join(', ');
     return console.log(`${mod.summary}\nusage: ${mod.help}${aliasLine ? `\naliases: ${aliasLine}` : ''}`);
   }
+  // AFTER help (help must win, even over a flag conflict — #103): --limit = --max where both mean "at most N" (#99)
+  applyFlagAliases(modName, parsed.flags);
   const ctx = makeCtx(parsed);
   // Package policy + cross-process lock (DESIGN §25): which instance this checkout may talk to,
   // what it may never do, and who else is writing to it right now. Reads never queue.
