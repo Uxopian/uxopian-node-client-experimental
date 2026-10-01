@@ -1118,21 +1118,36 @@ Purchase Order Management `po`) both contribute rows to `CmTeams`. `--prune` del
 from MY local file" — in a shared dataset that is the OTHER package's rows. It now never does.
 
 - **Who owns a row** (`lib/ownership.mjs`): the other packages on the target, read from the installation
-  receipts (DESIGN §19, `readReceipts`, both surfaces) plus the manifest's declared `dependencies` (an
-  offline floor: receipts unreadable still protects the dependency). Never the package itself. A package
-  owns the ids carrying its prefix forms: those the receipt declares (`idPrefixes`, optional) else
-  derived from its code (`prefixForms`: `Cm`/`cm`/`cm-`/`CM_`), matched with the same strict word-boundary
-  rule as the extension lint (`carriesForms`).
-- **Decision per server-only row** (`splitRowOwnership`, pure): carries THIS package's prefix (manifest
-  `idPrefixes` honoured) -> ours, deletable; carries only another installed package's prefix -> theirs,
-  kept; carries no known prefix -> deletable, exactly as before (ownership by prefix is a protection, not
-  a new licence to guess).
-- **Output**: the kill list (and `--yes` deletion) contains only our rows; the foreign rows are named in
-  one warning with their owner (`belong to another installed package (cm) — kept, never deleted: …`) and
-  returned as `keptForeign: [{id, code}]` in the result. A dataset whose only orphans are foreign prints
-  no kill list.
+  receipts (DESIGN §19, `readReceiptsChecked`, both surfaces) plus the manifest's declared `dependencies`
+  (an offline floor: receipts unreadable still protects the dependency). Never the package itself. A
+  package owns the ids carrying its prefix forms, always derived from its code (`prefixForms`:
+  `Cm`/`cm`/`cm-`/`CM_`) — receipts carry no `idPrefixes`, so only THIS package's manifest
+  `idPrefixes` is honoured.
+- **Longest prefix wins** (`prefixMatchLength`): each id goes to the package whose matching prefix form
+  is LONGEST, across this package and every other one (own `cm` + installed `cm2`: `Cm2Team`, `cm2Team`,
+  `cm2-x`, `CM2_X` are cm2's — they used to be pruned as cm's). Between foreign packages too, so the
+  warning names the right owner. A tie goes to this package. Boundaries: `CM_`/`cm-` carry their
+  separator (kebab case-insensitive); after pascal/camel the next char must start a word — for OUR
+  claims (what we may delete) an uppercase letter only, for ANOTHER package's protection also a digit or
+  `_` (`carriesForms`' lenient rule, so an unknown `Cm2024Team` still shields under `cm`). The asymmetry
+  only ever errs on keeping. Matrix in `test/data-prune-ownership.test.mjs` (cm/cm2/cmx, ct/ctx).
+- **Receipts readable vs not** (`readReceiptsChecked`; `readReceipts` keeps swallowing errors for its
+  other callers): only proven absence is "no receipts" — FD search error + `UxcPackage` class absent, or
+  a gateway 404. Any other error = unreadable, and then rows not provably ours are never deleted.
+- **Decision per server row** (`splitRowOwnership`, pure -> `{own, foreign, unproven}`): our prefix
+  longest -> ours, deletable; another package's prefix longest -> theirs, kept; no known prefix ->
+  deletable exactly as before when receipts were READ, else `unproven`, kept (also under `--yes`).
+- **Output**: the kill list (and `--yes` deletion) contains only our rows; foreign rows are named in one
+  warning with their owner (`belong to another installed package (cm) — kept, never deleted: …`),
+  unproven rows in another with the read error (`installation receipts could not be read (…) — … kept`);
+  the result carries `keptForeign: [{id, code}]` and `keptUnproven: [id]`. A dataset whose only orphans
+  are kept prints no kill list.
+- **Every delete path**: `fd.dataset` `remove()` — reached by `rm --server`, `destroy` and the generic
+  push/upgrade prune — applies the same rule (own-prefixed + unprefixed when receipts are readable; never
+  another installed package's rows; kept rows named) and returns `{deleted, keptForeign, keptUnproven}`.
+  A package alone on the target (readable receipts, no dependency) deletes every row, as before.
 - Unchanged: tombstone rows (`{"_id":…,"_deleted":true}`) are explicit and still delete; without
-  `--prune` nothing is deleted; `rm --server`/`destroy` of a whole dataset is a different path.
+  `--prune` nothing is deleted.
 - Limit: a row of another package that carries NO prefix of it (a legacy code such as `SUPPLY_PLANNING`)
   cannot be told from ours by id; keep such rows out of the prune by listing them in the local file or
   avoid `--prune` on shared datasets.
