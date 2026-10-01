@@ -89,7 +89,9 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
   BEFORE the classes that reference it (`data.ACL`). Update FULL-REPLACE. Right after a REST write the
   GET is an entry-less `ACLProxy`: uxc then compares against the entries it LAST PUSHED to that target
   (state), so server-side entry drift on a freshly written ACL is invisible; an ACL the server has
-  loaded from storage echoes its real entries and those are authoritative.
+  loaded from storage echoes its real entries (even an EMPTY list) and those are authoritative. No
+  record (base from uxc 0.24) + an edited file = "permissions unknown": status says `local` (push),
+  never `rebased`; pull refuses.
 
 ## fd.script — managed, cache-affecting
 - Storage: `fd/scripts/<id>/meta.json + <id>.js` (a Script-class document; kebab ids `ct-foo`)

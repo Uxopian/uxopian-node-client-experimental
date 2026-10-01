@@ -934,10 +934,17 @@ re-checked by GET): `ZzAclProbe20261001`, `ZzWfProbe20261001`, `ZzTcProbe2026100
     "changed" with every local edit: an entries-only edit hashed local == server → `rebased`, base
     re-recorded, **the edit was never pushed**; an entries+name edit → `conflict`, push refused. Fix:
     create/update record the entries just written in the target state (`entries`, written BEFORE the
-    push echo leg re-reads); the proxy is completed from that record; the local file is only the
-    fallback when nothing is recorded; a full `AccessControlList` echo is authoritative. Entries are
-    normalized to arrays on both sides. Live after the fix: edit → `local` → push `updated` (no
-    `--force`) → `insync`; a base recorded by an older uxc re-classifies once as `rebased`.
+    push echo leg re-reads); the proxy is completed from that record; a full `AccessControlList`
+    echo is authoritative. Entries are normalized to arrays on both sides. Live after the fix: edit →
+    `local` → push `updated` (no `--force`) → `insync`.
+  - **Release review of 0.25.0 (2026-10-01, offline-tested — the mechanics above unchanged):** with NO
+    record (a base written by uxc 0.24) the local file is overlaid on the proxy ONLY while its hash
+    equals the recorded `syncedHash` — then it provably is what was pushed (`insync`). An edited local
+    file proves nothing about the server: readServer marks the form `unknown` ("permissions unknown"),
+    so status never records a base from it — the unpushed edit reads `local` (push, no `--force`), not
+    `rebased` (which silently dropped the edit); no base at all → `collision`; pull refuses. And a full
+    echo with an EMPTY `entries:[]` is the server's truth (emptied server-side → `server` edit), never
+    completed from the record like a proxy — only the absence of the `entries` key means proxy.
   - Bug 2 (#116): `status --remote` said `server-missing` for every tracked ACL/workflow while `diff`
     said identical. `statusAll` batch-prefetches each kind that has a `restPath` with ONE `list()` —
     and these two `list()` return `[]` (no get-all), so the empty prefetch meant "deleted". Reproduced

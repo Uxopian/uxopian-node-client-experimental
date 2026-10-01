@@ -107,7 +107,8 @@ Import pre-flights EVERY resource and prints the full collision list BEFORE any 
 same package code are ours — state `upgrade` when unchanged since that install (pushed normally),
 `conflict` "edited on the server since <code>@<v> was installed" when someone edited them (show the
 diff, `--force` only with approval). Receipts from uxc older than per-resource hashes → `upgrade`
-plus a WARN listing the resources (edits undetectable). Ids NOT in our receipt stay `collision`.
+plus a WARN listing the resources (edits undetectable) — only for ids carrying the package's own
+prefix. Ids NOT in our receipt stay `collision`. `uxc destroy` deletes the package's receipts last.
 `--code-remap ct=xy` is EXPERIMENTAL: registry-driven token-boundary renaming across all four
 prefix forms + derived ids, then a residual lint — it ABORTS if any old-prefix token survives.
 Review the lint output with the user; never force past it.

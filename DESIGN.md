@@ -177,7 +177,7 @@ template`. All five class types + tagcategory have verified LIST endpoints (full
 | 5 | `fd.vfclass` | JSON | ✅ `POST /rest/virtualfolderclass`; DTO uses `type` discriminators (NOT `@class`); aggregation = outer `field` + recursive `nested`; pivots CHOICELIST |
 | 6 | `fd.vfinstance` | JSON | ✅ `POST /rest/virtualFolder/` (capital F); policy `createOnly` |
 | 7 | `fd.workflow` | JSON | ✅ **policy `managed`** (full write; live-verified fd.demo/IRIS 2026-10-01, LEARNINGS §48). DTO `{id, startTaskClass, taskClasses[]}`. create `POST /rest/workflow` ARRAY; update `POST …/{id}` FULL-REPLACE (also clears `data.creationDate`/`lastUpdateDate`); delete `DELETE …/{id}` (docs p.987: no active-instance check). **get-ALL 500s live (T00303)** → read BY ID only, no `list`/`scan`, and NO `restPath` (status --remote must not batch-list it — #116); a **missing workflow GETs as 200 `[]`** (→ absent). The echo adds `data{creationDate,lastUpdateDate}`, `displayNames:[]`, `descriptions:[]` — all canonicalized away by the generic rules. The server does NOT validate `taskClasses`/`startTaskClass` (non-existent ids accepted) and a taskclass create accepts a non-existent `workflow` → the taskclass-before-workflow PUSH_ORDER is safe. |
-| 8 | `fd.acl` | JSON | ✅ **policy `managed`** (full write; live-verified fd.demo 2026-07-15/16 + 2026-10-01, LEARNINGS §37/§48). DTO `{id, name, entries[{principal[], permission[], grant}]}` (`principal:["*"]`=all, `grant`=ALLOW\|DENY; no category/data; scalars accepted, the echo is arrays — readLocal/readServer normalize to arrays). create `POST /rest/acl` ARRAY; update `POST …/{id}` FULL-REPLACE; delete `DELETE …/{id}`. **get-ALL 500s live (T01006)** → read BY ID only, no `list`/`scan`, NO `restPath` (#116); **missing ACL GETs as 500 T01002**. **The GET echo has two shapes**: right after a REST write a lazy `ACLProxy` WITHOUT entries; an ACL loaded from storage a full `AccessControlList` WITH entries. readServer: full echo → authoritative; proxy → completed with the entries uxc LAST WROTE to that target (state `entries`, recorded by create/update and `baseState`), falling back to the local file only without a record (overlaying the local file made a local entry edit invisible or a conflict — #12). Pushed BEFORE the classes that reference it (`data.ACL`). |
+| 8 | `fd.acl` | JSON | ✅ **policy `managed`** (full write; live-verified fd.demo 2026-07-15/16 + 2026-10-01, LEARNINGS §37/§48). DTO `{id, name, entries[{principal[], permission[], grant}]}` (`principal:["*"]`=all, `grant`=ALLOW\|DENY; no category/data; scalars accepted, the echo is arrays — readLocal/readServer normalize to arrays). create `POST /rest/acl` ARRAY; update `POST …/{id}` FULL-REPLACE; delete `DELETE …/{id}`. **get-ALL 500s live (T01006)** → read BY ID only, no `list`/`scan`, NO `restPath` (#116); **missing ACL GETs as 500 T01002**. **The GET echo has two shapes**: right after a REST write a lazy `ACLProxy` WITHOUT entries; an ACL loaded from storage a full `AccessControlList` WITH entries. readServer: full echo (an `entries` array, EMPTY included — server-side emptying reads as a server edit) → authoritative; proxy → completed with the entries uxc LAST WROTE to that target (state `entries`, recorded by create/update and `baseState`); without a record (a base from uxc 0.24) the local file is overlaid ONLY while its hash equals the recorded `syncedHash` (it then is what was pushed), otherwise readServer marks the form `unknown` ("permissions unknown") and sync never records a base from it: `status` judges file vs base only (`local` for an edit — push needs no `--force` — `insync` otherwise; no base → `collision`), `pull` refuses, `serverHash` is null (an owned-upgrade claim stays `collision`). Overlaying the local file unconditionally made a local entry edit invisible (`rebased`) or a conflict — #12. Pushed BEFORE the classes that reference it (`data.ACL`). |
 | 9 | `fd.script` | meta+`.js` | ✅ Script-class doc; exists-check FIRST, fresh tmp per attempt (T00707); create or update-in-place (GET → `files:[{id:tmp}]` → `POST /rest/documents/{id}` ARRAY); keep `RegistrationOrder` tag; cache clear |
 | 10 | `fd.guiconfig` | meta+`.xml` | ✅ as script, class GUIConfiguration. `validate()` **in the tool**: XML well-formed; bean-id uniqueness across the package; refusal list for live singleton bean ids (`componentProperties`, `componentActivityConfigurations` — merge-into, never redefine); `--check-collisions` lists bean ids across live GUIConfiguration docs |
 | 11 | `fd.handler` | meta + resolved script/filter | ✅ see §7.11 below |
@@ -627,12 +627,19 @@ the current package (backfill/repair).
 state), so every resource changed since the installed version used to classify as a no-base
 `collision` and `--force` became mandatory — blunting a guard meant for FOREIGN same-id objects.
 Decision: receipts now record **per-resource hashes** (`resourceHashes: {"kind/id": <first 16 hex
-of the sync hash>}` — AI receipt JSON; FD tag **`UxcResourceHashes`** = `kind/id=<hex>,…`, its
-tagclass created on demand like `UxcCompat`). The value is the sync base each resource has after the
-deploy (= what the server holds). `import` passes them explicitly; `writeReceipts` otherwise derives
-them from `ctx.pkg`'s sync state, so `push --all` and `installed --write` record them too. Backward
-compatible: older uxc ignore the field; a server refusing the tag costs the hashes (warned, retried
-without), never the receipt. 64-bit prefixes are ample to tell "unchanged" from "edited".
+of the sync hash>}` — AI receipt JSON; on FlowerDocs a JSON **content file** `uxc-receipt.json`
+(`{"kind":"uxc-receipt-content/1","resourceHashes":{…}}`) attached to the receipt DOCUMENT). Never a
+tag: a document takes a file without any class change, so recording hashes costs **zero schema
+writes** (no tagclass, no `UxcPackage` class update — review of 0.25.0) and has no tag-value length
+limit. The file is written when the receipt carries hashes, or when the doc already holds one (merged:
+its other keys kept, `resourceHashes` replaced or dropped — stale hashes never survive); a plain receipt
+on a fileless doc attaches nothing (the pre-#52 write). Readers fetch it with the doc
+(`readReceipts`/`readReceiptsChecked`) and tolerate its absence (older receipt: hashes null). The value
+is the sync base each resource has after the deploy (= what the server holds). `import` passes them
+explicitly; `writeReceipts` otherwise derives them from `ctx.pkg`'s sync state, so `push --all` and
+`installed --write` record them too. Backward compatible: older uxc ignore the field/file; a server
+refusing the upload costs the hashes (warned, retried without), never the receipt. 64-bit prefixes are
+ample to tell "unchanged" from "edited".
 Import pre-flight (`reclassifyOwned`, both `uxc import` and `uxc mp install`, `--report` included):
 a no-base `collision` whose kind/id is in the installed receipt for the SAME package code (any
 version; `ownedByReceipt` merges both surfaces) is ours —
@@ -641,12 +648,20 @@ version; `ownedByReceipt` merges both surfaces) is ours —
 - recorded hash != server → **`conflict`** "edited on the server since <code>@<v> was installed",
   refused like any collision (`--force` overwrites the edit);
 - receipt lists it but records no hash (written by an older uxc) → **`upgrade` with a warning**
-  listing those resources: edits since the install are undetectable, but the receipt PROVES the
-  object is ours, and refusing would keep `--force` mandatory for every pre-#52 install.
+  listing those resources — ONLY when the id carries the package's own id prefix (`prefixForms`,
+  strict word boundary, manifest `idPrefixes` honoured). A hash-less receipt proves nothing about the
+  object's content, and its resource list can be stale or name a shared id: an unprefixed id
+  (`fd.tagclass-delta`/`ai.llm` targets, adopted foreign ids) keeps the plain `collision`. Refusing
+  the prefixed ones would keep `--force` mandatory for every pre-#52 install.
 Never weakened: an id NOT in our receipt (foreign, another package's code, no receipt, receipts
 unreadable, server re-read failed) keeps the plain collision refusal. A uxc release that changes
 canonical hashing makes untouched objects look edited (a safe false refusal — `--force`). Results
 carry `owned: {receipt, upgraded, unknownBase, edited}`.
+
+**`uxc destroy` removes the receipts** (`removeReceipts`): after every teardown step succeeded, the
+FD receipt document (its content file with it) and the AI receipt prompt of THIS package code are
+deleted — a receipt must not claim a package that is gone. A failed step keeps them (the package is
+still partly installed; warned). Absent receipts are not an error.
 
 ## 20. Pre-install diagnostics (`uxc doctor --ready` / `--sandbox` / `--ai-smoke`)
 
@@ -1235,9 +1250,15 @@ A dataset can be fed by several installed packages: the Case Management product 
 Purchase Order Management `po`) both contribute rows to `CmTeams`. `--prune` deletes "server rows absent
 from MY local file" — in a shared dataset that is the OTHER package's rows. It now never does.
 
-- **Who owns a row** (`lib/ownership.mjs`): the other packages on the target, read from the installation
-  receipts (DESIGN §19, `readReceiptsChecked`, both surfaces) plus the manifest's declared `dependencies`
-  (an offline floor: receipts unreadable still protects the dependency). Never the package itself. A
+- **Who owns a row** (`lib/ownership.mjs` `rowOwners`): the other packages INSTALLED on the target,
+  read from the installation receipts (DESIGN §19, `readReceiptsChecked`, both surfaces). A declared
+  dependency counts only when it is installed (has a receipt). Each successful read records that set in
+  sync state (`installedPackages` per target, `pkg.setInstalledSeen` — written only when it changes).
+  Receipts UNREADABLE: the owners are the set recorded at the LAST successful read (empty if never
+  read), so the dataset hash does not move with a read failure; and every WRITE — push (incl.
+  `--force`), pull, prune, `remove()` — additionally leaves alone the rows carrying a declared
+  dependency's prefix (`guardOwners`; named in a "NOT written (fail safe)" warning; pull keeps the local
+  line as is). Unprefixed rows keep their rule below. Never the package itself. A
   package owns the ids carrying its prefix forms, always derived from its code (`prefixForms`:
   `Cm`/`cm`/`cm-`/`CM_`) — receipts carry no `idPrefixes`, so only THIS package's manifest
   `idPrefixes` is honoured.
@@ -1271,8 +1292,8 @@ from MY local file" — in a shared dataset that is the OTHER package's rows. It
   row helpers (`load()` -> `rowStatus`/`pullRows`/`pushRows`) keep only the rows that are not provably
   another package's (`ownedView`): own-prefixed rows plus unprefixed ones (receipts read; receipts
   unreadable, unprefixed rows stay in the hash exactly as before so a flapping gateway causes no false
-  drift — they are still never deleted on that ground). Rows of another installed package or declared
-  dependency are left out. Consequences: a product and its extension feeding one class each hash only
+  drift — they are still never deleted on that ground). Rows of another installed package (receipts
+  unreadable: of a package installed at the last successful read) are left out. Consequences: a product and its extension feeding one class each hash only
   their own rows, so `status --remote` settles for both after both pushed (the other package's rows
   print as an informational `note` on the row — `+381 rows of po (… not hashed, not drift)` — even
   when in sync); `push`/`push --all`/import of the extension classifies only its own rows (no whole-class
@@ -1282,8 +1303,8 @@ from MY local file" — in a shared dataset that is the OTHER package's rows. It
   upserted, never deleted, also under `--force` (`--force` overrides conflicts on own rows only) — and
   named in a warning (`skippedForeign`). `data push` reports `serverOnly` = OUR server-only rows and
   `foreign: [{id, code}]` apart.
-- **Hash stability**: alone on the target (no other receipt, no dependency) nothing is foreign, the view
-  IS the full-class read and every server form/hash is byte-identical to before (asserted in
+- **Hash stability**: alone on the target (no other receipt; a declared but uninstalled dependency
+  changes nothing) nothing is foreign, the view IS the full-class read and every server form/hash is byte-identical to before (asserted in
   `test/data-shared-class.test.mjs`; verified on examples/ct-package and uxoai: 0 local or server hash
   differences vs 0.24.0).
 - Limit: a row of another package that carries NO prefix of it (a legacy code such as `SUPPLY_PLANNING`)

@@ -130,16 +130,51 @@ test('#113 --force on the extension (generic and data push --prune --yes) never 
   assert.ok(E.warns.some((w) => /belong to another installed package — never pushed nor deleted/.test(w)));
 });
 
-test('#113 receipts unreadable: the declared dependency\'s rows stay out of the hash and are never deleted', async () => {
+test('#113 receipts unreadable, never read before: the hash is the full class (0.24.0), but no write touches the dependency\'s rows', async () => {
   const { core, po } = sharedTarget();
   core.rcpt.clear(); core.store.set('LEGACY', row('LEGACY'));
   const gateway = { get: async () => { throw new Error('ECONNREFUSED'); } };
+  // the extension's file carries a stale, edited copy of a product row and a tombstone for another
+  const rows = [...EXT_ROWS.map((id) => row(id)), row('CmCaseTypes_CLAIM', 'HIJACK'), { _id: 'CmCaseTypes_INCIDENT', _deleted: true }];
+  writeFileSync(join(po.dir, `data/${po.name}.jsonl`), rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
   const E = ctxFor(po.dir, core, { gateway });
-  const [r] = await pushResources(E.ctx, E.pkg.entries(), { force: true });
-  assert.notEqual(r.action, 'refused');
   const sRes = await adapter.readServer(E.ctx, po.name);
-  // own + unprovable rows hash as before (LEGACY stays in, no false drift); cm (dependency) is out
-  assert.deepEqual([...sRes.rows.keys()], ['LEGACY', ...EXT_ROWS]);
+  // no installed set was ever recorded: nothing is foreign, every class row hashes (as 0.24.0 did)
+  assert.deepEqual([...sRes.rows.keys()], ['CM_LEGACY_TYPE', 'CmCaseTypes_CLAIM', 'CmCaseTypes_INCIDENT', 'LEGACY']);
+  assert.equal(E.pkg.installedSeen('t1'), null);
+  // WRITES fail safe: push --force --prune --yes never creates/updates/deletes a cm-prefixed row
+  const rep = await pushRows(E.ctx, E.pkg, po.name, { force: true, prune: true, yes: true });
+  assert.deepEqual(core.log.deleted, []);
+  assert.deepEqual(core.store.get('CmCaseTypes_CLAIM').tags[0].value, ['1'], 'never overwritten');
+  assert.deepEqual(rep.skippedForeign.map((f) => `${f.id}:${f.code}`), ['CmCaseTypes_CLAIM:cm', 'CmCaseTypes_INCIDENT:cm']);
+  assert.deepEqual(rep.keptForeign.map((f) => f.id).sort(), ['CM_LEGACY_TYPE']);
+  assert.deepEqual(rep.keptUnproven, ['LEGACY']);
+  assert.ok(E.warns.some((w) => /receipts could not be read \(uxopian-ai: ECONNREFUSED\)/.test(w) && /NOT written \(fail safe\)/.test(w) && /CmCaseTypes_CLAIM \(cm\)/.test(w)), E.warns.join('\n'));
+  // ... and pull never brings them in (nor drops the local lines)
+  const pulled = await pullRows(E.ctx, E.pkg, po.name);
+  assert.deepEqual(pulled.added, ['LEGACY']); // an unprefixed row is not another package's: pulled as before
+  assert.deepEqual(pulled.skippedGuarded.sort(), ['CM_LEGACY_TYPE', 'CmCaseTypes_CLAIM', 'CmCaseTypes_INCIDENT']);
+  const text = readFileSync(join(po.dir, `data/${po.name}.jsonl`), 'utf8');
+  assert.ok(!/CM_LEGACY_TYPE/.test(text) && /HIJACK/.test(text), 'nothing pulled, the stale local line kept as is');
+});
+
+test('#113 receipts unreadable AFTER a successful read: the last installed set keeps the hash stable', async () => {
+  const { core, po } = sharedTarget();
+  core.store.set('LEGACY', row('LEGACY'));
+  let down = false;
+  const gateway = { get: async () => { if (down) throw new Error('ECONNREFUSED'); return []; } };
+  const E = ctxFor(po.dir, core, { gateway });
+  await pushRows(E.ctx, E.pkg, po.name, {});
+  const readable = await adapter.readServer(E.ctx, po.name);
+  const statusReadable = (await statusAll(E.ctx, { remote: true })).rows[0];
+  assert.deepEqual(E.pkg.installedSeen('t1'), ['cm'], 'persisted at the successful read');
+  assert.deepEqual(JSON.parse(readFileSync(join(po.dir, '.uxc/state.json'), 'utf8')).targets.t1.installedPackages, ['cm']);
+  down = true; core.rcpt.clear();
+  const unreadable = await adapter.readServer(E.ctx, po.name);
+  assert.deepEqual([...unreadable.rows.keys()], ['LEGACY', ...EXT_ROWS]);
+  assert.equal(unreadable.contents[`${po.name}.jsonl`].toString(), readable.contents[`${po.name}.jsonl`].toString());
+  const statusDown = (await statusAll(E.ctx, { remote: true })).rows[0];
+  assert.equal(statusDown.state, statusReadable.state, 'no drift from the read failure');
   await pushRows(E.ctx, E.pkg, po.name, { prune: true, yes: true, force: true });
   assert.deepEqual(core.log.deleted, []); // LEGACY unproven, cm rows foreign: nothing provably ours to prune
 });

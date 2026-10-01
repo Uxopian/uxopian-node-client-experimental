@@ -14,8 +14,11 @@ registry.mjs package object. `ctx.out` is output.mjs `out(flags)`.
 ```js
 export function localOf(pkg, entry)            // -> {obj, contents?}|null  (adapter.readLocal)
 export function localHash(pkg, entry)          // -> 'sha256:…'|null
-export async function serverOf(ctx, entry)     // -> {obj, contents?}|null  (adapter.readServer)
-export async function serverHash(ctx, entry)   // -> 'sha256:…'|null
+export async function serverOf(ctx, entry)     // -> {obj, contents?, unknown?}|null  (adapter.readServer)
+export async function serverHash(ctx, entry)   // -> 'sha256:…'|null  (null also when the form is `unknown`)
+// `unknown: '<reason>'` (fd.acl proxy echo with no record, §48): classify judges file vs base only
+// (insync | local; no base -> collision) and never records a base; push treats the server as = base;
+// pull refuses.
 export function baseHash(pkg, targetName, entry) // from state
 // One resource's 3-way classification (full matrix incl. no-base rows + rebased):
 export async function classify(ctx, entry)     // -> {state: 'insync'|'local'|'server'|'rebased'|'conflict'|'server-missing'|'new'|'adopted'|'collision'|'retired'|'external'|'unsupported', detail?}
@@ -100,7 +103,8 @@ export async function importPackage(ctx, src, { remap = null, force = false, ign
 //   pushResources in PUSH_ORDER -> verify summary.
 //   OWNED UPGRADES (issue #52, DESIGN §19): no-base 'collision' rows listed in THIS code's installed
 //   receipt are re-judged by reclassifyOwned -> 'upgrade' (pushable, no --force) | 'conflict'
-//   ("edited on the server since <code>@<v> was installed"); ids not in the receipt stay 'collision'.
+//   ("edited on the server since <code>@<v> was installed"); ids not in the receipt stay 'collision',
+//   and so do ids the receipt lists WITHOUT a hash unless they carry the package's own id prefix.
 //   Result (and the --report result) carries owned: {receipt:'code@v', upgraded, unknownBase, edited}.
 export async function reclassifyOwned(ctx, pkg, rows, own)  // mutates rows; seeds base for 'upgrade' rows
 // lib/receipt.mjs
@@ -108,8 +112,13 @@ export function ownedByReceipt(receipts, code)    // -> {code, version, keys:Set
 export function resourceHashesFromState(pkg, targetName, resources)  // -> {"kind/id": shortHash(syncedHash)}
 export const shortHash                            // 'sha256:<hex>' -> first 16 hex
 // buildReceipt(..., { resourceHashes }) -> receipt.resourceHashes (sorted; absent when empty);
-// FD tag UxcResourceHashes 'kind/id=<hex>,…'; writeReceipts defaults resourceHashes from ctx.pkg state;
-// writeFdReceipt retries WITHOUT the hash tag on failure (receipt.warning says so)
+// FD: JSON content file 'uxc-receipt.json' {kind:'uxc-receipt-content/1', resourceHashes} on the receipt
+// DOCUMENT (FD_CONTENT_FILE/FD_CONTENT_KIND) — no tag, zero schema writes; merged into an existing file;
+// none attached for a plain receipt on a fileless doc. writeReceipts defaults resourceHashes from ctx.pkg
+// state; writeFdReceipt retries WITHOUT the file on failure (receipt.warning says so).
+export async function readFdReceiptContent(core, doc)  // -> object|null (no file / unreadable = null)
+export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes
+export async function removeReceipts(ctx, code)  // destroy: FD doc + AI prompt -> [{surface, ok, action:'deleted'|'absent', error?}]
 ```
 
 ## lib/compat.mjs — upgrade report (DESIGN §26)
@@ -668,7 +677,11 @@ Adapter `fd.tagclass-delta`: push/remove serialized; optional adapter hooks read
 Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pushed).
 
 ## lib/ownership.mjs (DESIGN §31) — row ownership for `data push --prune`, fd.dataset remove() and the dataset's own view
-    rowOwners(ctx, manifest) -> {owners:[{code, forms, source:'receipt'|'dependency'}], receiptsReadable, receiptErrors:[string]}
+    rowOwners(ctx, manifest) -> {owners, guardOwners:[{code, forms, source:'receipt'|'last-read'|'dependency'}], receiptsReadable, receiptErrors:[string]}
+      readable: owners = INSTALLED packages (receipts; a dependency without one is no owner), guardOwners === owners,
+        and the set is persisted (pkg.setInstalledSeen(target, codes) -> state.targets[t].installedPackages)
+      unreadable: owners = pkg.installedSeen(target) (last successful read; [] if never), guardOwners = owners ∪
+        declared dependencies — every WRITE (push/--force/pull/prune/remove) skips guardOwners' rows
     foreignOwners(ctx, manifest) -> owners                                             (rowOwners(...).owners)
     prefixMatchLength(forms, id, {strict?}) -> n   longest carried prefix form, 0 = none   PURE
     splitRowOwnership(ids, manifest, owners, {receiptsReadable=true}) -> {own:[id], foreign:[{id, code}], unproven:[id]}   PURE
@@ -678,12 +691,13 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
     fd.dataset remove(ctx, id) -> {deleted:[id], keptForeign, keptUnproven}   (rm --server, destroy, generic prune)
     fd.dataset readServer(ctx, id) -> {obj, contents, rows, foreign?:[{id, code}]}   rows/contents = OWN view only
       (#114: another installed package's rows excluded from the hash; alone on the target = full class, byte-identical;
-      receipts unreadable -> unprefixed rows stay in, dependency rows out). foreign is never hashed.
+      receipts unreadable -> unprefixed rows stay in, last-read installed packages' rows out). foreign is never hashed.
     fd.dataset presence(ctx, entry) -> {note} | undefined   "+n rows of <code> (…not drift)" from the last readServer
     rowStatus(...) gains foreign?: [{id, code}], skippedForeign?: [id]
     pushRows(...) report gains skippedForeign: [{id, code}] (local rows/tombstones of another package: never
       upserted nor deleted, also under --force), foreign: [{id, code}]; serverOnly = OUR server-only rows only
-    pullRows(...) report gains foreign?: [{id, code}]; never writes another package's rows to the local file
+    pullRows(...) report gains foreign?: [{id, code}], skippedGuarded?: [id] (receipts unreadable: guard rows
+      neither pulled nor dropped); never writes another package's rows to the local file
     foreignNote(foreign) -> string | null   (exported from fd-dataset.mjs)
   sync.mjs statusAll rows carry note?: string (informational, never drift); status prints in-sync rows that have one.
   lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged

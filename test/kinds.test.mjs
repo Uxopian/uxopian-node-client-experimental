@@ -360,7 +360,7 @@ test('fd.vfinstance create: no-slash first; falls back to the slash form on 404 
   assert.deepEqual(d.calls, ['/rest/virtualFolder']);
 });
 
-test('fd.acl readServer: ACLProxy echo completed from the entries LAST WRITTEN, else local (§37/§48)', async () => {
+test('fd.acl readServer: ACLProxy echo completed from the entries LAST WRITTEN, else the local file only while it IS the base (§37/§48)', async () => {
   const { KINDS } = await import('../lib/kinds/index.mjs');
   const acl = KINDS['fd.acl'];
   const proxy = { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: 'CtXAcl', name: 'CtXAcl' };
@@ -380,12 +380,23 @@ test('fd.acl readServer: ACLProxy echo completed from the entries LAST WRITTEN, 
     // recorded entries win over the local file (a local edit must NOT leak into the server side)
     const r = await acl.readServer(mkCtx({ withLocal: true, state: { entries: written } }), 'CtXAcl');
     assert.deepEqual(r.obj.entries, written);
-    // no record (base from an older uxc / adopt): fall back to the local file, normalized to arrays
-    const f = await acl.readServer(mkCtx({ withLocal: true, state: { syncedHash: 'x' } }), 'CtXAcl');
+    // no record (base from uxc < 0.25): the local file stands for the server ONLY when its hash is
+    // the recorded base (it then is what was pushed), normalized to arrays
+    const localObj = acl.readLocal().obj;
+    const pushedHash = hashResource('fd.acl', { ...localObj, entries: [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }] });
+    const f = await acl.readServer(mkCtx({ withLocal: true, state: { syncedHash: pushedHash } }), 'CtXAcl');
     assert.deepEqual(f.obj.entries, [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }]);
-    // without a package (doctor / adopt): the proxy passes through untouched
+    assert.equal(f.unknown, undefined);
+    // ... an edited local file (hash != base), or no base at all: the permissions are UNKNOWN
+    for (const state of [{ syncedHash: 'sha256:other' }, null]) {
+      const u = await acl.readServer(mkCtx({ withLocal: true, state }), 'CtXAcl');
+      assert.equal(u.obj.entries, undefined, 'never the local entries');
+      assert.match(u.unknown, /permissions unknown/);
+    }
+    // without a package (doctor): the proxy passes through untouched
     const bare = await acl.readServer(mkCtx({ withLocal: false }), 'CtXAcl');
     assert.equal(bare.obj.entries, undefined);
+    assert.equal(bare.unknown, undefined);
   } finally { acl.readLocal = origReadLocal; }
 });
 
@@ -477,5 +488,75 @@ test('#116: status --remote reads fd.acl + fd.workflow by id (not the empty batc
     store.delete('/rest/acl/acl-secrets');
     const s2 = await statusAll(ctx, { remote: true });
     assert.equal(s2.rows.find((r) => r.kind === 'fd.acl').state, 'server-missing');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// #12 review: a base recorded by uxc 0.24 (no `entries` record in state) + an UNPUSHED local entry
+// edit must read as a local edit — the old local-file overlay made the server look identical to the
+// edited file, so status said `rebased` and recorded a base the server never had.
+function aclFixture() {
+  const dir = mkdtempSync(join(os.tmpdir(), 'uxc-acl24-'));
+  writeFileSync(join(dir, 'uxopian-project.json'), JSON.stringify({ code: 'ct', name: 'x', format: 'uxopian-package/1', version: '1.0.0', products: ['flowerdocs'] }));
+  mkdirSync(join(dir, 'fd/acls'), { recursive: true });
+  writeFileSync(join(dir, 'registry.json'), JSON.stringify({ resources: [{ kind: 'fd.acl', id: 'CtAcl', path: 'fd/acls/CtAcl.json' }] }));
+  const pushed = { id: 'CtAcl', name: 'CtAcl', entries: [{ principal: ['*'], permission: ['READ'], grant: 'ALLOW' }] };
+  writeFileSync(join(dir, 'fd/acls/CtAcl.json'), JSON.stringify(pushed));
+  const proxy = { type: 'com.flower.docs.domain.acl.ACLProxy', rules: [], id: 'CtAcl', name: 'CtAcl' };
+  // the 0.24 base: hash(proxy echo overlaid with the local entries pushed then) — and no `entries` record
+  mkdirSync(join(dir, '.uxc'), { recursive: true });
+  writeFileSync(join(dir, '.uxc/state.json'), JSON.stringify({ targets: { t1: { pendingCacheClear: false, fixtures: {}, resources: {
+    'fd.acl/CtAcl': { syncedHash: hashResource('fd.acl', { ...proxy, entries: pushed.entries }) },
+  } } } }));
+  const server = { acl: structuredClone(pushed), full: false };
+  const core = {
+    getOne: async (p) => (p === '/rest/acl/CtAcl' && server.acl
+      ? (server.full ? { type: 'com.flower.docs.domain.acl.AccessControlList', ...structuredClone(server.acl) } : { ...proxy })
+      : null),
+    post: async (p, b) => { server.acl = structuredClone(b[0]); return b; },
+    del: async () => { server.acl = null; },
+  };
+  return { dir, server, core, pushed };
+}
+
+test('#12 upgrade from 0.24 state + unpushed entries edit: status says local edit (push needed), never rebased', async () => {
+  const { openPackage } = await import('../lib/registry.mjs');
+  const { pushResources, statusAll, pullResources } = await import('../lib/sync.mjs');
+  const { dir, server, core, pushed } = aclFixture();
+  try {
+    const pkg = openPackage(dir);
+    const ctx = { pkg, requirePkg: () => pkg, connect: () => {}, target: { name: 't1', user: 'admin' }, clients: { core, cacheClear: async () => {} }, out: { line() {}, note() {}, warn() {} } };
+    // untouched file = the pushed one: the overlay is proven, insync
+    assert.equal((await statusAll(ctx, { remote: true })).rows[0].state, 'insync');
+    // the unpushed edit
+    const edited = { ...pushed, entries: [...pushed.entries, { principal: ['ADMIN'], permission: ['UPDATE'], grant: 'ALLOW' }] };
+    writeFileSync(join(dir, 'fd/acls/CtAcl.json'), JSON.stringify(edited));
+    const baseBefore = pkg.resState('t1', 'fd.acl', 'CtAcl').syncedHash;
+    const row = (await statusAll(ctx, { remote: true })).rows[0];
+    assert.equal(row.state, 'local', JSON.stringify(row));
+    assert.match(row.detail, /local edit — uxc push/);
+    assert.equal(pkg.resState('t1', 'fd.acl', 'CtAcl').syncedHash, baseBefore, 'no base recorded from the local file');
+    const [p] = await pullResources(ctx, pkg.entries());
+    assert.equal(p.action, 'refused', 'an unknown server form is never pulled over the file');
+    // push needs no --force, and writes the edit
+    const [up] = await pushResources(ctx, pkg.entries());
+    assert.equal(up.action, 'updated', JSON.stringify(up));
+    assert.equal(server.acl.entries.length, 2);
+    assert.equal((await statusAll(ctx, { remote: true })).rows[0].state, 'insync');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#12 a full echo with EMPTY entries is compared as empty: server-side emptying is detected', async () => {
+  const { openPackage } = await import('../lib/registry.mjs');
+  const { pushResources, statusAll } = await import('../lib/sync.mjs');
+  const { dir, server, core } = aclFixture();
+  try {
+    const pkg = openPackage(dir);
+    const ctx = { pkg, requirePkg: () => pkg, connect: () => {}, target: { name: 't1', user: 'admin' }, clients: { core, cacheClear: async () => {} }, out: { line() {}, note() {}, warn() {} } };
+    await pushResources(ctx, pkg.entries(), { force: true }); // records the written entries
+    assert.equal((await statusAll(ctx, { remote: true })).rows[0].state, 'insync');
+    server.full = true; server.acl.entries = []; // emptied on the server, now loaded from storage
+    const row = (await statusAll(ctx, { remote: true })).rows[0];
+    assert.equal(row.state, 'server', JSON.stringify(row));
+    assert.deepEqual((await acl.readServer(ctx, 'CtAcl')).obj.entries, [], 'not completed from the recorded entries');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

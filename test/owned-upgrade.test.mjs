@@ -13,8 +13,9 @@ import { importPackage } from '../lib/packageio.mjs';
 import { serverHash } from '../lib/sync.mjs';
 import {
   buildReceipt, writeFdReceipt, writeReceipts, receiptFromFdDoc, receiptFromAiPrompt, ownedByReceipt,
-  shortHash, resourceHashesFromState, FD_HASHES_TAG,
+  shortHash, resourceHashesFromState, FD_CONTENT_KIND, FD_TAGS, readReceipts,
 } from '../lib/receipt.mjs';
+import { reclassifyOwned } from '../lib/packageio.mjs';
 import { tag, tagsOf } from '../lib/util.mjs';
 
 const SAMPLE = new URL('../examples/sample-package', import.meta.url).pathname;
@@ -32,13 +33,14 @@ function pkgDir(version = '0.2.0') {
   return dir;
 }
 
+// hashes ride as the receipt document's JSON content file (never a tag — zero schema writes)
 const receiptDoc = ({ code = 'sp', version = '0.1.0', resources = null, hashes = null }) => ({
   id: `UXC_PKG_${code.toUpperCase()}`,
   tags: [
     tag('UxcPackageCode', code), tag('UxcPackageVersion', version),
     ...(resources ? [tag('UxcResources', resources.join(','))] : []),
-    ...(hashes ? [tag(FD_HASHES_TAG, Object.entries(hashes).map(([k, v]) => `${k}=${v}`).join(','))] : []),
   ],
+  ...(hashes ? { files: [{ id: `f_${code}` }], _content: JSON.stringify({ kind: FD_CONTENT_KIND, resourceHashes: hashes }) } : {}),
 });
 
 function fakeCtx({ server = {}, receipts = [] } = {}) {
@@ -57,6 +59,7 @@ function fakeCtx({ server = {}, receipts = [] } = {}) {
       core: {
         getOne: async (p) => server[p] ?? null,
         getDoc: async (id) => docs[id] ?? null,
+        getContent: async (id, fid) => (docs[id]?.files?.[0]?.id === fid ? Buffer.from(docs[id]._content) : null),
         search: async () => ({ results: Object.keys(docs).map((id) => ({ id })) }),
         post: boom('core.post'), put: boom('core.put'), del: boom('core.del'), upsertDoc: boom('core.upsertDoc'),
       },
@@ -159,36 +162,84 @@ test('old receipt WITHOUT hashes: listed resources upgrade with a warning naming
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('receipts record per-resource hashes: FD tag + AI JSON round-trip, derived from sync state, merged by ownedByReceipt', async () => {
+/** A fake FD core that stores documents WITH their content files the way upsertDoc does
+ *  (files given -> replaced; none -> the server's kept) and serves them back through getContent. */
+function fdStore({ failUpload = false } = {}) {
+  const docs = new Map(); const blobs = new Map(); const calls = [];
+  let n = 0;
+  const core = {
+    calls, docs,
+    // infra present as any pre-#52 uxc left it (the class references exactly FD_TAGS)
+    getOne: async (p) => (p.startsWith('/rest/documentclass/') ? { id: 'UxcPackage', tagReferences: FD_TAGS.map((tagName) => ({ tagName })) } : { id: p }),
+    post: async (p, b) => { calls.push(['post', p, b?.[0]?.id]); },
+    getDoc: async (id) => (docs.has(id) ? structuredClone(docs.get(id)) : null),
+    getContent: async (id, fid) => blobs.get(fid) ?? null,
+    upsertDoc: async (doc, files = []) => {
+      calls.push(['upsertDoc', doc.id, files.length]);
+      if (files.length && failUpload) throw new Error('413 upload refused');
+      const prev = docs.get(doc.id);
+      const refs = files.map((f) => { const fid = `file_${++n}`; blobs.set(fid, Buffer.from(f.bytes)); return { id: fid, name: f.filename }; });
+      docs.set(doc.id, { ...prev, ...doc, files: refs.length ? refs : prev?.files ?? [] });
+    },
+    search: async () => ({ results: [...docs.keys()].map((id) => ({ id })) }),
+  };
+  return core;
+}
+
+test('receipts record per-resource hashes: FD content file + AI JSON round-trip, derived from sync state, merged by ownedByReceipt', async () => {
   const hashes = { 'fd.tagclass/B': 'bbbb', 'ai.prompt/a': 'aaaa' };
   const r = buildReceipt({ code: 'sp', version: '1.0.0' }, { resources: ['ai.prompt/a', 'fd.tagclass/B'], resourceHashes: hashes });
   assert.deepEqual(Object.keys(r.resourceHashes), ['ai.prompt/a', 'fd.tagclass/B']);
   assert.equal(buildReceipt({ code: 'sp' }, { resources: ['x/y'] }).resourceHashes, undefined); // absent when none
   assert.deepEqual(receiptFromAiPrompt({ id: 'uxcPkgSp', content: JSON.stringify(r) }).resourceHashes, hashes);
-  const fd = receiptFromFdDoc({ id: 'UXC_PKG_SP', tags: [tag('UxcPackageCode', 'sp'), tag(FD_HASHES_TAG, 'ai.prompt/a=aaaa,fd.tagclass/B=bbbb')] });
+  const fd = receiptFromFdDoc({ id: 'UXC_PKG_SP', tags: [tag('UxcPackageCode', 'sp')] }, { kind: FD_CONTENT_KIND, resourceHashes: hashes });
   assert.deepEqual(fd.resourceHashes, hashes);
-  assert.equal(receiptFromFdDoc({ id: 'UXC_PKG_SP', tags: [] }).resourceHashes, null);
+  assert.equal(receiptFromFdDoc({ id: 'UXC_PKG_SP', tags: [] }).resourceHashes, null); // older receipt: no file
 
   const state = { 'fd.tagclass/B': { syncedHash: 'sha256:0123456789abcdef0123' } };
   const pkg = { resState: (_t, kind, id) => state[`${kind}/${id}`] ?? null };
   assert.deepEqual(resourceHashesFromState(pkg, 't', ['fd.tagclass/B', 'ai.prompt/a']), { 'fd.tagclass/B': '0123456789abcdef' });
 
-  // writeReceipts defaults the hashes from ctx.pkg's sync state (push --all / installed --write)
-  const docs = [];
-  const ctx = {
-    target: { name: 't', user: 'u' }, pkg,
-    clients: { core: { getOne: async () => ({ tagReferences: [] }), post: async () => {}, upsertDoc: async (d) => { docs.push(d); } } },
-  };
-  await writeReceipts(ctx, { code: 'sp', version: '1.0.0', products: ['flowerdocs'] }, { resources: ['fd.tagclass/B'] });
-  assert.equal(tagsOf(docs[0])[FD_HASHES_TAG], 'fd.tagclass/B=0123456789abcdef');
+  // writeReceipts (the real path) defaults the hashes from ctx.pkg's sync state (push --all /
+  // installed --write) and puts them in the receipt doc's CONTENT FILE — no tag, no schema write
+  const core = fdStore();
+  const ctx = { target: { name: 't', user: 'u' }, pkg, clients: { core, gateway: { get: async () => [] } } };
+  const res = await writeReceipts(ctx, { code: 'sp', version: '1.0.0', products: ['flowerdocs'] }, { resources: ['fd.tagclass/B'] });
+  assert.equal(res[0].ok, true);
+  assert.deepEqual(core.calls.filter(([op]) => op !== 'upsertDoc'), [], 'zero schema writes');
+  const doc = core.docs.get('UXC_PKG_SP');
+  assert.equal(doc.tags.some((t) => /Hash/i.test(t.name)), false, 'no hash tag');
+  assert.equal(doc.files.length, 1);
+  const back = await readReceipts(ctx, { code: 'sp' });
+  assert.deepEqual(back[0].resourceHashes, { 'fd.tagclass/B': '0123456789abcdef' }, 'round-trips through the content file');
+  assert.deepEqual((await readReceipts(ctx))[0].resourceHashes, { 'fd.tagclass/B': '0123456789abcdef' }); // list-all path too
 
-  // a server refusing the hash tag costs the hashes, never the receipt
-  let n = 0;
-  const flaky = { ...ctx, clients: { core: { ...ctx.clients.core, upsertDoc: async (d) => { n += 1; if (d.tags.some((t) => t.name === FD_HASHES_TAG)) throw new Error('value too long'); docs.push(d); } } } };
-  const kept = await writeFdReceipt(flaky, { code: 'sp', version: '1.0.0' }, { resources: ['fd.tagclass/B'], resourceHashes: { 'fd.tagclass/B': 'x' } });
-  assert.equal(n, 2);
+  // a later receipt WITHOUT hashes rewrites the file without them (never leaves stale ones), keeping its other keys
+  const withExtra = fdStore();
+  withExtra.docs.set('UXC_PKG_SP', { id: 'UXC_PKG_SP', tags: [], files: [{ id: 'old' }] });
+  const blobOf = withExtra.getContent;
+  withExtra.getContent = async (id, f) => (f === 'old'
+    ? Buffer.from(JSON.stringify({ kind: FD_CONTENT_KIND, note: 'keep', resourceHashes: { 'x/y': 'stale' } }))
+    : blobOf(id, f));
+  const wctx = { target: { name: 't', user: 'u' }, clients: { core: withExtra, gateway: { get: async () => [] } } };
+  await writeFdReceipt(wctx, { code: 'sp', version: '1.0.1' }, { resources: ['x/y'] });
+  assert.equal(withExtra.calls.find(([op]) => op === 'upsertDoc')[2], 1, 'the file is rewritten');
+  const newDoc = withExtra.docs.get('UXC_PKG_SP');
+  assert.deepEqual(JSON.parse(String(await withExtra.getContent(newDoc.id, newDoc.files[0].id))), { kind: FD_CONTENT_KIND, note: 'keep' });
+  assert.equal((await readReceipts(wctx, { code: 'sp' }))[0].resourceHashes, null);
+
+  // a plain receipt on a doc WITHOUT content attaches nothing (the pre-#52 write, byte for byte)
+  const plain = fdStore();
+  await writeFdReceipt({ target: { name: 't', user: 'u' }, clients: { core: plain } }, { code: 'pl', version: '1.0.0' }, { resources: ['x/y'] });
+  assert.deepEqual(plain.calls, [['upsertDoc', 'UXC_PKG_PL', 0]]);
+
+  // a server refusing the content upload costs the hashes, never the receipt
+  const flaky = fdStore({ failUpload: true });
+  const kept = await writeFdReceipt({ target: { name: 't', user: 'u' }, clients: { core: flaky } }, { code: 'sp', version: '1.0.0' }, { resources: ['fd.tagclass/B'], resourceHashes: { 'fd.tagclass/B': 'x' } });
+  assert.deepEqual(flaky.calls.map((c) => c[2]), [1, 0]);
   assert.equal(kept.resourceHashes, undefined);
   assert.match(kept.warning, /hashes not recorded/);
+  assert.ok(flaky.docs.has('UXC_PKG_SP'));
 
   // ownership merges every surface's receipt for THIS code only
   const own = ownedByReceipt([
@@ -199,4 +250,24 @@ test('receipts record per-resource hashes: FD tag + AI JSON round-trip, derived 
   assert.deepEqual([...own.keys].sort(), ['a/1', 'b/2']);
   assert.deepEqual(own.hashes, { 'b/2': 'h' });
   assert.equal(ownedByReceipt([{ code: 'sp', version: '1.0.0' }], 'sp'), null); // no resource list = nothing claimable
+});
+
+test('stale receipt WITHOUT a hash may only claim ids carrying its own prefix; a recorded hash may claim any', async () => {
+  const server = { '/rest/tagclass/SpStatus': V1_STATUS, '/rest/tagclass/Status': { ...V1_STATUS, id: 'Status' } };
+  const ctx = fakeCtx({ server });
+  const seeded = [];
+  const pkg = { manifest: { code: 'sp' }, setResState: (_t, kind, id) => seeded.push(`${kind}/${id}`) };
+  const rowsOf = () => ['SpStatus', 'Status'].map((id) => ({ state: 'collision', kind: 'fd.tagclass', id, entry: { kind: 'fd.tagclass', id } }));
+  // hash-less receipt listing both: SpStatus (own prefix) upgrades, the unprefixed Status stays a collision
+  let rows = rowsOf();
+  let res = await reclassifyOwned(ctx, pkg, rows, ownedByReceipt([{ code: 'sp', version: '0.1.0', resources: ['fd.tagclass/SpStatus', 'fd.tagclass/Status'] }], 'sp'));
+  assert.deepEqual(rows.map((r) => `${r.id}:${r.state}`), ['SpStatus:upgrade', 'Status:collision']);
+  assert.deepEqual(res.unknownBase, ['fd.tagclass/SpStatus']);
+  assert.deepEqual(seeded, ['fd.tagclass/SpStatus'], 'no base seeded for the unproven claim');
+  // a recorded hash proves the claim whatever the id
+  rows = rowsOf();
+  const h = shortHash(await serverHash(fakeCtx({ server }), { kind: 'fd.tagclass', id: 'Status' }));
+  res = await reclassifyOwned(ctx, pkg, rows, ownedByReceipt([{ code: 'sp', version: '0.1.0', resources: ['fd.tagclass/Status'], resourceHashes: { 'fd.tagclass/Status': h } }], 'sp'));
+  assert.deepEqual(rows.map((r) => `${r.id}:${r.state}`), ['SpStatus:collision', 'Status:upgrade']);
+  assert.deepEqual(res.upgraded, ['fd.tagclass/Status']);
 });

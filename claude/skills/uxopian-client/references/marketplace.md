@@ -85,7 +85,7 @@ Without `--report` a `breaks` refuses the install (`--force` overrides).
 objects the installed receipt lists as this package's own upgrade as `upgrade` rows (unchanged since
 install) or refuse as `conflict` "edited on the server since <code>@<v> was installed" (a real edit:
 diff it, `--force` only with approval). Old receipts (no per-resource hashes) upgrade with a WARN
-listing the resources. Foreign same-id objects still refuse as `collision`. `--report` and the JSON
+listing the resources — only ids carrying the package's own prefix; others stay `collision`. Foreign same-id objects still refuse as `collision`. `--report` and the JSON
 result carry `owned: {receipt, upgraded, unknownBase, edited}`. Pass `--yes-removals` for the prune.
 
 ## Lifecycle
