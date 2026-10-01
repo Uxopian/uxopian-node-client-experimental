@@ -209,7 +209,7 @@ deploySafe}` to the result.
 3. **the connector-jar gate** — is `com.fast2.flowerdocs.FlowerInjector` (and
    `com.fast2.uxopianai.UxopianAIRequest`, if the map uses it) present in the catalog? If not, the
    worker lacks the connector jar and every FlowerDocs injection will fail at run time, not push
-   time (§F12). The advice is `uxc f2 lib push <jar>` (refused while a campaign runs; the broker
+   time (§F12). The advice is `uxc f2 lib push <jar> --yes` (refused while a campaign runs; the broker
    restarts the workers itself), never "restart the worker". This is a package **dependency** in the #46 sense, declarable as
    `requires.f2TaskClasses`.
 4. **the OpenSearch `create_index` block** — if `cluster.blocks.create_index: true` is set, EVERY

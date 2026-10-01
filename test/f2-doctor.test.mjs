@@ -166,7 +166,7 @@ test('f2.map package + a class missing from the catalog -> `uxc f2 lib push <jar
   const r = await doctor({}, ['doctor', '--f2'], { inPkg: true });
   assert.equal(r.status, 1, r.all);
   assert.match(r.all, /FAIL f2 connector jars\s+.*com\.fast2\.flowerdocs\.FlowerInjector.*NOT in the worker catalog/);
-  assert.ok(r.all.includes('`uxc f2 lib push <jar>` (refused while a campaign runs; the broker restarts the workers itself)'), r.all);
+  assert.ok(r.all.includes('`uxc f2 lib push <jar> --yes` (refused while a campaign runs; the broker restarts the workers itself)'), r.all);
   assert.ok(r.all.includes(LIB_PUSH_ADVICE));
   assert.doesNotMatch(r.all, /restart the worker/);
 });
