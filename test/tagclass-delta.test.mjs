@@ -407,7 +407,7 @@ test('legacy: the prefix check skips a declared value only; undeclared and malfo
   assert.equal(undeclared.length, 1);
   assert.equal(undeclared[0].code, 'EXT_TAG_VALUE_PREFIX');
   assert.match(undeclared[0].message, /"ORDER".*legacy/);
-  assert.deepEqual(checkTagDelta(LEG({ legacy: ['GHOST'] }), opts).map((e) => e.code), ['EXT_TAG_LEGACY']);
+  assert.deepEqual(checkTagDelta(LEG({ legacy: ['ORDER', 'GHOST'] }), opts).map((e) => e.code), ['EXT_TAG_LEGACY']);
   assert.deepEqual(checkTagDelta(LEG({ legacy: 'ORDER' }), opts).map((e) => e.code), ['EXT_TAG_LEGACY', 'EXT_TAG_VALUE_PREFIX']);
   // another unprefixed value stays flagged even when ORDER is declared
   const other = checkTagDelta(LEG({ allowedValues: [d('ORDER'), d('CLAIM')] }), opts);
