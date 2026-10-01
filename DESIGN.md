@@ -362,8 +362,22 @@ Tombstoned (`retired`) resources never push by default; `push <id> --revive` un-
     outside a work tree, or when git lists nothing on disk) the directory is walked.
   - **Always excluded**, on both paths and even if git tracks them: `.uxc/`, `.git` (dir or
     file), `marketplace/` (listing assets, uploaded separately), `node_modules/`, `.claude/`
-    (incl. `.claude/worktrees/`), `*.uxpkg`, and any subdirectory holding its own `.git` (a
-    nested worktree or repository). Tracked files under those are reported with a warning.
+    (incl. `.claude/worktrees/`), `*.uxpkg`, and a nested git **worktree** (a subdirectory whose
+    `.git` is a FILE pointing into a `/worktrees/` dir). Tracked files under those are reported
+    with a warning. A submodule (`.git` file into `/modules/`) or a nested full repo (`.git`
+    dir) ships like any directory, minus its own `.git`.
+  - **Registry wins over ignore rules**: a file owned by a registered resource (under a registry
+    entry path, incl. a `.json` meta's `<stem>.*` siblings; a manifest `dataSets` path; or
+    `uxopian-project.json`/`registry.json`/`marketplace.json`/`AGENTS.md`/`CLAUDE.md`/`compat.json`)
+    ships even when a `.gitignore` (own, parent repo, global excludes) ignores it — noted
+    "included although gitignored". A `node_modules/` or `.claude/` dir INSIDE a registry entry
+    path ships too (noted); the other hard excludes still apply there.
+  - **Symlinks are followed** (files and dirs, inside or outside the package, as the pre-0.24.1
+    copy did), cycle-guarded: a link resolving to an ancestor is reported `symlink-cycle`, a
+    dangling one `broken-symlink`. git lists a symlink / nested repo as ONE entry; its verdict
+    covers every file below it. On a case-insensitive filesystem (probed) git paths match
+    case-insensitively, so a case-only index/disk mismatch never reads as "gitignored".
+    Nothing is dropped silently: whatever is left out is in `excluded` with its reason.
   - export prints what it left out (grouped by excluded root, with sizes; `.uxc`/`.git` are
     not listed) and warns when the archive exceeds `UXC_EXPORT_WARN_MB` (default 25).
 - `uxc import <pkg.uxpkg|dir> [--code-remap ct=xy]` —

@@ -80,13 +80,17 @@ export function naturalVersion(v)          // '2026.0.0-ft10' -> '2026.0.0-ft.10
 ## lib/packageio.mjs
 
 ```js
-export async function exportPackage(ctx, { output, allowDirty = false })  // -> {output, files, entries, bytes, fileSource, excluded}
+export async function exportPackage(ctx, { output, allowDirty = false })  // -> {output, files, entries, bytes, fileSource, excluded, included}
 //   files from selectExportFiles (below) -> staged copy -> mcp/llm/agent/f2map secret scrub -> zip;
 //   notes what was left out (grouped, sizes), warns when the archive > UXC_EXPORT_WARN_MB (25)
-export function selectExportFiles(dir)          // -> {source:'git'|'walk', files:[rel], excluded:[{path, bytes, files, reason, tracked}]}
+export function selectExportFiles(dir, { caseInsensitive })  // -> {source:'git'|'walk', files:[rel], excluded:[{path, bytes, files, reason, tracked}], included:[{path, reason:'gitignored'|'tooling-dir', resource, files}]}
 //   git work tree: `git ls-files --cached --others --exclude-standard` (.gitignore honoured), else a walk;
-//   both: never .uxc/ .git marketplace/ node_modules/ .claude/ *.uxpkg, nor a subdir holding its own .git
-//   (nested worktree/repo) — even when git tracks them (warned as 'tracked')
+//   both: never .uxc/ .git marketplace/ node_modules/ .claude/ *.uxpkg, nor a nested git WORKTREE —
+//   even when git tracks them (warned as 'tracked'); registry-owned files ship even if gitignored and
+//   node_modules/.claude inside a registry entry path ship ('included', noted); symlinks followed
+//   (reasons 'symlink-cycle'/'broken-symlink'); submodules/nested repos ship minus .git;
+//   caseInsensitive defaults to isCaseInsensitiveFs(dir) (git path matching)
+export function isCaseInsensitiveFs(dir)        // -> boolean (case-swapped entry name resolves to the same inode)
 export function gitFileList(dir)                // -> {all:[rel], tracked:Set}|null (no git / not a work tree)
 export async function importPackage(ctx, src, { remap = null, force = false, ignoreClientVersion = false })
 //   unpack (or use dir) -> assertClientSupports(manifest) (refuse before any dir/write) ->
