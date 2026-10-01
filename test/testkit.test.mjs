@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mintId, makeRunId, createHarness, checkRequires, TestFail, TEST_ID_PREFIX } from '../lib/testkit.mjs';
+import { tag } from '../lib/util.mjs';
 
 /** ctx with scripted clients; records every mutating call. */
 function mockCtx({ docs = {}, providers = [], promptsOk = true } = {}) {
@@ -180,4 +181,65 @@ test('checkRequires: a transient read error is retried; a persistent one says "c
   d.requiresBackoffMs = [1];
   d.clients.core.getDoc = async () => { throw new Error('timeout'); };
   assert.match((await checkRequires(d, {}, { docs: ['CT_CONFIG'] })).reason, /could not check document CT_CONFIG/);
+});
+
+// #115 — a required resource the package does not carry resolves through its dependencies' receipts
+const receiptDoc = (code, version, resources) => ({
+  id: `UXC_PKG_${code.toUpperCase()}`,
+  tags: [tag('UxcPackageCode', code), tag('UxcPackageVersion', version),
+    ...(resources ? [tag('UxcResources', resources.join(','))] : [])],
+});
+/** mockCtx whose FlowerDocs search returns the given receipt docs (AI surface: no receipts). */
+function depCtx({ receipts = [], docs = {}, searchError = null } = {}) {
+  const all = { ...docs };
+  for (const r of receipts) all[r.id] = r;
+  const ctx = mockCtx({ docs: all });
+  ctx.target = { name: 'gfdefault', scope: 'S' };
+  ctx.requiresBackoffMs = [1, 1];
+  ctx.clients.core.search = async () => {
+    if (searchError) throw new Error(searchError);
+    return { found: receipts.length, results: receipts.map((r) => ({ id: r.id })) };
+  };
+  return ctx;
+}
+const ext = { manifest: { code: 'pom', dependencies: { cm: '>=0.4' } }, registry: { resources: [] } };
+const KEY = 'fd.tagclass/CmEmail';
+
+test('checkRequires #115: a dependency\'s receipt listing the resource -> checked on the server', async () => {
+  const ok = await checkRequires(depCtx({ receipts: [receiptDoc('cm', '0.4.0', [KEY])], docs: { CmEmail: { id: 'CmEmail' } } }), ext, { resources: [KEY] });
+  assert.equal(ok.ok, true, ok.reason);
+  // listed by the dependency but absent on the server: the reason names the dependency
+  const gone = await checkRequires(depCtx({ receipts: [receiptDoc('cm', '0.4.0', [KEY])] }), ext, { resources: [KEY] });
+  assert.equal(gone.ok, false);
+  assert.match(gone.reason, /requires fd\.tagclass\/CmEmail: listed by dependency cm@0\.4\.0 but not deployed on gfdefault/);
+  // a pre-list receipt (no UxcResources) is trusted; the server check decides
+  const old = await checkRequires(depCtx({ receipts: [receiptDoc('cm', '0.3.0', null)], docs: { CmEmail: { id: 'CmEmail' } } }), ext, { resources: [KEY] });
+  assert.equal(old.ok, true, old.reason);
+});
+
+test('checkRequires #115: skips name the dependency — not listed, not installed, no dependency at all', async () => {
+  const notListed = await checkRequires(depCtx({ receipts: [receiptDoc('cm', '0.4.0', ['fd.tagclass/CmOther'])], docs: { CmEmail: { id: 'CmEmail' } } }), ext, { resources: [KEY] });
+  assert.equal(notListed.reason, 'requires fd.tagclass/CmEmail: dependency cm@0.4.0 is installed but does not list it');
+  const notInstalled = await checkRequires(depCtx(), ext, { resources: [KEY] });
+  assert.equal(notInstalled.reason, 'requires fd.tagclass/CmEmail: dependency cm not installed on gfdefault');
+  const noDeps = await checkRequires(depCtx(), { manifest: { code: 'pom' }, registry: { resources: [] } }, { resources: [KEY] });
+  assert.match(noDeps.reason, /not in this package's registry \(and it declares no dependencies\)/);
+  // its own code listed as a dependency is a self-reference, not a dependency
+  const self = await checkRequires(depCtx(), { manifest: { code: 'pom', dependencies: { pom: '*' } }, registry: { resources: [] } }, { resources: [KEY] });
+  assert.match(self.reason, /declares no dependencies/);
+});
+
+test('checkRequires #115: unreadable receipts are retried, then "could not check" — never "not installed"', async () => {
+  const ctx = depCtx({ searchError: 'HTTP 503' });
+  let probes = 0;
+  ctx.clients.core.getOne = async () => { probes++; throw new Error('HTTP 503'); }; // class probe fails too
+  const r = await checkRequires(ctx, ext, { resources: [KEY] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /could not check fd\.tagclass\/CmEmail on gfdefault: receipts unreadable \(flowerdocs: HTTP 503/);
+  assert.doesNotMatch(r.reason, /not installed/);
+  assert.equal(probes, 3); // first read + 2 retries
+  // the receipts are read once per run: a second requirement re-uses them
+  const again = await checkRequires(ctx, ext, { resources: ['fd.tagclass/CmOther'] });
+  assert.match(again.reason, /could not check fd\.tagclass\/CmOther/);
+  assert.equal(probes, 3);
 });

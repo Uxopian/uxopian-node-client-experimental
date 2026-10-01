@@ -771,7 +771,9 @@ the `.uxpkg` and are inert to older clients). `uxc test` runs them SERIALLY in f
   lib/run.mjs (SSE quirks, cold-start retry); `t.answerTask` (ANSWER dispatches on the FIRST
   answer only, learnings §13); `t.expect/t.fail` throw TestFail (fail-fast per test).
 - per-test `requires` pre-flight ⇒ **SKIP with the reason, never a failure** (a package must be
-  testable on FD-only targets): `resources` (registry entry deployed — serverOf), `docs`
+  testable on FD-only targets): `resources` (registry entry deployed — serverOf; an id the
+  package does not carry resolves through a declared dependency whose receipt lists it, #115 —
+  the skip reason names the dependency: not installed / installed but not listing it), `docs`
   (instance config like CT_CONFIG), `products`, `llmProvider`, `caps` (dialect capabilities §18).
 - **safety gate**: tests create/delete real objects — the target opts in (`allowTests: true` in
   targets.json, `uxc target add --allow-tests`, env `UXC_ALLOW_TESTS=1`) or the caller passes
@@ -864,6 +866,15 @@ BEFORE a push rather than after a 500 that left half the plan deployed. `verify`
   library — it must only not contradict the order).
 - **Composed size**: what a resource composes to versus the ~1 MB server body limit, plus what
   `// @include <file> strip` would still save. `uxc size` reports it on demand; `push` warns.
+- **Class-model references** (#117, `lintClassReferences`): the tag classes a class / vfclass /
+  taskclass names (`tagReferences[].tagName`), its `tagCategories`, a tag category's `tags`, a VF
+  instance's `data.classId`. Resolved by a registry entry (any policy — `external` is the "exists
+  on the target" marker; a `fd.tagclass-delta` id resolves a tag reference) or a declared
+  dependency's id prefix (offline, the prefix is the evidence). `untracked` = the conventional
+  local file exists outside registry.json, so a push never deploys it and the server answers
+  F00205: verify FAILS, push REFUSES a planned resource carrying it (`--force` pushes anyway).
+  Anything else is a WARNING (platform tag classes live outside every package). `push --all` also
+  warns once with the untracked files it skips (it deploys the registry, not the tree).
 
 ### 25.4 Agent ergonomics
 

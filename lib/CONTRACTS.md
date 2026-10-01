@@ -303,6 +303,9 @@ export function createHarness(ctx, { runId, testsDir, log }) // -> { t, teardown
 export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:false, reason}
 //   requires: { resources:['kind/id'], docs:['ID'], products:['uxopian-ai'], llmProvider:true,
 //               caps:{product:{cap:bool}} } — unmet => the runner SKIPS with the reason.
+//   a resource outside pkg.registry resolves through manifest.dependencies: the dependency's
+//   receipt (readReceiptsChecked, read once per ctx, retried) must list 'kind/id' (a receipt with
+//   no list is trusted), then serverOf as usual. Unreadable receipts -> "could not check …" (#115).
 ```
 
 `lib/receipt.mjs` adds `stampTestReceipt(ctx, code, {passed, skipped, total, when})` — targeted
@@ -389,6 +392,9 @@ export function declaredIncludeOrder(pkg)   // manifest.includeOrder, basenames
 export function lintIncludeOrder(pkg)       // -> [{path, message}]  BLOCKING when declared
 export function resourceSizes(pkg, entries) // -> [{kind,id,file,bytes,strippedBytes,saved}]
 export function sizeWarnings(rows, warnAt)  // -> [{…, over:boolean, message}]
+export function classModelReferences(pkg, entries)  // -> [{from:{kind,id}, field, kind, id}]
+export function lintClassReferences(pkg, entries, {deps}) // -> [{from, ref, kind, id, status:'untracked'|'unresolved', file?, message}]
+//   untracked: BLOCKING (verify FAIL; push refuses the planned referrer, --force overrides) · unresolved: WARNING (#117)
 ```
 
 Every check is pure + offline: `verify` runs them all, `push` uses them as a pre-flight. Prompt
