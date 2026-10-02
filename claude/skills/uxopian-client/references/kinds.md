@@ -13,6 +13,13 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
 - Types: STRING TEXT INT CHOICELIST DATE BOOLEAN ICON (there is NO "INTEGER")
 - Add: `uxc add fd.tagclass CtFoo --type CHOICELIST --values "A,B" [--title …] [--fr …]`
 - Gotcha: VF/aggregation pivot tags MUST be CHOICELIST. choicelist symbolicNames are UPPER_SNAKE.
+- Shared with extensions (0.25.1, #126): values an installed extension's delta contributed (receipt
+  `tagContributions` + its prefix) are NOT hashed — `status --remote` shows a note `+n values of po`, `pull`
+  never writes them into the product file. Push is a full replace EXCEPT values another installed package
+  lists/prefixes (or may own: receipts unreadable, or its receipt predates 0.25.1) — those are kept, also
+  under `--force`.
+  Receipts unreadable: they count as drift and pull refuses (fail safe) — fix the receipt read, don't force.
+  Note `n unattributed values … uxc < 0.25.1` ⇒ re-push that extension with `uxc push --all`.
 
 ## fd.tagclass-delta — managed (extension packages)
 - Storage: `fd/tagclass-deltas/<Tag>.delta.json` = `{ "tagclass": "<Tag>", "allowedValues": [{symbolicName, displayNames}] }`;
@@ -20,9 +27,11 @@ JSON Schemas (`schemas/`, DESIGN §29) cover fd.script / fd.guiconfig / fd.handl
 - Add: `uxc add fd.tagclass-delta CmTaskType --values "quality check" [--fr …]`
 - Push merges (adds missing, relabels own prefixed values, removes own values dropped from the file); never
   touches product values. One write at a time, ~65 s each on fd.demo — let it run.
-- Gotcha: the product's own `fd.tagclass` then reads as `server edit`. A forced product push wipes the
-  extension values; a product pull absorbs them. After a product upgrade, re-run `uxc push` in every
-  extension; `uxc status --remote` in the extension shows `absent: …` when values were wiped.
+- The product's own `fd.tagclass` leaves the extension's contributed values out of its hash, pull and push
+  (0.25.1, #126) — needs the extension's receipt (`push --all` with uxc >= 0.25.1 records `tagContributions`:
+  its prefixed values + the legacy values its push added). Older extension receipts: prefixed values are still
+  attributed by prefix; unprefixed legacy ones read as product drift until the extension re-pushes `--all`.
+  `uxc status --remote` in the extension shows `absent: …` if values were ever wiped — re-run `uxc push` there.
 - A relabel made on the server is a server edit: plain push refuses (`--force` overwrites).
 
 ## fd.tagcategory — managed

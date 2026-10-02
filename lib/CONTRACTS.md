@@ -117,7 +117,21 @@ export const shortHash                            // 'sha256:<hex>' -> first 16 
 // none attached for a plain receipt on a fileless doc. writeReceipts defaults resourceHashes from ctx.pkg
 // state; writeFdReceipt retries WITHOUT the file on failure (receipt.warning says so).
 export async function readFdReceiptContent(core, doc)  // -> object|null (no file / unreadable = null)
-export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes
+export function receiptFromFdDoc(doc, content = null)   // tags + the content file's resourceHashes/dataSets/tagContributions
+// 0.25.1 (#125/#126) — same content file / AI receipt JSON, absent when empty, null on older receipts:
+//   receipt.dataSets = receiptDataSets(manifest) -> [{name, classId, path?, content?}] sorted (definitions, never rows)
+//   receipt.tagContributions = [{tagClass, values:[symbolicName]}] — per fd.tagclass-delta: own PREFIXED values +
+//     state legacyAdded + values the PREVIOUS receipt recorded that the delta still declares (carried forward,
+//     seeded back into state legacyAdded); per owned fd.tagclass: its whole local value list. ALWAYS written
+//     (even []) by writeReceipts (default from ctx.pkg + readReceiptsChecked for `previous`; previous unreadable
+//     -> field left ABSENT + warning); absent = unknown. refreshTagContributions: unreadable -> no write.
+//     The content file is written when any of the three keys is carried (or the doc had one); a refused
+//     upload retries without all three (warning).
+export function receiptDataSets(manifest)               // PURE
+export async function tagContributionsFromPkg(pkg, targetName, { previous })   // previous: Map(tagClass -> Set) | null
+export function previousContributions(receipts, code)   // -> Map(tagClass -> Set(name)) | null
+export async function refreshTagContributions(ctx, pkg) // partial push (push.mjs, not --all) -> [{surface, ok, action:'updated'|'unchanged'|'absent', reason?}]
+//   rewrites ONLY tagContributions (FD content file merged / AI receipt JSON key); never creates a receipt
 export async function removeReceipts(ctx, code)  // destroy: FD doc + AI prompt -> [{surface, ok, action:'deleted'|'absent', error?}]
 ```
 
@@ -315,6 +329,10 @@ export async function checkRequires(ctx, pkg, requires)   // -> {ok:true} | {ok:
 //   a resource outside pkg.registry resolves through manifest.dependencies: the dependency's
 //   receipt (readReceiptsChecked, read once per ctx, retried) must list 'kind/id' (a receipt with
 //   no list is trusted), then serverOf as usual. Unreadable receipts -> "could not check …" (#115).
+//   fd.dataset/<Name> not defined by this manifest (#125): definition from the dependency's receipt
+//   dataSets -> GET /rest/documentclass/<classId> + paged class search: >= 1 row carrying the DEPENDENCY's
+//   prefix (longest match vs this package + installed ones; unprefixed rows don't count) => ok. No dataSets on any of its receipts => skip "dependency
+//   <code>@<v> installed by a uxc older than 0.25.1: re-push it to record its datasets".
 ```
 
 `lib/receipt.mjs` adds `stampTestReceipt(ctx, code, {passed, skipped, total, when})` — targeted
@@ -701,3 +719,29 @@ Invariant: canonicalize() strips a top-level `$schema` (no hash change, never pu
     foreignNote(foreign) -> string | null   (exported from fd-dataset.mjs)
   sync.mjs statusAll rows carry note?: string (informational, never drift); status prints in-sync rows that have one.
   lib/receipt.mjs: readReceiptsChecked(ctx) -> {receipts, readable, errors}   never throws; readReceipts unchanged
+    rowOwners(ctx, manifest, {checked?})   checked = a readReceiptsChecked result to reuse (one read)
+  Tag-class VALUE ownership (#126, DESIGN §28):
+    inOwnerScope(ctx, fn)   per-operation memo (statusAll / pullResources / pushResources wrap themselves)
+    tagValueOwners(ctx, manifest) -> rowOwners(...) + {contributions: Map(tagClass -> Map(name -> code)),
+      unknown: Map(tagClass -> [code])}   (other installed packages' receipt tagContributions; unknown = their
+      receipts lack the key and list fd.tagclass-delta/<tagClass>; both empty when unreadable)   memoized in scope
+    splitTagValues(names, tagClass, manifest, view, {claimed}) -> {own:[name], foreign:[{name, code}]}   PURE
+      claimed (own file) first, then contributions, then splitRowOwnership(…, view.owners); unreadable -> nothing foreign
+    ownPrefixed(manifest, name) -> bool   PURE
+    guardTagValues(names, manifest, view, recorded, {neverRead}) -> {guarded:Set, maybeForeign(name)}   PURE
+  fd.tagclass (lib/kinds/fd-tagclass.mjs):
+    readServer(ctx, id) / serverView(ctx, id, res) -> {obj, foreign?, refusePull?, exclude?, pullNote?}
+      obj = the class minus other installed packages' values, never a value the local file lists (alone: the
+      object as read, byte-identical); unknown contributions: exclude + pullNote for unattributed values;
+      unreadable receipts: obj as read + refusePull/exclude for values absent locally that may be foreign
+    update(ctx, id, local) -> {ownValues}   removes a server value missing from the file UNLESS another installed
+      package's (contributions / prefix) or possibly so (receipts unreadable; an UNKNOWN receipt for the class ->
+      every non-own-prefixed value kept). Alone = full replace (as 0.25.0); ownValues informational
+    create(ctx, local) -> {ownValues} · baseState(local) -> {ownValues}
+  fd.tagclass-delta: remove / push (dropped values) / orphans never remove a value another installed
+    package's receipt lists for the class (readable receipts).
+    writeLocal(pkg, entry, res)   drops res.exclude names · presence(ctx, entry) -> {note} | undefined
+    foreignValuesNote(foreign) -> "+n values of <code> (… not hashed, not drift)"
+    state: targets[t].foreignTagValues = {TagClass: [name]} (last successful read; written on change only)
+  sync.mjs: statusAll applies adapter.serverView to batch-listed objects; pullResources refuses a server
+    form carrying refusePull (also --force) and appends pullNote to the 'pulled' detail.

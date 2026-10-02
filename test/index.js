@@ -1,5 +1,6 @@
 // Aggregator: lets `node --test test/` (directory-as-entry resolution) run the whole suite.
 import "./agent.test.mjs";
+import "./with-message.test.mjs";
 import "./agents-md.test.mjs";
 import "./api.test.mjs";
 import "./canonical.test.mjs";
@@ -51,3 +52,4 @@ import "./http-redirect.test.mjs";
 import "./help-search.test.mjs";
 import "./first-contact.test.mjs";
 import "./owned-upgrade.test.mjs";
+import "./shared-tagclass.test.mjs";

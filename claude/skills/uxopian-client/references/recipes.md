@@ -153,6 +153,10 @@ uxc test ingest --keep                # filter by name; keep ZZTEST_* fixtures f
 - A test file default-exports `{ name, description?, requires?, timeoutMs?, run(t) }`.
   `requires` unmet ⇒ SKIP with reason (not a failure): `resources` (deployed kind/id),
   `docs` (instance config, e.g. CT_CONFIG), `llmProvider: true`, `caps: {product:{cap:true}}`.
+  A `resources` key the package does not carry resolves through its declared dependencies' receipts
+  (#115); a dependency's `fd.dataset/<Name>` via the `dataSets` its receipt records (#125, uxc >= 0.25.1:
+  class present + holds the dependency's rows). Skip "installed by a uxc older than 0.25.1" ⇒ re-push the
+  dependency with `uxc push --all`.
 - Harness: `t.doc.create({classId, tags, file})` mints `ZZTEST_*` + auto-tracks;
   `t.waitFor(fn, {timeoutMs, label})` for handler pipelines + search lag (poll DIRECT GETs on
   deterministic ids); `t.runPrompt(id, payload, {expect: /re/})`; `t.answerTask(taskId, answerId)`
